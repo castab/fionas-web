@@ -1,0 +1,21 @@
+{
+	"name": "@fionas/shared",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Framework-agnostic constants and helpers shared by the public and admin apps.",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		}
+	},
+	"scripts": {
+		"check": "tsc --noEmit",
+		"test:unit": "vitest"
+	},
+	"devDependencies": {
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.8"
+	}
+}

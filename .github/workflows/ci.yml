@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26.9.0'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run check
+
+      - name: Install Playwright Chromium (component tests)
+        run: npx playwright install --with-deps chromium
+
+      - run: npm run test:unit -- --run
+
+      - run: npm run build
+
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26.9.0'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - run: npm run test:e2e
+
+      - name: Upload Playwright reports
+        uses: actions/upload-artifact@v7
+        if: ${{ failure() && !cancelled() }}
+        with:
+          name: playwright-report
+          path: apps/*/playwright-report/
+          retention-days: 7

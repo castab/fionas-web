@@ -1,0 +1,56 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fionas/design-tokens/tokens.css';
+@import '@fionas/design-tokens/theme.css';
+
+/* The shared component library ships Svelte source; let Tailwind see its classes. */
+@source '../../../../packages/ui/src';
+
+/* Base element resets live in Tailwind's `base` layer (not unlayered) so utility classes can
+ * override them. An unlayered `a { color: … }` would beat every `text-*` utility on a link. */
+@layer base {
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
+	}
+
+	body {
+		margin: 0;
+		background: var(--surface-page);
+		color: var(--text-body);
+		font: var(--type-body);
+		-webkit-font-smoothing: antialiased;
+	}
+
+	a {
+		color: var(--brand-strong);
+		text-decoration-color: rgba(95, 91, 64, 0.4);
+	}
+
+	a:hover {
+		color: var(--olive-900);
+	}
+
+	::selection {
+		background: var(--olive-300);
+		color: var(--ink-900);
+	}
+
+	:focus-visible {
+		outline: 3px solid var(--focus-ring);
+		outline-offset: 2px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

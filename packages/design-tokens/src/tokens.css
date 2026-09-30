@@ -1,0 +1,102 @@
+/* Fiona's Ice Cream — design tokens.
+   Ported 1:1 from the Claude Design system "Fiona's Ice Cream Design System"
+   (_ds/fiona-s-ice-cream-design-system-65d2e162…/tokens/*.css). Change them there first,
+   then mirror here. Colors were sampled from the olive trailer wrap. Light mode only. */
+
+/* Poppins is the only typeface: headings 700, caps 600, body 400/500.
+   Self-hosted via Fontsource instead of the design's Google Fonts @import. */
+@import '@fontsource/poppins/400.css';
+@import '@fontsource/poppins/500.css';
+@import '@fontsource/poppins/600.css';
+@import '@fontsource/poppins/700.css';
+
+:root {
+	/* ── Colors: base palette ─────────────────────────────────────────── */
+	--olive-900: #3d3a2b;
+	--olive-800: #4a4733;
+	--olive-700: #5f5b40; /* brand olive — trailer body */
+	--olive-600: #6f6a4e;
+	--olive-500: #837e62;
+	--olive-300: #aaa68e;
+	--olive-100: #d9d6c6;
+
+	--cream-100: #f6f1e4; /* brightest cream */
+	--cream-200: #ede5d3; /* brand cream — lettering */
+	--cream-300: #e2d8c3;
+
+	--paper-100: #ddd6cc;
+	--paper-200: #d5cec6; /* kraft paper background */
+	--paper-300: #c6beb2;
+
+	--ink-900: #12100c; /* trailer roof black */
+	--ink-700: #2b2921;
+	--ink-500: #55523f;
+
+	/* Semantic (muted, in-palette) */
+	--rust-600: #a3492f; /* errors, sold-out */
+	--moss-600: #6b7a4a; /* success, open-now */
+
+	/* Aliases */
+	--brand: var(--olive-700);
+	--brand-strong: var(--olive-800);
+	--surface-page: var(--cream-200);
+	--surface-card: var(--cream-100);
+	--surface-inverse: var(--olive-700);
+	--surface-paper: var(--paper-200);
+	--text-body: var(--ink-700);
+	--text-heading: var(--olive-900);
+	--text-muted: var(--ink-500);
+	--text-on-inverse: var(--cream-200);
+	--border-soft: rgba(61, 58, 43, 0.16);
+	--border-strong: var(--olive-700);
+	--focus-ring: rgba(95, 91, 64, 0.45);
+
+	/* ── Typography ───────────────────────────────────────────────────── */
+	--font-sans: 'Poppins', 'Helvetica Neue', sans-serif; /* everything, no exceptions */
+
+	/* `font` shorthands. Use as `[font:var(--type-body)]`. The design system names these
+	   --text-*; they are renamed --type-* here because --text-body / --text-heading /
+	   --text-muted above are colors and Tailwind reserves --text-* for font sizes. */
+	--type-display: 700 clamp(2.5rem, 5.5vw, 4rem) / 1.1 var(--font-sans);
+	--type-h1: 700 2.5rem / 1.15 var(--font-sans);
+	--type-h2: 700 1.625rem / 1.25 var(--font-sans);
+	--type-caps-lg: 600 1rem / 1.4 var(--font-sans); /* letter-spacing: var(--track-caps) */
+	--type-caps-sm: 600 0.75rem / 1.4 var(--font-sans);
+	--type-body: 400 1rem / 1.65 var(--font-sans);
+	--type-body-sm: 400 0.875rem / 1.6 var(--font-sans);
+	--type-price: 600 1rem / 1.4 var(--font-sans);
+
+	--track-heading: -0.015em; /* pair with display / h1 / h2 */
+	--track-caps: 0.26em; /* "I C E   C R E A M" spacing */
+	--track-caps-tight: 0.13em;
+
+	/* ── Spacing, radii, shadows, motion ──────────────────────────────── */
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 24px;
+	--space-6: 32px;
+	--space-7: 48px;
+	--space-8: 64px;
+	--space-9: 96px;
+
+	/* Shape: pill buttons, soft cards. Pill / 16 / 10 / 6 — nothing else. */
+	--radius-pill: 999px;
+	--radius-card: 16px;
+	--radius-input: 10px;
+	--radius-sm: 6px;
+
+	/* Shadows — soft, warm-tinted, never harsh */
+	--shadow-card: 0 2px 6px rgba(61, 58, 43, 0.08), 0 12px 28px rgba(61, 58, 43, 0.1);
+	--shadow-raised: 0 1px 3px rgba(61, 58, 43, 0.14);
+	--shadow-none: none;
+
+	/* Motion — gentle, no bounces */
+	--ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+	--dur-fast: 120ms;
+	--dur-med: 220ms;
+
+	/* Layout */
+	--container-max: 1080px;
+}

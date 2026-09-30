@@ -1,0 +1,14 @@
+{
+	"name": "@fionas/design-tokens",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Fiona's Ice Cream design tokens (from the Claude Design system) plus the Tailwind v4 theme mapping.",
+	"exports": {
+		"./tokens.css": "./src/tokens.css",
+		"./theme.css": "./src/theme.css"
+	},
+	"dependencies": {
+		"@fontsource/poppins": "^5.2.7"
+	}
+}

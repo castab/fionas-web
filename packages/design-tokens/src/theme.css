@@ -1,0 +1,60 @@
+/* Tailwind v4 theme mapping for the Fiona's tokens. Import after `tailwindcss` and
+   `tokens.css` in each app's layout.css. Utilities like `bg-olive-700`, `text-cream-200`,
+   `rounded-card` and `shadow-card` resolve to the design-system custom properties. */
+
+@theme inline {
+	--font-sans: 'Poppins', 'Helvetica Neue', sans-serif;
+
+	--color-olive-900: var(--olive-900);
+	--color-olive-800: var(--olive-800);
+	--color-olive-700: var(--olive-700);
+	--color-olive-600: var(--olive-600);
+	--color-olive-500: var(--olive-500);
+	--color-olive-300: var(--olive-300);
+	--color-olive-100: var(--olive-100);
+	--color-cream-100: var(--cream-100);
+	--color-cream-200: var(--cream-200);
+	--color-cream-300: var(--cream-300);
+	--color-paper-100: var(--paper-100);
+	--color-paper-200: var(--paper-200);
+	--color-paper-300: var(--paper-300);
+	--color-ink-900: var(--ink-900);
+	--color-ink-700: var(--ink-700);
+	--color-ink-500: var(--ink-500);
+	--color-rust-600: var(--rust-600);
+	--color-moss-600: var(--moss-600);
+
+	/* shadcn-svelte semantic colors, pointed at the brand */
+	--color-background: var(--surface-page);
+	--color-foreground: var(--text-body);
+	--color-card: var(--surface-card);
+	--color-card-foreground: var(--text-body);
+	--color-popover: var(--surface-card);
+	--color-popover-foreground: var(--text-body);
+	--color-primary: var(--brand);
+	--color-primary-foreground: var(--cream-200);
+	--color-secondary: var(--olive-100);
+	--color-secondary-foreground: var(--olive-900);
+	--color-muted: var(--cream-300);
+	--color-muted-foreground: var(--text-muted);
+	--color-accent: var(--olive-100);
+	--color-accent-foreground: var(--olive-900);
+	--color-destructive: var(--rust-600);
+	--color-border: var(--border-soft);
+	--color-input: var(--border-soft);
+	--color-ring: var(--focus-ring);
+
+	/* Radius scale pinned to the brand radii: pill / 16 / 10 / 6 */
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 16px;
+	--radius-xl: 16px;
+	--radius-2xl: 16px;
+	--radius-card: 16px;
+	--radius-input: 10px;
+
+	--shadow-card: 0 2px 6px rgba(61, 58, 43, 0.08), 0 12px 28px rgba(61, 58, 43, 0.1);
+	--shadow-raised: 0 1px 3px rgba(61, 58, 43, 0.14);
+
+	--ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}

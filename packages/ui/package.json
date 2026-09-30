@@ -1,0 +1,41 @@
+{
+	"name": "@fionas/ui",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Fiona's Ice Cream Svelte 5 component library (shadcn-svelte conventions, Tailwind v4).",
+	"svelte": "./src/index.ts",
+	"types": "./src/index.ts",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"svelte": "./src/index.ts",
+			"default": "./src/index.ts"
+		},
+		"./assets/*": "./src/assets/*"
+	},
+	"scripts": {
+		"check": "svelte-check --tsconfig ./tsconfig.json",
+		"test:unit": "vitest"
+	},
+	"peerDependencies": {
+		"svelte": "^5.56.1"
+	},
+	"dependencies": {
+		"cn": "^0.3.2",
+		"tailwind-variants": "^3.3.1"
+	},
+	"devDependencies": {
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@tailwindcss/vite": "^4.3.0",
+		"@vitest/browser-playwright": "^4.1.8",
+		"playwright": "^1.60.0",
+		"svelte": "^5.56.1",
+		"svelte-check": "^4.6.0",
+		"tailwindcss": "^4.3.0",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.16",
+		"vitest": "^4.1.8",
+		"vitest-browser-svelte": "^2.1.1"
+	}
+}
