@@ -1,0 +1,160 @@
+import {
+	buildPricingInputs,
+	hasPricingBasics,
+	type EstimateLine,
+	type EstimatePreview,
+	type InquiryAnswers,
+	type InquiryForm,
+	type OfferingOption
+} from './inquiry.ts';
+
+/*
+ * Instant, advisory estimate computed in the browser from GET /inquiry-form's `pricingPreview`.
+ * It follows the server's documented arithmetic but is never submitted: POST /estimate-preview
+ * and POST /inquiries price independently, and their figures win whenever they are available.
+ */
+
+// Amounts are exact decimals in strings; do the sums in scaled integers so nothing drifts.
+const SCALE = 6;
+const ONE = 10n ** BigInt(SCALE);
+
+function toUnits(amount: string): bigint {
+	const negative = amount.startsWith('-');
+	const [whole = '0', fraction = ''] = amount.replace(/^[-+]/, '').split('.');
+	const scaled = BigInt(whole || '0') * ONE + BigInt(fraction.padEnd(SCALE, '0').slice(0, SCALE));
+	return negative ? -scaled : scaled;
+}
+
+/** Scaled integer back to a decimal string with at least two decimal places. */
+function fromUnits(units: bigint): string {
+	const negative = units < 0n;
+	const abs = negative ? -units : units;
+	const whole = abs / ONE;
+	const fraction = (abs % ONE).toString().padStart(SCALE, '0').replace(/0+$/, '').padEnd(2, '0');
+	return `${negative ? '-' : ''}${whole}.${fraction}`;
+}
+
+function line(
+	currency: string,
+	description: string,
+	unit: bigint,
+	quantity: number | null,
+	subDescription?: string
+): { line: EstimateLine; subtotal: bigint } {
+	const subtotal = quantity === null ? unit : unit * BigInt(quantity);
+	return {
+		subtotal,
+		line: {
+			description,
+			...(subDescription ? { subDescription } : {}),
+			...(quantity === null ? {} : { quantity: String(quantity) }),
+			unitPrice: fromUnits(unit),
+			subtotal: fromUnits(subtotal),
+			taxAmount: '0.00',
+			total: fromUnits(subtotal),
+			currency
+		}
+	};
+}
+
+function findOffering(
+	form: InquiryForm,
+	category: string,
+	key: string
+): OfferingOption | undefined {
+	for (const section of form.sections) {
+		for (const field of section.fields) {
+			if (field.input.type === 'OFFERING_CHOICE' && field.input.category === category) {
+				return field.input.options.find((option) => option.key === key);
+			}
+		}
+	}
+	return undefined;
+}
+
+/**
+ * The advisory estimate for the current answers, or null until guest count and service length are
+ * known. Offerings not yet chosen simply contribute nothing, giving an "estimate so far".
+ */
+export function computeAdvisoryEstimate(
+	form: InquiryForm,
+	answers: InquiryAnswers
+): EstimatePreview | null {
+	const preview = form.pricingPreview;
+	if (!preview || !hasPricingBasics(form, answers)) return null;
+	const inputs = buildPricingInputs(form, answers);
+	if (!inputs) return null;
+
+	const duration = preview.durationOptions.find(
+		(d) => d.durationMinutes === inputs.durationMinutes
+	);
+	if (!duration) return null;
+
+	const { currency } = preview;
+	const guests = inputs.guestCount;
+	const lines: { line: EstimateLine; subtotal: bigint }[] = [
+		line(
+			currency,
+			'Base service',
+			toUnits(duration.baseServiceAmount),
+			null,
+			`${duration.durationMinutes} minutes`
+		),
+		line(
+			currency,
+			'Ice cream service',
+			toUnits(preview.perGuestAmount),
+			guests,
+			`${guests} ${guests === 1 ? 'guest' : 'guests'}`
+		)
+	];
+
+	for (const selection of inputs.selections) {
+		for (const key of selection.offerings) {
+			const option = findOffering(form, selection.category, key);
+			const price = option?.price;
+			if (!option || !price) continue; // unpriced options add no independent contribution
+			const sub = option.description ?? undefined;
+			switch (price.kind) {
+				case 'FIXED':
+					lines.push(line(currency, option.displayName, toUnits(price.amount), null, sub));
+					break;
+				case 'PER_QUANTITY':
+					lines.push(line(currency, option.displayName, toUnits(price.amount), guests, sub));
+					break;
+				case 'PER_DURATION': {
+					const flat = duration.offeringContributions.find((c) => c.offeringKey === key);
+					if (flat) lines.push(line(currency, option.displayName, toUnits(flat.amount), null, sub));
+					break;
+				}
+			}
+		}
+	}
+
+	const toppings = preview.toppingAdjustment;
+	const chosen =
+		inputs.selections.find((s) => s.category === toppings.category)?.offerings.length ?? 0;
+	const extra = Math.max(0, chosen - toppings.includedSelections);
+	if (extra > 0) {
+		lines.push(
+			line(
+				currency,
+				`Extra toppings (${extra})`,
+				toUnits(toppings.additionalSelectionPerGuestAmount),
+				guests * extra,
+				`${toppings.includedSelections} toppings included; each extra is charged per guest`
+			)
+		);
+	}
+
+	const total = lines.reduce((sum, l) => sum + l.subtotal, 0n);
+	return {
+		catalogRevision: inputs.catalogRevision,
+		guestCountIsMinimum: inputs.guestCountIsMinimum === true,
+		lines: lines.map((l) => l.line),
+		subtotal: fromUnits(total),
+		taxAmount: '0.00',
+		total: fromUnits(total),
+		currency
+	};
+}

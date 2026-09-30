@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { ComingSoonButton, Wordmark } from '@fionas/ui';
+	import { Button, ComingSoonButton, Wordmark } from '@fionas/ui';
 	import { bookingComingSoon } from '$lib/coming-soon.js';
+
+	let { bookingEnabled }: { bookingEnabled: boolean } = $props();
 </script>
 
 <header class="sticky top-0 z-10 border-b border-(--border-soft) bg-(--surface-page)">
@@ -9,6 +11,10 @@
 		<a href={resolve('/')} aria-label="fionas ice cream — home" class="inline-flex">
 			<Wordmark class="text-olive-900" aria-hidden="true" />
 		</a>
-		<ComingSoonButton toast={bookingComingSoon} size="sm" class="ml-auto">Book</ComingSoonButton>
+		{#if bookingEnabled}
+			<Button href={resolve('/book')} size="sm" class="ml-auto">Book</Button>
+		{:else}
+			<ComingSoonButton toast={bookingComingSoon} size="sm" class="ml-auto">Book</ComingSoonButton>
+		{/if}
 	</div>
 </header>

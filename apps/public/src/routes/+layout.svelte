@@ -1,16 +1,18 @@
 <script lang="ts">
 	import './layout.css';
+	import type { Snippet } from 'svelte';
 	import { ComingSoonToast } from '@fionas/ui';
 	import { site } from '@fionas/shared';
 	import SiteHeader from '$lib/components/site-header.svelte';
 	import SiteFooter from '$lib/components/site-footer.svelte';
+	import type { LayoutData } from './$types';
 
 	// Ice cream emoji as an SVG favicon — legible at tab size, unlike the badge logo.
 	const favicon = `data:image/svg+xml,${encodeURIComponent(
 		"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍦</text></svg>"
 	)}`;
 
-	let { children } = $props();
+	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 </script>
 
 <svelte:head>
@@ -27,7 +29,7 @@
 		class="fixed top-3 left-3 z-20 -translate-y-24 rounded-full bg-olive-700 px-4 py-3 text-cream-200 no-underline focus:translate-y-0"
 		href="#main-content">Skip to content</a
 	>
-	<SiteHeader />
+	<SiteHeader bookingEnabled={data.bookingEnabled} />
 	<div id="main-content" class="flex flex-1 flex-col">
 		{@render children()}
 	</div>

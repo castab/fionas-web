@@ -51,3 +51,12 @@ test('the page fits its viewport without horizontal scrolling', async ({ page })
 		await page.evaluate(() => window.innerWidth)
 	);
 });
+
+test('/book is a 404 while booking is gated', async ({ page, request }) => {
+	const response = await page.goto('/book');
+	expect(response?.status()).toBe(404);
+	await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+
+	// The form action and estimate endpoint are closed too, not just the page.
+	expect((await request.post('/book/estimate', { data: {} })).status()).toBe(404);
+});

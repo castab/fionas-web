@@ -17,7 +17,7 @@ export {
 	showComingSoonToast,
 	type ComingSoonToastOptions
 } from './components/toast/index.js';
-export { capsSm, focusRing } from './styles.js';
+export { capsSm, capsXs, controlBase, focusRing, hintText } from './styles.js';
 export {
 	cn,
 	type WithElementRef,
@@ -25,3 +25,9 @@ export {
 	type WithoutChildren,
 	type WithoutChildrenOrChild
 } from './utils.js';
+export { Checkbox } from './components/checkbox/index.js';
+export { ChoiceChip } from './components/choice-chip/index.js';
+export { Field, type FieldControlProps } from './components/field/index.js';
+export { Input } from './components/input/index.js';
+export { Select } from './components/select/index.js';
+export { Textarea } from './components/textarea/index.js';

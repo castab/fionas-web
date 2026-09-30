@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { Badge, Button, ComingSoonButton, LogoBadge } from '@fionas/ui';
 	import { bookingLaunchLabel, instagramUrl } from '@fionas/shared';
+	import { resolve } from '$app/paths';
 	import { bookingComingSoon } from '$lib/coming-soon.js';
+	import type { PageData } from './$types';
+
+	let { data }: { data: PageData } = $props();
 </script>
 
 <!-- Hero: copy (left) + olive-disc badge (right). Below 940px it stacks, badge on top. -->
@@ -11,7 +15,9 @@
 	<div
 		class="flex max-w-[560px] flex-[1_1_380px] flex-col items-start gap-[22px] max-[940px]:max-w-none max-[940px]:flex-none max-[940px]:items-center"
 	>
-		<Badge tone="moss">{bookingLaunchLabel}</Badge>
+		{#if !data.bookingEnabled}
+			<Badge tone="moss">{bookingLaunchLabel}</Badge>
+		{/if}
 
 		<h1
 			class="m-0 font-sans text-[42px] leading-[1.1] font-bold tracking-(--track-heading) text-balance text-(--text-heading)"
@@ -28,9 +34,13 @@
 			<Button href={instagramUrl} target="_blank" rel="noopener noreferrer" size="lg">
 				Follow on Instagram
 			</Button>
-			<ComingSoonButton toast={bookingComingSoon} variant="secondary" size="lg">
-				Book the trailer
-			</ComingSoonButton>
+			{#if data.bookingEnabled}
+				<Button href={resolve('/book')} variant="secondary" size="lg">Book the trailer</Button>
+			{:else}
+				<ComingSoonButton toast={bookingComingSoon} variant="secondary" size="lg">
+					Book the trailer
+				</ComingSoonButton>
+			{/if}
 		</div>
 	</div>
 

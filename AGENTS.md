@@ -13,6 +13,10 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                    |
 | Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                             |
 | Site details, coming-soon copy           | `packages/shared/src/`                                    |
+| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                          |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts` |
+| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                          |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts` |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/` |
 
 ## Commands (run from the repo root)
@@ -30,6 +34,14 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   Don't combine a `[font:…]` shorthand with `text-[size]` on the same element — use discrete utilities.
 - Components in `packages/ui` use relative imports (no `$lib`) because apps consume the raw source.
   New classes there are picked up via the `@source` line in each app's `layout.css`.
-- Booking is not built. Book CTAs use `ComingSoonButton`: `aria-disabled`, raises the toast, never
-  navigates or submits. Playwright needs `click({ force: true })` on them.
+- Booking is gated. `/book` is an inquiry form rendered from the commerce API's `GET /inquiry-form`
+  (answers mapped back via each field's `submissionPointer`), with a live `POST /estimate-preview`
+  and submit to `POST /inquiries`. It 404s unless `BOOKING_ENABLED=true` (`$lib/server/booking.ts`). While gated the Book CTAs use
+  `ComingSoonButton` (`aria-disabled`, raises the toast, never navigates); when enabled they link to `/book`. Playwright needs
+  `click({ force: true })` on the gated CTAs.
+- The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
+  calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), adding the secret UI key
+  (`COMMERCE_UI_API_KEY`, `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
+  `POST /inquiries` require. Never log it or put it in client code or `.env.example`. E2E runs against the stub in
+  `apps/public/e2e/stub-commerce.mjs`.
 - Light mode only. Motion 120–220ms ease-out, no bounces. Radii: pill / 16 / 10 / 6.
