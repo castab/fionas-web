@@ -2,14 +2,22 @@ import type { Cookies } from '@sveltejs/kit';
 import {
 	answersFromFormData,
 	buildInquiryRequest,
+	CATALOG_STATE_VIOLATIONS,
 	describeViolation,
 	reconcileAnswers,
 	validateAnswers,
 	type ApiError,
+	type InquiryAnswers,
 	type InquiryForm
 } from '@fionas/shared';
 import { submissionCopy, type SubmissionFailure } from '$lib/inquiry-submission.js';
-import { createInquiry, getInquiryForm, isSubmissionKey, type InquiryReceipt } from './commerce.js';
+import {
+	createInquiry,
+	getInquiryForm,
+	isOutcomeUnknown,
+	isSubmissionKey,
+	type InquiryReceipt
+} from './commerce.js';
 
 /*
  * The /book submission flow between the browser and fionas-commerce. The browser posts the
@@ -41,28 +49,31 @@ const labelsOf = (form: InquiryForm, keys: string[]) =>
 		.map((f) => f.label);
 
 /**
- * The catalog moved on: fetch the current form past any cache, fit the answers to it and hand it
- * back for review. Never resubmits; the reviewed form is a new logical submission with a new token.
+ * The page's options no longer match the catalog (`CATALOG_REVISION_STALE`, or a 422 naming an
+ * offering that is unknown, disabled or unavailable): fetch the current form past any cache, fit
+ * the answers to it and hand it back for review. Never resubmits. The reviewed form is a new logical
+ * submission with a new token; that is safe because a refused attempt never consumes its key.
  */
-async function refreshForReview(data: FormData): Promise<SubmitResult> {
+async function refreshForReview(
+	data: FormData,
+	outcome: 'stale' | 'rejected',
+	status: number
+): Promise<SubmitResult> {
 	const fresh = await getInquiryForm({ fresh: true });
 	if (!fresh.ok) {
-		return {
-			ok: false,
-			status: 409,
-			failure: { outcome: 'stale', formError: submissionCopy.staleWithoutForm }
-		};
+		return { ok: false, status, failure: { outcome, formError: submissionCopy.staleWithoutForm } };
 	}
 	const form = fresh.data;
-	const { answers, changed } = reconcileAnswers(form, answersFromFormData(form, data));
+	const { answers, changed, unavailable } = reconcileAnswers(form, answersFromFormData(form, data));
 	return {
 		ok: false,
-		status: 409,
+		status,
 		failure: {
-			outcome: 'stale',
+			outcome,
 			answers,
 			refreshedForm: form,
 			reviewFields: labelsOf(form, changed),
+			unavailableChoices: unavailable,
 			catalogRevision: form.catalogRevision,
 			submissionToken: newSubmissionToken()
 		}
@@ -87,21 +98,35 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 		};
 	}
 
-	const unavailable = (extra: Partial<SubmissionFailure> = {}): SubmitResult => ({
+	// Every failure below keeps this submission's token and revision unless it says otherwise.
+	const failed = (
+		status: number,
+		outcome: SubmissionFailure['outcome'],
+		extra: Partial<SubmissionFailure> = {}
+	): SubmitResult => ({
 		ok: false,
-		status: 503,
-		failure: {
-			outcome: 'unavailable',
-			formError: submissionCopy.unavailable,
-			submissionToken: token,
-			catalogRevision: revision,
-			...extra
-		}
+		status,
+		failure: { outcome, submissionToken: token, catalogRevision: revision, ...extra }
 	});
 
-	// The current form maps answers to the request (field keys → submission pointers).
+	// Retrying a submission whose outcome was already unknown: until something settles it (a receipt
+	// or a definite refusal), it stays unknown, whatever stops this attempt.
+	const unresolved = data.get('outcomeUnknown') === 'true';
+	const stillUnknown = (answers?: InquiryAnswers): SubmitResult =>
+		failed(503, 'ambiguous', {
+			answers,
+			formError: submissionCopy.ambiguous,
+			restartToken: newSubmissionToken()
+		});
+
+	// The current form maps answers to the request (field keys → submission pointers). If it can't
+	// be read, nothing has been sent yet.
 	const current = await getInquiryForm();
-	if (!current.ok) return unavailable();
+	if (!current.ok) {
+		return unresolved
+			? stillUnknown()
+			: failed(503, 'unavailable', { formError: submissionCopy.unavailable });
+	}
 	const form = current.data;
 	const answers = answersFromFormData(form, data);
 
@@ -109,19 +134,7 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	// on, the backend decides: an earlier commit of this key replays, anything else is stale.
 	if (revision === form.catalogRevision) {
 		const errors = validateAnswers(form, answers);
-		if (Object.keys(errors).length > 0) {
-			return {
-				ok: false,
-				status: 422,
-				failure: {
-					outcome: 'invalid',
-					answers,
-					errors,
-					submissionToken: token,
-					catalogRevision: revision
-				}
-			};
-		}
+		if (Object.keys(errors).length > 0) return failed(422, 'invalid', { answers, errors });
 	}
 
 	// Pinned to the customer's revision, never silently to the current one. No prices or totals.
@@ -131,41 +144,39 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 
 	const { error } = result;
 	if (error.status === 409 && error.code === 'CATALOG_REVISION_STALE') {
-		return refreshForReview(data);
+		return refreshForReview(data, 'stale', 409);
 	}
 	if (error.status === 409 && error.code === 'IDEMPOTENCY_KEY_REUSED') {
 		// Correct key handling makes this rare: it means one token carried two different requests.
 		console.warn(
 			`[inquiry] Idempotency-Key ${token} was already used for a different request; not retrying. Check the submission-token lifecycle.`
 		);
-		return {
-			ok: false,
-			status: 409,
-			failure: {
-				outcome: 'key_reused',
-				answers,
-				formError: submissionCopy.keyReused,
-				submissionToken: token,
-				catalogRevision: revision,
-				restartToken: newSubmissionToken()
-			}
-		};
+		return failed(409, 'key_reused', {
+			answers,
+			formError: submissionCopy.keyReused,
+			restartToken: newSubmissionToken()
+		});
+	}
+	if (error.status === 422 && error.violations.some((code) => CATALOG_STATE_VIOLATIONS.has(code))) {
+		// Our page offered something the catalog won't take (out of date, or tampered with).
+		console.warn(
+			`[inquiry] POST /inquiries refused the options (${error.violations.join(', ')}); refreshing the form for review`
+		);
+		return refreshForReview(data, 'rejected', 422);
 	}
 	if (error.status === 400 || error.status === 404 || error.status === 422) {
 		if (error.status === 400) console.warn('[inquiry] POST /inquiries rejected as malformed');
-		return {
-			ok: false,
-			status: 422,
-			failure: {
-				outcome: 'rejected',
-				answers,
-				formError: rejectionMessage(error),
-				submissionToken: token,
-				catalogRevision: revision
-			}
-		};
+		return failed(422, 'rejected', { answers, formError: rejectionMessage(error) });
 	}
-	return unavailable({ answers });
+	// Sent, but we can't tell whether it was recorded. Only the identical request under the same key
+	// may follow; a deliberate change of answers is a new submission (`restartToken`).
+	if (isOutcomeUnknown(error) || unresolved) return stillUnknown(answers);
+	if (error.status === 401 || error.status === 403) {
+		// Refused before anything was recorded; the adapter has already logged why for the operator.
+		return failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
+	}
+	console.error(`[inquiry] POST /inquiries failed unexpectedly (${error.status} ${error.code})`);
+	return failed(502, 'server_error', { answers, formError: submissionCopy.serverError });
 }
 
 // --- Receipt --------------------------------------------------------------------------------

@@ -47,10 +47,16 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   `apps/public/e2e/stub-commerce.mjs`.
 - **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
   back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
-  generate a key per backend attempt. Retries keep it; only a reviewed `CATALOG_REVISION_STALE`
-  refresh or the customer's explicit "Send as a new request" (after `IDEMPOTENCY_KEY_REUSED`) changes
-  it. Never auto-resubmit a stale form, and never send totals or prices: the backend prices and
-  creates the Estimate. See `docs/public-inquiry-submission.md`.
+  generate a key per backend attempt. Retries keep it; only a reviewed catalog refresh
+  (`CATALOG_REVISION_STALE`, or a 422 naming unknown/disabled/unavailable offerings) or the customer's
+  explicit "Send as a new request" / "Change my answers" changes it. After an unknown outcome the
+  answers freeze (`inert`) so the retry is identical. Never auto-resubmit, and never send totals or
+  prices: the backend prices and creates the Estimate. See `docs/public-inquiry-submission.md`.
+- **Offering availability (definition version 6).** Disabled/retired offerings are absent from
+  `/inquiry-form`; `ENABLED` + `UNAVAILABLE` options stay visible but unselectable ("Unavailable —
+  check back later"), never hidden or described as removed. Never hardcode offering keys, names,
+  prices or limits in UI code (`src/catalog-hardcoding.test.ts`). The optional service section may
+  be skipped: an untouched optional section isn't validated or sent, making a plain inquiry.
 - **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
   to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`

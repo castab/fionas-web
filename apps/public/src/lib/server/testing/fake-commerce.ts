@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
-import type { InquiryForm } from '@fionas/shared';
+import type { InquiryForm, PricingInputs } from '@fionas/shared';
 
 /*
  * Test double for the fionas-commerce HTTP API, installed as `fetch`. It keeps the contract the
  * public app relies on: Bearer-protected UI endpoints, and POST /inquiries idempotency (same key +
  * same body replays the original 201 receipt, same key + different body is IDEMPOTENCY_KEY_REUSED,
- * an old catalog revision is CATALOG_REVISION_STALE, failures consume nothing). Test-only.
+ * an old catalog revision is CATALOG_REVISION_STALE, a pick the current form doesn't offer or lists
+ * as UNAVAILABLE is 422 UNKNOWN_OFFERING / OFFERING_UNAVAILABLE, failures consume nothing). Test-only.
  */
 
 export const TEST_UI_KEY = 'test-ui-secret-7f3a';
@@ -61,6 +62,21 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		return receipt;
 	}
 
+	/** The backend's structural check of selections against the current catalog. */
+	function offeringViolation(pricing: PricingInputs): string | null {
+		const options = form.sections
+			.flatMap((s) => s.fields)
+			.flatMap((f) => (f.input.type === 'OFFERING_CHOICE' ? f.input.options : []));
+		for (const { category, offerings } of pricing.selections) {
+			for (const key of offerings) {
+				const option = options.find((o) => o.category === category && o.key === key);
+				if (!option) return 'UNKNOWN_OFFERING';
+				if (option.availability !== 'AVAILABLE') return 'OFFERING_UNAVAILABLE';
+			}
+		}
+		return null;
+	}
+
 	function createInquiry(headers: Record<string, string>, body: unknown): Response | 'drop' {
 		const key = headers['idempotency-key'];
 		if (!key || !/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
@@ -89,11 +105,19 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 			}
 			return json(201, prior.receipt);
 		}
-		const pricing = (body as { pricingInputs?: { catalogRevision: number } }).pricingInputs;
+		const pricing = (body as { pricingInputs?: PricingInputs }).pricingInputs;
 		if (pricing && pricing.catalogRevision !== form.catalogRevision) {
 			return json(409, {
 				code: 'CATALOG_REVISION_STALE',
 				message: `Catalog revision r${pricing.catalogRevision} is stale (diagnostic)`
+			});
+		}
+		const violation = pricing && offeringViolation(pricing);
+		if (violation) {
+			return json(422, {
+				code: 'validation_failed',
+				message: `${violation} (diagnostic)`,
+				violations: [{ code: violation }]
 			});
 		}
 		return json(201, commit(key, body));

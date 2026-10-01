@@ -189,7 +189,6 @@ describe('/book submission', () => {
 	it('submits a plain inquiry when the form asks no pricing questions', async () => {
 		const plain = formFixture();
 		plain.sections = plain.sections.filter((s) => s.key !== 'service');
-		delete plain.pricingPreview;
 		backend.publish(plain);
 
 		const { data } = await loadPage();
@@ -200,6 +199,52 @@ describe('/book submission', () => {
 
 		expect(outcome).toMatchObject({ redirect: '/book/received' });
 		expect(backend.posts()[0]?.body).toEqual({ name, email, zipCode, eventDate, eventType });
+	});
+
+	it('sends a plain inquiry when the customer skips the optional service section', async () => {
+		const { data } = await loadPage();
+		expect(data.form?.sections.find((s) => s.key === 'service')?.optional).toBe(true);
+		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
+		const contactOnly = { name, email, zipCode, eventDate, eventType, message: 'Call me?' };
+
+		const outcome = await post(formData(data.submissionToken, 15, contactOnly));
+
+		expect(outcome).toMatchObject({ redirect: '/book/received' });
+		const [call] = backend.posts();
+		expect(call?.headers['idempotency-key']).toBe(data.submissionToken);
+		// No pricingInputs at all: a plain inquiry creates no Estimate.
+		expect(call?.body).toEqual({ ...contactOnly });
+	});
+
+	it('still requires the whole service section once the customer has started it', async () => {
+		const { data } = await loadPage();
+		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
+		const started = { name, email, zipCode, eventDate, eventType, guestCount: '40' };
+
+		const failure = failureOf(await post(formData(data.submissionToken, 15, started)));
+
+		expect(failure.outcome).toBe('invalid');
+		expect(Object.keys(failure.errors ?? {}).sort()).toEqual([
+			'durationMinutes',
+			'offering:cone-option',
+			'offering:soft-serve-flavor',
+			'offering:topping'
+		]);
+		expect(backend.posts()).toHaveLength(0);
+	});
+
+	it('refuses an unavailable choice locally and sends nothing', async () => {
+		const { data } = await loadPage();
+		const tampered = {
+			...priced,
+			'offering:topping': ['sprinkles', 'oreos', 'strawberries', 'gummy-bears']
+		};
+
+		const failure = failureOf(await post(formData(data.submissionToken, 15, tampered)));
+
+		expect(failure).toMatchObject({ outcome: 'invalid', submissionToken: data.submissionToken });
+		expect(failure.errors?.['offering:topping']).toMatch(/gummy-bears is unavailable right now/);
+		expect(backend.posts()).toHaveLength(0);
 	});
 
 	it('resolves a double delivery to one inquiry under one key', async () => {
@@ -234,38 +279,81 @@ describe('/book submission', () => {
 		});
 	});
 
-	it('keeps the key through an outage so the customer can safely try again', async () => {
+	it('reports an unknown outcome as ambiguous and retries the identical request under the same key', async () => {
 		const { data } = await loadPage();
+		// Committed, then the response was lost on both of the server's deliveries.
 		backend.script('commit-then-drop', 'network');
 
-		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+		const outcome = await post(formData(data.submissionToken, 15, priced));
+		expect(outcome.status).toBe(503);
+		const failure = failureOf(outcome);
 		expect(failure).toMatchObject({
-			outcome: 'unavailable',
+			outcome: 'ambiguous',
 			submissionToken: data.submissionToken,
 			catalogRevision: 15,
 			answers: { values: expect.objectContaining({ name: 'Jane Doe' }) }
 		});
-		expect(failure.formError).toMatch(/won't create a duplicate/);
+		expect(failure.formError).toMatch(/couldn't confirm.*won't record it twice/);
+		// A deliberate "change my answers" would be a new submission; it never replaces the retry key.
+		expect(failure.restartToken).toMatch(/^[0-9a-f-]{36}$/);
+		expect(failure.restartToken).not.toBe(data.submissionToken);
+		expect(JSON.stringify(failure)).not.toContain(TEST_UI_KEY);
 
-		// The customer presses Send again: same token, and the earlier commit comes back.
-		expect(await post(formData(failure.submissionToken!, 15, priced))).toMatchObject({
-			redirect: '/book/received'
-		});
-		const keys = new Set(backend.posts().map((c) => c.headers['idempotency-key']));
-		expect([...keys]).toEqual([data.submissionToken]);
+		// "Try sending again" posts the frozen answers: same token, same body, the original receipt.
+		const retry = await post(
+			formData(failure.submissionToken!, 15, priced, { outcomeUnknown: 'true' })
+		);
+		expect(retry).toMatchObject({ redirect: '/book/received' });
+		const posts = backend.posts();
+		expect(new Set(posts.map((c) => c.headers['idempotency-key']))).toEqual(
+			new Set([data.submissionToken])
+		);
+		expect(new Set(posts.map((c) => JSON.stringify(c.body))).size).toBe(1);
 		expect(backend.committed.size).toBe(1);
+		expect(receiptPage()).toEqual({
+			receipt: backend.committed.get(data.submissionToken)?.receipt
+		});
 	});
 
-	it('reports an unexpected 5xx as recoverable without retrying it', async () => {
+	it('keeps an unresolved submission ambiguous when the retry cannot even start', async () => {
 		const { data } = await loadPage();
-		backend.script({ status: 500, body: { code: 'internal_failure', message: 'boom' } });
+		env.COMMERCE_UI_API_KEY = 'rotated-elsewhere';
+
+		const retry = failureOf(
+			await post(formData(data.submissionToken, 15, priced, { outcomeUnknown: 'true' }))
+		);
+		expect(retry).toMatchObject({ outcome: 'ambiguous', submissionToken: data.submissionToken });
+		expect(backend.posts()).toHaveLength(0);
+	});
+
+	it('reports a backend it cannot reach before sending as unavailable, with nothing sent', async () => {
+		const { data } = await loadPage();
+		env.COMMERCE_UI_API_KEY = 'rotated-elsewhere';
 
 		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
 		expect(failure).toMatchObject({
 			outcome: 'unavailable',
 			submissionToken: data.submissionToken
 		});
+		expect(failure.formError).toMatch(/hasn't been sent/);
+		expect(failure.restartToken).toBeUndefined();
+		expect(backend.posts()).toHaveLength(0);
+		expect(JSON.stringify(failure)).not.toContain('rotated-elsewhere');
+	});
+
+	it('reports an unexpected 5xx as a server error, keeps the key and does not retry it', async () => {
+		const { data } = await loadPage();
+		backend.script({ status: 500, body: { code: 'internal_failure', message: 'boom' } });
+
+		const outcome = await post(formData(data.submissionToken, 15, priced));
+		const failure = failureOf(outcome);
+		expect(failure).toMatchObject({
+			outcome: 'server_error',
+			submissionToken: data.submissionToken
+		});
+		expect(failure.formError).toMatch(/went wrong on our side/);
 		expect(JSON.stringify(failure)).not.toContain('boom');
+		expect(JSON.stringify(failure)).not.toContain(TEST_UI_KEY);
 		expect(backend.posts()).toHaveLength(1);
 	});
 
@@ -307,19 +395,28 @@ describe('/book submission', () => {
 });
 
 describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
-	/** Revision 16: Horchata retired. */
-	function republish() {
+	/**
+	 * Revision 16. `disabled`: Horchata is disabled, so the public form omits it. `unavailable`:
+	 * Horchata is still listed but temporarily UNAVAILABLE.
+	 */
+	function republish(horchata: 'disabled' | 'unavailable' = 'disabled') {
 		const next = formFixture();
 		next.catalogRevision = 16;
 		for (const field of next.sections.flatMap((s) => s.fields)) {
 			if (field.input.type === 'OFFERING_CHOICE') {
-				field.input.options = field.input.options.filter((o) => o.key !== 'horchata');
+				field.input.options =
+					horchata === 'disabled'
+						? field.input.options.filter((o) => o.key !== 'horchata')
+						: field.input.options.map((o) =>
+								o.key === 'horchata' ? { ...o, availability: 'UNAVAILABLE' as const } : o
+							);
 			}
 		}
 		backend.publish(next);
+		return next;
 	}
 
-	it('refetches the form, keeps the customer details, drops retired choices and asks for review', async () => {
+	it('refetches the form, keeps the customer details, drops disabled choices and asks for review', async () => {
 		const { data } = await loadPage();
 		republish();
 
@@ -353,9 +450,35 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 			'offering:soft-serve-flavor': ['vanilla']
 		});
 		expect(failure.reviewFields).toEqual(['Choose your soft serve flavors']);
+		// A disabled option is simply gone: nothing more specific can be said about it.
+		expect(failure.unavailableChoices).toEqual([]);
 		expect(failure.submissionToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(failure.submissionToken).not.toBe(data.submissionToken);
 		expect(backend.committed.size).toBe(0);
+	});
+
+	it('keeps a newly unavailable choice listed but unselects it and says so', async () => {
+		const { data } = await loadPage();
+		republish('unavailable');
+		const onlyHorchata = { ...priced, 'offering:soft-serve-flavor': ['horchata'] };
+
+		const failure = failureOf(await post(formData(data.submissionToken, 15, onlyHorchata)));
+
+		expect(failure.outcome).toBe('stale');
+		const flavors = failure.refreshedForm?.sections
+			.flatMap((s) => s.fields)
+			.find((f) => f.key === 'offering:soft-serve-flavor');
+		const horchata =
+			flavors?.input.type === 'OFFERING_CHOICE'
+				? flavors.input.options.find((o) => o.key === 'horchata')
+				: undefined;
+		expect(horchata).toMatchObject({ selectionState: 'ENABLED', availability: 'UNAVAILABLE' });
+		// Unselected, never swapped for another flavor; the minimum now asks the customer to choose.
+		expect(failure.answers?.values['offering:soft-serve-flavor']).toEqual([]);
+		expect(failure.unavailableChoices).toEqual(['Horchata']);
+		expect(failure.reviewFields).toEqual(['Choose your soft serve flavors']);
+		expect(failure.submissionToken).not.toBe(data.submissionToken);
+		expect(backend.posts()).toHaveLength(1);
 	});
 
 	it('sends the reviewed form as a new submission under the new key', async () => {
@@ -386,6 +509,34 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 	});
 });
 
+describe('/book when the backend refuses the options (422 catalog-state violations)', () => {
+	it('refreshes the form for review under a new key instead of resubmitting', async () => {
+		const { data } = await loadPage();
+		backend.script({
+			status: 422,
+			body: {
+				code: 'validation_failed',
+				message: 'offering horchata is unavailable (diagnostic)',
+				violations: [{ code: 'OFFERING_UNAVAILABLE' }]
+			}
+		});
+
+		const outcome = await post(formData(data.submissionToken, 15, priced));
+
+		expect(outcome.status).toBe(422);
+		const failure = failureOf(outcome);
+		expect(failure.outcome).toBe('rejected');
+		expect(failure.refreshedForm?.catalogRevision).toBe(15);
+		expect(failure.submissionToken).not.toBe(data.submissionToken);
+		expect(failure.answers?.values.name).toBe('Jane Doe');
+		expect(JSON.stringify(failure)).not.toContain('diagnostic');
+		// One delivery only, then a cache-bypassing form read; never an automatic resubmit.
+		expect(backend.posts()).toHaveLength(1);
+		expect(backend.calls.at(-1)).toMatchObject({ path: '/inquiry-form', cache: 'no-store' });
+		expect(warnings.join('\n')).toMatch(/OFFERING_UNAVAILABLE/);
+	});
+});
+
 describe('/book with a reused key (IDEMPOTENCY_KEY_REUSED)', () => {
 	it('does not retry with a new key and lets the customer deliberately send a new request', async () => {
 		const { data } = await loadPage();
@@ -405,7 +556,9 @@ describe('/book with a reused key (IDEMPOTENCY_KEY_REUSED)', () => {
 			submissionToken: data.submissionToken,
 			answers: { values: expect.objectContaining({ guestCount: '90' }) }
 		});
-		expect(failure.formError).not.toMatch(/diagnostic/);
+		expect(failure.formError).toBe(
+			"We couldn't safely verify this submission. Please restart the inquiry or contact us if you're unsure whether it was received."
+		);
 		expect(failure.restartToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(failure.restartToken).not.toBe(data.submissionToken);
 		expect(warnings.join('\n')).toMatch(/Idempotency-Key .* already used/);

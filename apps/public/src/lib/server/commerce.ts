@@ -1,10 +1,11 @@
 import { env } from '$env/dynamic/private';
-import type {
-	ApiError,
-	CreateInquiryRequest,
-	EstimatePreview,
-	InquiryForm,
-	PricingInputs
+import {
+	EXPECTED_DEFINITION_VERSION,
+	type ApiError,
+	type CreateInquiryRequest,
+	type EstimatePreview,
+	type InquiryForm,
+	type PricingInputs
 } from '@fionas/shared';
 
 /*
@@ -125,9 +126,10 @@ const isReceipt = (body: unknown): body is InquiryReceipt =>
 /**
  * Worth sending again with the same key: the request may or may not have been committed (network
  * failure, timeout, unreadable success), a gateway hiccup, or the backend's documented retryable
- * `conflict` (a concurrent request created the same customer first). Never a semantic 4xx.
+ * `conflict` (a concurrent request created the same customer first). Never a semantic 4xx. If the
+ * retry fails the same way, the submission's outcome is still unknown (see `submitInquiry`).
  */
-const isRetryable = (error: ApiError) =>
+export const isOutcomeUnknown = (error: ApiError) =>
 	error.code === 'unavailable' ||
 	error.code === 'bad_response' ||
 	error.code === 'conflict' ||
@@ -139,8 +141,25 @@ const isRetryable = (error: ApiError) =>
  * GET /inquiry-form. Every call reaches the backend: nothing here caches the form. `fresh` also
  * tells any HTTP cache in between to revalidate, for recovery from `CATALOG_REVISION_STALE`.
  */
-export const getInquiryForm = ({ fresh = false }: { fresh?: boolean } = {}) =>
-	request<InquiryForm>('/inquiry-form', { fresh });
+export async function getInquiryForm({ fresh = false }: { fresh?: boolean } = {}) {
+	const result = await request<InquiryForm>('/inquiry-form', { fresh });
+	if (result.ok) warnOnDefinitionVersion(result.data.definitionVersion);
+	return result;
+}
+
+let warnedVersion: number | null = null;
+
+/**
+ * The form is self-describing, so a newer question definition still renders; the operator should
+ * know the UI was built against another version. Logged once per version, never shown to customers.
+ */
+function warnOnDefinitionVersion(version: number) {
+	if (version === EXPECTED_DEFINITION_VERSION || version === warnedVersion) return;
+	warnedVersion = version;
+	console.warn(
+		`[commerce] GET /inquiry-form returned definitionVersion ${version}; this UI expects ${EXPECTED_DEFINITION_VERSION}`
+	);
+}
 
 export const previewEstimate = (pricingInputs: PricingInputs) =>
 	request<EstimatePreview>('/estimate-preview', { method: 'POST', json: pricingInputs });
@@ -172,7 +191,7 @@ export async function createInquiry(
 
 	let result = await send();
 	for (let attempt = 1; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
-		if (result.ok || !isRetryable(result.error)) break;
+		if (result.ok || !isOutcomeUnknown(result.error)) break;
 		console.warn(
 			`[commerce] POST /inquiries attempt ${attempt} failed (${result.error.status} ${result.error.code}); retrying with the same Idempotency-Key`
 		);

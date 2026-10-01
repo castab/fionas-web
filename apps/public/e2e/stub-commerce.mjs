@@ -13,19 +13,50 @@ const uiKey = process.env.COMMERCE_STUB_KEY ?? 'e2e-ui-key';
 const secured = new Set(['GET /inquiry-form', 'POST /estimate-preview', 'POST /inquiries']);
 
 // Only stale-catalog recovery asks for an uncached form (Cache-Control: no-cache). It gets the
-// "next" catalog: revision 16, Horchata retired. Every other read stays on revision 15, so
-// parallel tests are unaffected.
+// "next" catalog: revision 16, where Horchata is temporarily UNAVAILABLE (still listed) and cookie
+// dough was disabled (so absent, as the public form never lists disabled offerings). Every other
+// read stays on revision 15 (gummy bears unavailable), so parallel tests are unaffected.
 const currentForm = fixture('inquiry-form.json');
 const nextForm = (() => {
 	const form = JSON.parse(currentForm);
 	form.catalogRevision = 16;
 	for (const field of form.sections.flatMap((s) => s.fields)) {
 		if (field.input.type === 'OFFERING_CHOICE') {
-			field.input.options = field.input.options.filter((o) => o.key !== 'horchata');
+			field.input.options = field.input.options
+				.filter((o) => o.key !== 'cookie-dough')
+				.map((o) => (o.key === 'horchata' ? { ...o, availability: 'UNAVAILABLE' } : o));
 		}
 	}
 	return JSON.stringify(form);
 })();
+
+/** Offering keys a customer may pick, per catalog revision. */
+const selectable = Object.fromEntries(
+	[currentForm, nextForm].map((raw) => {
+		const form = JSON.parse(raw);
+		const keys = form.sections
+			.flatMap((s) => s.fields)
+			.flatMap((f) => (f.input.type === 'OFFERING_CHOICE' ? f.input.options : []))
+			.filter((o) => o.selectionState === 'ENABLED' && o.availability === 'AVAILABLE')
+			.map((o) => o.key);
+		return [form.catalogRevision, new Set(keys)];
+	})
+);
+
+/** As the real API: a pick that is unavailable (or unknown) at its revision is a 422. */
+function offeringViolation(pricing) {
+	const allowed = selectable[pricing?.catalogRevision];
+	if (!allowed) return null;
+	const picks = (pricing.selections ?? []).flatMap((s) => s.offerings ?? []);
+	return picks.some((key) => !allowed.has(key)) ? 'OFFERING_UNAVAILABLE' : null;
+}
+
+const unavailableOffering = (res) =>
+	send(res, 422, {
+		code: 'validation_failed',
+		message: 'Offering is unavailable (diagnostic)',
+		violations: [{ code: 'OFFERING_UNAVAILABLE' }]
+	});
 
 /** Committed inquiries (request bodies), for assertions. */
 const submissions = [];
@@ -118,6 +149,7 @@ createServer(async (req, res) => {
 		if (body?.guestCount === 422) {
 			return send(res, 422, { code: 'validation_failed', message: 'Cannot be estimated' });
 		}
+		if (offeringViolation(body)) return unavailableOffering(res);
 		return send(res, 200, fixture('estimate-preview.json'));
 	}
 	if (req.method === 'POST' && pathname === '/inquiries') {
@@ -156,6 +188,10 @@ createServer(async (req, res) => {
 				message: 'guestCount cannot be priced (diagnostic)',
 				violations: [{ code: 'INVALID_GUEST_COUNT' }]
 			});
+		}
+
+		if (body.pricingInputs && offeringViolation(body.pricingInputs)) {
+			return unavailableOffering(res);
 		}
 
 		const receipt = commit(key, body);

@@ -23,6 +23,29 @@ test('the form is rendered from the inquiry-form definition', async ({ page }) =
 	await expect(page.getByRole('radio', { name: '120 minutes' })).toBeVisible();
 	await expect(page.getByRole('checkbox', { name: 'sprinkles' })).toBeVisible();
 	await expect(page.getByText('0 picked · 4 included, up to 6')).toBeVisible();
+
+	// The service section may be skipped (a plain inquiry).
+	await expect(
+		page.locator('section', {
+			has: page.getByRole('heading', { name: 'Build your ice cream service' })
+		})
+	).toContainText('Optional');
+});
+
+test('an unavailable option stays listed and readable but cannot be picked', async ({ page }) => {
+	await page.goto('/book');
+
+	const gummies = page.getByRole('checkbox', { name: /gummy-bears/ });
+	await expect(gummies).toBeVisible();
+	await expect(gummies).toBeDisabled();
+	await expect(gummies).toHaveAccessibleName('gummy-bears · Unavailable — check back later');
+	const chip = page.locator('[data-slot="choice-chip"]', { has: gummies });
+	// Muted with a dashed outline, not faded out like a choice blocked by the maximum.
+	await expect(chip).toHaveCSS('opacity', '1');
+	await expect(chip).toHaveCSS('border-top-style', 'dashed');
+	await gummies.click({ force: true });
+	await expect(gummies).not.toBeChecked();
+	await expect(page.getByRole('checkbox', { name: 'sprinkles' })).toBeEnabled();
 });
 
 test('blocks an empty submit and explains what is missing', async ({ page }) => {

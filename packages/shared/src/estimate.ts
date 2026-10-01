@@ -1,6 +1,7 @@
 import {
 	buildPricingInputs,
 	hasPricingBasics,
+	isSelectable,
 	type EstimateLine,
 	type EstimatePreview,
 	type InquiryAnswers,
@@ -113,7 +114,8 @@ export function computeAdvisoryEstimate(
 		for (const key of selection.offerings) {
 			const option = findOffering(form, selection.category, key);
 			const price = option?.price;
-			if (!option || !price) continue; // unpriced options add no independent contribution
+			// Unpriced options add no independent contribution; unavailable ones can't be chosen at all.
+			if (!option || !price || !isSelectable(option)) continue;
 			const sub = option.description ?? undefined;
 			switch (price.kind) {
 				case 'FIXED':
@@ -132,8 +134,12 @@ export function computeAdvisoryEstimate(
 	}
 
 	const toppings = preview.toppingAdjustment;
-	const chosen =
-		inputs.selections.find((s) => s.category === toppings.category)?.offerings.length ?? 0;
+	const chosen = (
+		inputs.selections.find((s) => s.category === toppings.category)?.offerings ?? []
+	).filter((key) => {
+		const option = findOffering(form, toppings.category, key);
+		return option !== undefined && isSelectable(option);
+	}).length;
 	const extra = Math.max(0, chosen - toppings.includedSelections);
 	if (extra > 0) {
 		lines.push(

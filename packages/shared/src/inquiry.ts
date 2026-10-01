@@ -12,13 +12,26 @@ export type OfferingPrice =
 	| { kind: 'PER_QUANTITY'; amount: string; currency: string; dimension: string }
 	| { kind: 'PER_DURATION'; amount: string; currency: string; interval: string };
 
+/**
+ * One choice in an OFFERING_CHOICE question (commerce-runtime's `OfferingDto`). The public form only
+ * lists ENABLED offerings: disabled and retired ones are absent. `availability` is independent: an
+ * UNAVAILABLE option stays visible (name, description, price) but must not be selectable. It is
+ * temporarily out, not removed from the menu.
+ */
 export type OfferingOption = {
 	key: string;
 	category: string;
 	displayName: string;
 	description?: string | null;
+	/** Descriptive only; absent means the option adds no independent charge. */
 	price?: OfferingPrice;
+	selectionState: 'ENABLED' | 'DISABLED';
+	availability: 'AVAILABLE' | 'UNAVAILABLE';
 };
+
+/** Whether a customer may pick this option right now (enabled and available). */
+export const isSelectable = (option: OfferingOption): boolean =>
+	option.selectionState === 'ENABLED' && option.availability === 'AVAILABLE';
 
 export type InquiryInput =
 	| { type: 'TEXT'; minLength: number; maxLength: number; pattern?: string }
@@ -86,9 +99,12 @@ export type InquiryForm = {
 	catalogId: string;
 	catalogRevision: number;
 	sections: InquiryFormSection[];
-	/** Added in definition version 2; absent from older backends, so the estimate degrades to server-only. */
-	pricingPreview?: InquiryPricingPreview;
+	/** Facts for the instant advisory estimate, for exactly this `catalogRevision`. */
+	pricingPreview: InquiryPricingPreview;
 };
+
+/** The question-definition version this UI was built against (GET /inquiry-form). */
+export const EXPECTED_DEFINITION_VERSION = 6;
 
 export type PricingSelection = { category: string; offerings: string[] };
 
@@ -100,10 +116,14 @@ export type PricingInputs = {
 	selections: PricingSelection[];
 };
 
+/** POST /inquiries: customer intent only. `pricingInputs` is absent for a plain contact inquiry. */
 export type CreateInquiryRequest = {
 	name: string;
 	email: string;
 	message?: string;
+	zipCode: string;
+	eventDate: string;
+	eventType: string;
 	pricingInputs?: PricingInputs;
 };
 
@@ -262,9 +282,13 @@ function validateField(field: InquiryFormField, value: AnswerValue | undefined):
 			return null;
 		case 'OFFERING_CHOICE': {
 			const picked = Array.isArray(value) ? value : [];
-			const known = new Set(input.options.map((o) => o.key));
-			if (picked.some((key) => !known.has(key)))
-				return 'One of those options is no longer available.';
+			const options = new Map(input.options.map((o) => [o.key, o]));
+			if (picked.some((key) => !options.has(key)))
+				return 'One of those options is no longer offered.';
+			const unavailable = picked.map((key) => options.get(key)!).find((o) => !isSelectable(o));
+			if (unavailable) {
+				return `${unavailable.displayName} is unavailable right now — please choose another.`;
+			}
 			if (picked.length < input.minSelections) {
 				return input.maxSelections === input.minSelections
 					? `Choose ${input.minSelections}.`
@@ -278,38 +302,81 @@ function validateField(field: InquiryFormField, value: AnswerValue | undefined):
 	}
 }
 
-/** Per-field error messages for every field; empty when valid. */
+function hasAnswer(field: InquiryFormField, value: AnswerValue | undefined): boolean {
+	if (Array.isArray(value)) return value.length > 0;
+	return typeof value === 'string' && value.trim() !== '';
+}
+
+/**
+ * Whether the customer has started answering a section. An optional section (the service
+ * configuration) may be skipped entirely, which makes a plain contact inquiry; once any of its
+ * questions is answered, its requirements apply in full. A checkbox alone (it always has a value)
+ * doesn't count as starting.
+ */
+export function isSectionInUse(section: InquiryFormSection, answers: InquiryAnswers): boolean {
+	return section.fields.some(
+		(field) => field.input.type !== 'BOOLEAN' && hasAnswer(field, answers.values[field.key])
+	);
+}
+
+/** The questions that apply: every required section, plus optional ones the customer started. */
+function activeFields(form: InquiryForm, answers: InquiryAnswers): InquiryFormField[] {
+	return form.sections
+		.filter((section) => !section.optional || isSectionInUse(section, answers))
+		.flatMap((section) => section.fields);
+}
+
+/** Per-field error messages for every question that applies; empty when valid. */
 export function validateAnswers(form: InquiryForm, answers: InquiryAnswers): FieldErrors {
 	const errors: FieldErrors = {};
-	for (const field of allFields(form)) {
+	for (const field of activeFields(form, answers)) {
 		const error = validateField(field, answers.values[field.key]);
 		if (error) errors[field.key] = error;
 	}
 	return errors;
 }
 
+/** `answers` with every answer in `section` back at its starting value. */
+export function clearSection(
+	form: InquiryForm,
+	section: InquiryFormSection,
+	answers: InquiryAnswers
+): InquiryAnswers {
+	const blank = emptyAnswers(form);
+	const values = { ...answers.values };
+	for (const field of section.fields) values[field.key] = blank.values[field.key]!;
+	return { values };
+}
+
 // --- Catalog refresh ------------------------------------------------------------------------
 
 /**
  * Fits answers given on an older form to a refreshed one (after `CATALOG_REVISION_STALE`) without
- * guessing. Contact and event answers carry over. A choice the new form no longer offers is
- * dropped, never swapped for another, and a pick list that no longer fits its limits is left as is
- * for validation to flag. `changed` lists the keys of every question the customer must look at again.
+ * guessing. Contact and event answers carry over. A choice the new form no longer offers (disabled
+ * or retired: absent) or can't take right now (UNAVAILABLE: still listed) is unselected, never
+ * swapped for another, and a pick list that no longer fits its limits is left as is for validation
+ * to flag. `changed` lists the keys of every question the customer must look at again;
+ * `unavailable` names the picks that were unselected because they are temporarily unavailable.
  */
 export function reconcileAnswers(
 	form: InquiryForm,
 	previous: InquiryAnswers
-): { answers: InquiryAnswers; changed: string[] } {
+): { answers: InquiryAnswers; changed: string[]; unavailable: string[] } {
 	const answers = emptyAnswers(form);
 	const changed: string[] = [];
+	const unavailable: string[] = [];
 	for (const field of allFields(form)) {
 		const value = previous.values[field.key];
 		const input = field.input;
 		switch (input.type) {
 			case 'OFFERING_CHOICE': {
 				const picked = Array.isArray(value) ? value : [];
-				const offered = new Set(input.options.map((o) => o.key));
-				const kept = picked.filter((key) => offered.has(key));
+				const options = new Map(input.options.map((o) => [o.key, o]));
+				const kept = picked.filter((key) => {
+					const option = options.get(key);
+					if (option && !isSelectable(option)) unavailable.push(option.displayName);
+					return option !== undefined && isSelectable(option);
+				});
 				answers.values[field.key] = kept;
 				if (kept.length !== picked.length || (kept.length > 0 && validateField(field, kept))) {
 					changed.push(field.key);
@@ -331,7 +398,7 @@ export function reconcileAnswers(
 				if (typeof value === 'string') answers.values[field.key] = value;
 		}
 	}
-	return { answers, changed };
+	return { answers, changed, unavailable };
 }
 
 // --- Request building -----------------------------------------------------------------------
@@ -359,12 +426,15 @@ export function hasPricingBasics(form: InquiryForm, answers: InquiryAnswers): bo
 	return fields.length > 0 && fields.every((f) => validateField(f, answers.values[f.key]) === null);
 }
 
-/** `pricingInputs` for POST /estimate-preview and POST /inquiries, or undefined when unused. */
+/**
+ * `pricingInputs` for POST /estimate-preview and POST /inquiries, or undefined when the form asks no
+ * pricing questions or the customer skipped the optional service section (a plain inquiry).
+ */
 export function buildPricingInputs(
 	form: InquiryForm,
 	answers: InquiryAnswers
 ): PricingInputs | undefined {
-	const fields = allFields(form).filter(isPricingField);
+	const fields = activeFields(form, answers).filter(isPricingField);
 	if (fields.length === 0) return undefined;
 
 	const pricing: Record<string, unknown> = { catalogRevision: form.catalogRevision };
@@ -391,13 +461,16 @@ export function buildPricingInputs(
 	return pricing as PricingInputs;
 }
 
-/** The POST /inquiries body. Blank `message` is omitted; options/prices are never sent. */
+/**
+ * The POST /inquiries body. Blank `message` is omitted, a skipped optional section sends nothing,
+ * and options, prices and totals are never sent.
+ */
 export function buildInquiryRequest(
 	form: InquiryForm,
 	answers: InquiryAnswers
 ): CreateInquiryRequest {
 	const request: Record<string, unknown> = {};
-	for (const field of allFields(form)) {
+	for (const field of activeFields(form, answers)) {
 		if (isPricingField(field)) continue;
 		const value = answers.values[field.key];
 		const text = typeof value === 'string' ? value.trim() : '';
@@ -421,13 +494,26 @@ export type ApiError = {
 const violationCopy: Record<string, string> = {
 	TOO_MANY_SELECTIONS: 'You picked too many options in one of the lists.',
 	TOO_FEW_SELECTIONS: "You haven't picked enough options in one of the lists.",
-	UNKNOWN_OFFERING:
-		'One of your choices is no longer available. Reload the page to see the current options.',
+	UNKNOWN_OFFERING: 'One of your choices is no longer on our menu. Please choose again.',
+	OFFERING_DISABLED: 'One of your choices is no longer on our menu. Please choose again.',
+	OFFERING_UNAVAILABLE:
+		'One of your choices is unavailable right now. Please choose another, or check back later.',
 	INVALID_GUEST_COUNT: "That guest count isn't something we can price. Try a different number.",
 	UNSUPPORTED_DURATION: "We can't offer that service length. Pick one of the listed options.",
 	PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED:
-		"One of your choices can't be requested online. Reload the page to see the current options."
+		"One of your choices can't be requested online. Please choose again."
 };
+
+/**
+ * Violations meaning the page's options no longer match the catalog (the form is out of date or was
+ * tampered with). The right recovery is a fresh form for the customer to review, never a resubmit.
+ */
+export const CATALOG_STATE_VIOLATIONS: ReadonlySet<string> = new Set([
+	'UNKNOWN_OFFERING',
+	'OFFERING_DISABLED',
+	'OFFERING_UNAVAILABLE',
+	'PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED'
+]);
 
 /** Friendly copy for a stable violation code; never surfaces the server's diagnostic message. */
 export function describeViolation(code: string): string {

@@ -2,18 +2,35 @@ import { describe, expect, it } from 'vitest';
 import {
 	answersFromFormData,
 	buildInquiryRequest,
+	CATALOG_STATE_VIOLATIONS,
+	clearSection,
 	describeViolation,
 	emptyAnswers,
 	formatOfferingPrice,
 	hasPricingBasics,
 	isEstimateReady,
+	isSectionInUse,
+	isSelectable,
 	reconcileAnswers,
 	validateAnswers,
-	type InquiryForm
+	type InquiryForm,
+	type OfferingOption
 } from './inquiry.ts';
 
+const flavor = (
+	key: string,
+	displayName: string,
+	availability: OfferingOption['availability'] = 'AVAILABLE'
+): OfferingOption => ({
+	key,
+	category: 'soft-serve-flavor',
+	displayName,
+	selectionState: 'ENABLED',
+	availability
+});
+
 const form: InquiryForm = {
-	definitionVersion: 1,
+	definitionVersion: 6,
 	catalogId: '0cde8e0b-aa9c-4129-9853-8db2cbbb909b',
 	catalogRevision: 15,
 	sections: [
@@ -86,9 +103,10 @@ const form: InquiryForm = {
 						minSelections: 1,
 						maxSelections: 2,
 						options: [
-							{ key: 'vanilla', category: 'soft-serve-flavor', displayName: 'Vanilla' },
-							{ key: 'chocolate', category: 'soft-serve-flavor', displayName: 'Chocolate' },
-							{ key: 'horchata', category: 'soft-serve-flavor', displayName: 'Horchata' }
+							flavor('vanilla', 'Vanilla'),
+							flavor('chocolate', 'Chocolate'),
+							flavor('horchata', 'Horchata'),
+							flavor('mango', 'Mango', 'UNAVAILABLE')
 						]
 					},
 					presentation: { control: 'CARDS' }
@@ -110,8 +128,21 @@ const form: InquiryForm = {
 				}
 			]
 		}
-	]
+	],
+	pricingPreview: {
+		currency: 'USD',
+		guestQuantityDimension: 'guest',
+		durationOptions: [],
+		perGuestAmount: '1.00',
+		toppingAdjustment: {
+			category: 'topping',
+			includedSelections: 0,
+			additionalSelectionPerGuestAmount: '0.00'
+		}
+	}
 };
+
+const serviceSection = () => form.sections.find((s) => s.key === 'service')!;
 
 function answered() {
 	const answers = emptyAnswers(form);
@@ -133,32 +164,41 @@ describe('emptyAnswers', () => {
 });
 
 describe('validateAnswers', () => {
-	it('flags every missing required field, service questions included', () => {
+	it('flags missing contact details but lets the optional service section be skipped', () => {
 		const errors = validateAnswers(form, emptyAnswers(form));
-		expect(Object.keys(errors).sort()).toEqual([
+		expect(Object.keys(errors).sort()).toEqual(['email', 'name']);
+	});
+
+	it('applies every service requirement once the customer starts that section', () => {
+		const answers = emptyAnswers(form);
+		answers.values.name = 'Jane';
+		answers.values.email = 'jane@example.com';
+		answers.values.guestCount = '75';
+		expect(Object.keys(validateAnswers(form, answers)).sort()).toEqual([
 			'durationMinutes',
-			'email',
-			'guestCount',
-			'name',
 			'offering:soft-serve-flavor'
 		]);
+	});
+
+	it('refuses an unavailable choice by name, without dropping it silently', () => {
+		const answers = answered();
+		answers.values['offering:soft-serve-flavor'] = ['mango'];
+		expect(validateAnswers(form, answers)['offering:soft-serve-flavor']).toBe(
+			'Mango is unavailable right now — please choose another.'
+		);
+		expect(answers.values['offering:soft-serve-flavor']).toEqual(['mango']);
+	});
+
+	it('refuses a choice the form does not list', () => {
+		const answers = answered();
+		answers.values['offering:soft-serve-flavor'] = ['pistachio'];
+		expect(validateAnswers(form, answers)['offering:soft-serve-flavor']).toMatch(/no longer/);
 	});
 
 	it('rejects a malformed email', () => {
 		const answers = answered();
 		answers.values.email = 'jane@';
 		expect(validateAnswers(form, answers).email).toBeDefined();
-	});
-
-	it('reports only the service questions still unanswered', () => {
-		const answers = emptyAnswers(form);
-		answers.values.name = 'Jane';
-		answers.values.email = 'jane@example.com';
-		expect(Object.keys(validateAnswers(form, answers)).sort()).toEqual([
-			'durationMinutes',
-			'guestCount',
-			'offering:soft-serve-flavor'
-		]);
 	});
 
 	it('enforces integer minimums and selection limits', () => {
@@ -201,6 +241,45 @@ describe('buildInquiryRequest', () => {
 		answers.values.message = ' Birthday party ';
 		expect(buildInquiryRequest(form, answers).message).toBe('Birthday party');
 	});
+
+	it('sends a plain inquiry, without pricingInputs, when the service section is skipped', () => {
+		const answers = emptyAnswers(form);
+		answers.values.name = 'Jane';
+		answers.values.email = 'jane@example.com';
+		answers.values.message = 'Can we talk about a school event?';
+		expect(validateAnswers(form, answers)).toEqual({});
+		expect(buildInquiryRequest(form, answers)).toEqual({
+			name: 'Jane',
+			email: 'jane@example.com',
+			message: 'Can we talk about a school event?'
+		});
+	});
+});
+
+describe('optional sections', () => {
+	it('counts a section as started only once a non-checkbox question is answered', () => {
+		const answers = emptyAnswers(form);
+		answers.values.guestCountIsMinimum = true;
+		expect(isSectionInUse(serviceSection(), answers)).toBe(false);
+		answers.values['offering:soft-serve-flavor'] = ['vanilla'];
+		expect(isSectionInUse(serviceSection(), answers)).toBe(true);
+	});
+
+	it('clears a section back to a plain inquiry, leaving other answers alone', () => {
+		const cleared = clearSection(form, serviceSection(), answered());
+		expect(cleared.values.name).toBe('  Jane Doe ');
+		expect(cleared.values.guestCount).toBe('');
+		expect(cleared.values['offering:soft-serve-flavor']).toEqual([]);
+		expect(buildInquiryRequest(form, cleared).pricingInputs).toBeUndefined();
+	});
+});
+
+describe('isSelectable', () => {
+	it('allows only enabled, available offerings', () => {
+		expect(isSelectable(flavor('vanilla', 'Vanilla'))).toBe(true);
+		expect(isSelectable(flavor('mango', 'Mango', 'UNAVAILABLE'))).toBe(false);
+		expect(isSelectable({ ...flavor('x', 'X'), selectionState: 'DISABLED' })).toBe(false);
+	});
 });
 
 describe('reconcileAnswers', () => {
@@ -220,7 +299,7 @@ describe('reconcileAnswers', () => {
 	it('keeps every answer and flags nothing when the form is unchanged', () => {
 		const answers = answered();
 		answers.values.guestCountIsMinimum = true;
-		expect(reconcileAnswers(form, answers)).toEqual({ answers, changed: [] });
+		expect(reconcileAnswers(form, answers)).toEqual({ answers, changed: [], unavailable: [] });
 	});
 
 	it('keeps contact details but drops a retired choice instead of substituting one', () => {
@@ -230,6 +309,29 @@ describe('reconcileAnswers', () => {
 		expect(answers.values.guestCount).toBe('75');
 		expect(answers.values['offering:soft-serve-flavor']).toEqual(['vanilla']);
 		expect(changed).toEqual(['offering:soft-serve-flavor']);
+	});
+
+	it('unselects a choice that became unavailable, keeps it listed and names it', () => {
+		const next = republished();
+		for (const field of next.sections.flatMap((s) => s.fields)) {
+			if (field.input.type === 'OFFERING_CHOICE') {
+				field.input.maxSelections = 2;
+				field.input.options = [
+					flavor('vanilla', 'Vanilla'),
+					flavor('chocolate', 'Chocolate'),
+					flavor('horchata', 'Horchata', 'UNAVAILABLE')
+				];
+			}
+		}
+		const previous = answered();
+		previous.values['offering:soft-serve-flavor'] = ['horchata'];
+		const { answers, changed, unavailable } = reconcileAnswers(next, previous);
+		// Nothing substituted: the list is empty and the minimum now asks for a new choice.
+		expect(answers.values['offering:soft-serve-flavor']).toEqual([]);
+		expect(unavailable).toEqual(['Horchata']);
+		expect(changed).toEqual(['offering:soft-serve-flavor']);
+		expect(answers.values.guestCount).toBe('75');
+		expect(validateAnswers(next, answers)['offering:soft-serve-flavor']).toMatch(/at least 1/);
 	});
 
 	it('flags a pick list that no longer fits its limits without trimming it', () => {
@@ -295,7 +397,19 @@ describe('answersFromFormData', () => {
 describe('copy helpers', () => {
 	it('gives friendly violation text with a generic fallback', () => {
 		expect(describeViolation('TOO_MANY_SELECTIONS')).toMatch(/too many/);
+		expect(describeViolation('OFFERING_UNAVAILABLE')).toMatch(/unavailable right now/);
+		expect(describeViolation('OFFERING_DISABLED')).toMatch(/no longer on our menu/);
 		expect(describeViolation('SOMETHING_NEW')).toMatch(/review/);
+	});
+
+	it('knows which violations mean the options on the page are out of date', () => {
+		expect([...CATALOG_STATE_VIOLATIONS].sort()).toEqual([
+			'OFFERING_DISABLED',
+			'OFFERING_UNAVAILABLE',
+			'PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED',
+			'UNKNOWN_OFFERING'
+		]);
+		expect(CATALOG_STATE_VIOLATIONS.has('INVALID_GUEST_COUNT')).toBe(false);
 	});
 
 	it('formats offering prices', () => {

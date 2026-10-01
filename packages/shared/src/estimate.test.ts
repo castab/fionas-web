@@ -10,8 +10,16 @@ import {
 const offering = (
 	category: string,
 	key: string,
-	price?: OfferingOption['price']
-): OfferingOption => ({ key, category, displayName: key, ...(price ? { price } : {}) });
+	price?: OfferingOption['price'],
+	availability: OfferingOption['availability'] = 'AVAILABLE'
+): OfferingOption => ({
+	key,
+	category,
+	displayName: key,
+	selectionState: 'ENABLED',
+	availability,
+	...(price ? { price } : {})
+});
 
 const choice = (
 	category: string,
@@ -27,9 +35,10 @@ const choice = (
 	presentation: { control: 'CARDS' }
 });
 
-// Mirrors the commerce API's documented example so the arithmetic can be checked against it.
+// Mirrors the commerce API's documented example so the arithmetic can be checked against it. All
+// amounts are fixture values, not any real catalog revision's prices.
 const form: InquiryForm = {
-	definitionVersion: 2,
+	definitionVersion: 6,
 	catalogId: 'c',
 	catalogRevision: 15,
 	sections: [
@@ -75,16 +84,21 @@ const form: InquiryForm = {
 						amount: '0.50',
 						currency: 'USD',
 						dimension: 'guest'
-					})
-				]),
-				choice(
-					'topping',
-					4,
-					6,
-					['sprinkles', 'oreos', 'strawberries', 'brownies', 'gummy-bears', 'cookie-dough'].map(
-						(key) => offering('topping', key)
+					}),
+					// Listed, priced, but temporarily unavailable: it can never add to the estimate.
+					offering(
+						'soft-serve-flavor',
+						'ube',
+						{ kind: 'PER_QUANTITY', amount: '1.00', currency: 'USD', dimension: 'guest' },
+						'UNAVAILABLE'
 					)
-				),
+				]),
+				choice('topping', 4, 6, [
+					...['sprinkles', 'oreos', 'strawberries', 'brownies', 'gummy-bears', 'cookie-dough'].map(
+						(key) => offering('topping', key)
+					),
+					offering('topping', 'mochi', undefined, 'UNAVAILABLE')
+				]),
 				choice('cone-option', 1, 1, [
 					offering('cone-option', 'cup'),
 					offering('cone-option', 'waffle-cone', {
@@ -188,10 +202,50 @@ describe('computeAdvisoryEstimate', () => {
 		expect(computeAdvisoryEstimate(form, answers)?.total).toBe('362.50');
 	});
 
-	it('returns null without the basics or without pricingPreview', () => {
+	it('returns null without the basics or for a duration the preview does not price', () => {
 		expect(computeAdvisoryEstimate(form, emptyAnswers(form))).toBeNull();
+		const answers = answered(four);
+		answers.values.durationMinutes = '90';
+		expect(computeAdvisoryEstimate(form, answers)).toBeNull();
+	});
+
+	it('itemises base service once and the per-guest service rate times guests', () => {
+		const answers = emptyAnswers(form);
+		answers.values.guestCount = '10';
+		answers.values.durationMinutes = '150';
 		expect(
-			computeAdvisoryEstimate({ ...form, pricingPreview: undefined }, answered(four))
-		).toBeNull();
+			computeAdvisoryEstimate(form, answers)?.lines.map((l) => [
+				l.description,
+				l.quantity,
+				l.unitPrice,
+				l.subtotal
+			])
+		).toEqual([
+			['Base service', undefined, '275.00', '275.00'],
+			['Ice cream service', '10', '4.00', '40.00']
+		]);
+	});
+
+	it('never counts an unavailable option, even if one reaches the answers', () => {
+		const answers = answered([...four, 'gummy-bears', 'mochi']);
+		answers.values['offering:soft-serve-flavor'] = ['vanilla', 'horchata', 'ube'];
+		const estimate = computeAdvisoryEstimate(form, answers);
+		expect(estimate?.lines.map((l) => l.description)).not.toContain('ube');
+		// Only gummy bears counts as an extra topping: 643.75 + 1 * 75 * 0.25.
+		expect(estimate?.lines.find((l) => l.description.startsWith('Extra'))?.description).toBe(
+			'Extra toppings (1)'
+		);
+		expect(estimate?.total).toBe('662.50');
+	});
+
+	it('adds money exactly where binary floating point would drift', () => {
+		const cents = JSON.parse(JSON.stringify(form)) as InquiryForm;
+		cents.pricingPreview.perGuestAmount = '0.20';
+		cents.pricingPreview.durationOptions[0]!.baseServiceAmount = '0.10';
+		const answers = emptyAnswers(cents);
+		answers.values.guestCount = '1';
+		answers.values.durationMinutes = '120';
+		expect(0.1 + 0.2).not.toBe(0.3);
+		expect(computeAdvisoryEstimate(cents, answers)?.total).toBe('0.30');
 	});
 });

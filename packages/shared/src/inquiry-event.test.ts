@@ -61,7 +61,18 @@ const form: InquiryForm = {
 				)
 			]
 		}
-	]
+	],
+	pricingPreview: {
+		currency: 'USD',
+		guestQuantityDimension: 'guest',
+		durationOptions: [],
+		perGuestAmount: '0.00',
+		toppingAdjustment: {
+			category: 'topping',
+			includedSelections: 0,
+			additionalSelectionPerGuestAmount: '0.00'
+		}
+	}
 };
 
 function answered() {

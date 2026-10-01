@@ -35,6 +35,11 @@ test('submits through the server with one key and shows the receipt', async ({ p
 	page.on('request', (r) => browserRequests.push(r.url()));
 
 	await fillAll(page, email);
+	// Dynamic options, one of them temporarily unavailable, and an advisory estimate before sending.
+	await expect(page.getByRole('checkbox', { name: /gummy-bears/ })).toBeDisabled();
+	await expect(page.getByRole('checkbox', { name: 'Vanilla' })).toBeChecked();
+	await expect(page.getByText('Estimated total')).toBeVisible();
+	await expect(page.getByText('Estimate only')).toBeVisible();
 	const token = await page.locator('input[name="submissionToken"]').inputValue();
 	expect(token).toMatch(/^[0-9a-f-]{36}$/);
 	await sendButton(page).click();
@@ -59,6 +64,27 @@ test('submits through the server with one key and shows the receipt', async ({ p
 	expect(await attemptsFor(page, email)).toHaveLength(1);
 });
 
+test('a plain inquiry skips the service section and sends no pricing', async ({ page }) => {
+	const email = emailFor('plain');
+	await page.goto('/book');
+	await fillContact(page, email);
+	await page.getByLabel('Tell us about your event').fill('Just a question about a school fair');
+
+	// Starting the service section makes its questions required; clearing it makes it optional again.
+	await page.getByLabel('How many guests?').fill('40');
+	await page
+		.getByRole('region', { name: 'Build your ice cream service' })
+		.getByRole('button', { name: /^Clear these answers/ })
+		.click();
+	await expect(page.getByLabel('How many guests?')).toHaveValue('');
+
+	await sendButton(page).click();
+	await expect(page).toHaveURL(/\/book\/received$/);
+	const submission = await submissionFor(page, email);
+	expect(submission?.message).toBe('Just a question about a school fair');
+	expect(submission?.pricingInputs).toBeUndefined();
+});
+
 test('a lost response is retried with the same key and recorded once', async ({ page }) => {
 	const email = emailFor('lost');
 	await fillAll(page, email);
@@ -70,21 +96,50 @@ test('a lost response is retried with the same key and recorded once', async ({ 
 	expect(await submissionsFor(page, email)).toHaveLength(1);
 });
 
-test('an outage leaves a recoverable form that resends under the same key', async ({ page }) => {
+const retryButton = (page: Page) => page.getByRole('button', { name: 'Try sending again' });
+
+test('an unknown outcome freezes the answers and resends them under the same key', async ({
+	page
+}) => {
 	const email = emailFor('down');
 	await fillAll(page, email);
 	const token = await page.locator('input[name="submissionToken"]').inputValue();
 	await sendButton(page).click();
 
-	await expect(page.getByRole('alert')).toContainText("couldn't confirm your request was sent");
-	await expect(page.getByLabel('Your name')).toHaveValue('Jane Doe');
+	await expect(page.getByRole('alert')).toContainText("couldn't confirm your request was received");
 	await expect(page.getByText('diagnostic')).toHaveCount(0);
+	// Frozen: the exact request that may have been recorded is what goes again.
+	await expect(page.locator('[data-frozen]')).toHaveAttribute('inert', '');
+	await expect(page.getByLabel('Your name')).toHaveValue('Jane Doe');
+	await expect(page.locator('input[name="submissionToken"]')).toHaveValue(token);
 	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, token]);
 
+	await retryButton(page).click();
+	await expect(page).toHaveURL(/\/book\/received$/);
+	const attempts = await attemptsFor(page, email);
+	expect(attempts.map((a) => a.key)).toEqual([token, token, token]);
+	expect(await submissionsFor(page, email)).toHaveLength(1);
+});
+
+test('changing answers after an unknown outcome sends a new request deliberately', async ({
+	page
+}) => {
+	const email = emailFor('down');
+	await fillAll(page, email);
+	const token = await page.locator('input[name="submissionToken"]').inputValue();
+	await sendButton(page).click();
+	await expect(retryButton(page)).toBeVisible();
+
+	await page.getByRole('button', { name: 'Change my answers' }).click();
+	await expect(page.locator('[data-frozen]')).toHaveCount(0);
+	await expect(page.getByText('Your changes will go as a new request')).toBeVisible();
+	const newToken = await page.locator('input[name="submissionToken"]').inputValue();
+	expect(newToken).not.toBe(token);
+
+	await page.getByLabel('Tell us about your event').fill('Changed my mind about the date');
 	await sendButton(page).click();
 	await expect(page).toHaveURL(/\/book\/received$/);
-	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, token, token]);
-	expect(await submissionsFor(page, email)).toHaveLength(1);
+	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, token, newToken]);
 });
 
 test('a catalog change asks for review and sends the reviewed form as a new submission', async ({
@@ -101,12 +156,19 @@ test('a catalog change asks for review and sends the reviewed form as a new subm
 	await expect(notice).toContainText('Choose your soft serve flavors');
 	await expect(page).toHaveURL(/\/book$/);
 
-	// Customer details survive; the retired flavor is gone rather than swapped for another.
+	// Customer details survive. Horchata is temporarily unavailable now: still listed, unselected
+	// and unselectable, and nothing was swapped in for it. Cookie dough was disabled, so it is gone.
+	await expect(notice).toContainText('Horchata is unavailable right now — check back later');
 	await expect(page.getByLabel('Your name')).toHaveValue('Jane Doe');
 	await expect(page.getByLabel('ZIP code')).toHaveValue('02134');
 	await expect(page.getByLabel('Tell us about your event')).toHaveValue('Backyard party');
-	await expect(page.getByRole('checkbox', { name: 'Horchata' })).toHaveCount(0);
+	const horchata = page.getByRole('checkbox', { name: /Horchata/ });
+	await expect(horchata).toBeVisible();
+	await expect(horchata).not.toBeChecked();
+	await expect(horchata).toBeDisabled();
+	await expect(page.getByRole('checkbox', { name: 'cookie-dough' })).toHaveCount(0);
 	await expect(page.getByRole('checkbox', { name: 'Vanilla' })).toBeChecked();
+	await expect(page.getByRole('checkbox', { name: 'Chocolate' })).not.toBeChecked();
 	await expect(page.locator('input[name="catalogRevision"]')).toHaveValue('16');
 	const reviewedToken = await page.locator('input[name="submissionToken"]').inputValue();
 	expect(reviewedToken).not.toBe(token);
@@ -132,7 +194,7 @@ test('a reused key is not retried behind the customer’s back', async ({ page }
 	await sendButton(page).click();
 
 	const alert = page.getByRole('alert');
-	await expect(alert).toContainText("doesn't match the one this page already sent us");
+	await expect(alert).toContainText("We couldn't safely verify this submission");
 	await expect(page.getByText('diagnostic')).toHaveCount(0);
 	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token]);
 
