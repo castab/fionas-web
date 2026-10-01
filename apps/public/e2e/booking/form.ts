@@ -8,9 +8,10 @@ export type Submission = {
 	name: string;
 	email: string;
 	message?: string;
-	pricingInputs?: {
+	pricingInputs: {
 		catalogRevision: number;
 		guestCount: number;
+		guestCountIsMinimum: boolean;
 		durationMinutes: number;
 		selections: { category: string; offerings: string[] }[];
 	};
@@ -58,5 +59,4 @@ export async function fillService(page: Page, guests = '75') {
 	await page.getByRole('radio', { name: 'Waffle cones' }).check();
 }
 
-export const sendButton = (page: Page) =>
-	page.getByRole('button', { name: 'Send booking request' });
+export const sendButton = (page: Page) => page.getByRole('button', { name: 'Send request' });

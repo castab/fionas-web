@@ -1,6 +1,5 @@
 import {
-	buildPricingInputs,
-	hasPricingBasics,
+	draftPricingInputs,
 	isSelectable,
 	type EstimateLine,
 	type EstimatePreview,
@@ -82,8 +81,8 @@ export function computeAdvisoryEstimate(
 	answers: InquiryAnswers
 ): EstimatePreview | null {
 	const preview = form.pricingPreview;
-	if (!preview || !hasPricingBasics(form, answers)) return null;
-	const inputs = buildPricingInputs(form, answers);
+	if (!preview) return null;
+	const inputs = draftPricingInputs(form, answers);
 	if (!inputs) return null;
 
 	const duration = preview.durationOptions.find(

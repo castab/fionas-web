@@ -78,7 +78,7 @@
 		const selectable = input.options.filter(isSelectable).length;
 		const short =
 			selectable < input.minSelections
-				? `Only ${selectable} ${selectable === 1 ? 'is' : 'are'} available right now — you can still send us a message about your event.`
+				? `Only ${selectable} ${selectable === 1 ? 'is' : 'are'} available right now, so this can't be completed online today. Please check back later or email us.`
 				: undefined;
 		return [field.description, extra, short].filter(Boolean).join(' ') || undefined;
 	});

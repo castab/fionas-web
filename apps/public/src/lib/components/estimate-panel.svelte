@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { Card, capsSm, cn } from '@fionas/ui';
 	import {
-		buildPricingInputs,
+		completePricingInputs,
 		computeAdvisoryEstimate,
 		formatMoney,
-		isEstimateReady,
 		type EstimatePreview,
 		type InquiryAnswers,
 		type InquiryForm
@@ -23,8 +22,10 @@
 	let server = $state<{ key: string; estimate: EstimatePreview } | null>(null);
 	let status = $state<'idle' | 'loading' | 'error' | 'rejected'>('idle');
 
-	const complete = $derived(isEstimateReady(form, answers));
-	const key = $derived(complete ? JSON.stringify(buildPricingInputs(form, answers)) : null);
+	const inputs = $derived(completePricingInputs(form, answers));
+	const complete = $derived(inputs !== null);
+	// One server preview per distinct complete configuration (debounced), never per keystroke.
+	const key = $derived(inputs ? JSON.stringify(inputs) : null);
 	const local = $derived(computeAdvisoryEstimate(form, answers));
 
 	const serverCurrent = $derived(server && server.key === key ? server.estimate : null);
@@ -135,12 +136,13 @@
 			</p>
 		{:else if status === 'error' && !local}
 			<p class="m-0 font-medium text-rust-600 [font:var(--type-body-sm)]">
-				We couldn't update the estimate just now. You can still send your inquiry.
+				We couldn't update the estimate just now. You can still send your request.
 			</p>
 		{/if}
 	</div>
 
 	<p class="m-0 text-(--text-muted) [font:var(--type-body-sm)]">
-		This is an early estimate, not a final quote. We'll follow up to confirm the details.
+		This is an early estimate, not a final quote. Fiona's team reviews every request and follows up
+		with a firm quote.
 	</p>
 </Card>

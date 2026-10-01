@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { InquiryForm, PricingInputs } from '@fionas/shared';
+import type { EstimatePreview, InquiryForm, PricingInputs } from '@fionas/shared';
 
 /*
  * Test double for the fionas-commerce HTTP API, installed as `fetch`. It keeps the contract the
@@ -17,6 +17,12 @@ export const formFixture = (): InquiryForm =>
 	JSON.parse(
 		readFileSync(new URL('../../../../e2e/fixtures/inquiry-form.json', import.meta.url), 'utf8')
 	) as InquiryForm;
+
+/** The real POST /estimate-preview answer captured for the fixture form. */
+export const estimateFixture = (): EstimatePreview =>
+	JSON.parse(
+		readFileSync(new URL('../../../../e2e/fixtures/estimate-preview.json', import.meta.url), 'utf8')
+	) as EstimatePreview;
 
 export type RecordedCall = {
 	method: string;
@@ -94,6 +100,15 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		}
 		if (next) return json(next.status, next.body ?? {});
 
+		const pricing = (body as { pricingInputs?: PricingInputs } | undefined)?.pricingInputs;
+		// Definition version 7: every inquiry is configured service. No pricingInputs, no inquiry.
+		if (typeof pricing !== 'object' || pricing === null) {
+			return json(400, {
+				code: 'malformed_request',
+				message: 'Malformed request: body (diagnostic)'
+			});
+		}
+
 		const fingerprint = JSON.stringify(body);
 		const prior = committed.get(key);
 		if (prior) {
@@ -105,14 +120,13 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 			}
 			return json(201, prior.receipt);
 		}
-		const pricing = (body as { pricingInputs?: PricingInputs }).pricingInputs;
-		if (pricing && pricing.catalogRevision !== form.catalogRevision) {
+		if (pricing.catalogRevision !== form.catalogRevision) {
 			return json(409, {
 				code: 'CATALOG_REVISION_STALE',
 				message: `Catalog revision r${pricing.catalogRevision} is stale (diagnostic)`
 			});
 		}
-		const violation = pricing && offeringViolation(pricing);
+		const violation = offeringViolation(pricing);
 		if (violation) {
 			return json(422, {
 				code: 'validation_failed',
@@ -135,6 +149,11 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 			return json(401, { code: 'unauthenticated', message: 'Authentication is required' });
 		}
 		if (method === 'GET' && url.pathname === '/inquiry-form') return json(200, form);
+		if (method === 'POST' && url.pathname === '/estimate-preview') {
+			const next = scripted.shift();
+			if (next && typeof next === 'object') return json(next.status, next.body ?? {});
+			return json(200, estimateFixture());
+		}
 		if (method === 'POST' && url.pathname === '/inquiries') {
 			const result = createInquiry(headers, body);
 			if (result === 'drop') throw new DOMException('The operation timed out.', 'TimeoutError');
@@ -147,7 +166,7 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		fetch,
 		calls,
 		committed,
-		/** Queue one-off answers for the next POST /inquiries calls. */
+		/** Queue one-off answers for the next POST /inquiries (or /estimate-preview) calls. */
 		script: (...next: Scripted[]) => scripted.push(...next),
 		/** Publish a new catalog: later GET /inquiry-form calls see it, older revisions go stale. */
 		publish: (next: InquiryForm) => (form = next),

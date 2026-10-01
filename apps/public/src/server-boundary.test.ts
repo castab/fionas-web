@@ -33,7 +33,7 @@ const clientReachable = [
 	...sources(join(appRoot, '../../packages/shared/src'))
 ];
 
-const secrets = /\$env\/(static|dynamic)\/private|\$lib\/server|COMMERCE_UI_API_KEY|process\.env/;
+const secrets = /\$env\/(static|dynamic)\/private|\$lib\/server|FIONAS_UI_API_KEY|process\.env/;
 
 describe('server-only commerce access', () => {
 	it('finds client-reachable sources to check', () => {
@@ -51,7 +51,7 @@ describe('server-only commerce access', () => {
 	it('reads the UI key only in the commerce adapter', () => {
 		const readers = sources(join(appRoot, 'src'))
 			.filter((path) => !/\.test\.ts$/.test(path))
-			.filter((path) => readFileSync(path, 'utf8').includes('COMMERCE_UI_API_KEY'))
+			.filter((path) => readFileSync(path, 'utf8').includes('FIONAS_UI_API_KEY'))
 			.map((path) => relative(appRoot, path).split(sep).join('/'));
 		expect(readers).toEqual(['src/lib/server/commerce.ts']);
 	});

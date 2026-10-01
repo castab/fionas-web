@@ -50,7 +50,7 @@ export default defineConfig({
 			url: gatedUrl,
 			env: {
 				COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`,
-				COMMERCE_UI_API_KEY: stubKey,
+				FIONAS_UI_API_KEY: stubKey,
 				BOOKING_ENABLED: 'false'
 			},
 			reuseExistingServer: !process.env.CI,
@@ -59,7 +59,7 @@ export default defineConfig({
 		{
 			command: `node e2e/start-booking-preview.mjs ${gatedUrl} ${bookingPort}`,
 			url: bookingUrl,
-			env: { COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`, COMMERCE_UI_API_KEY: stubKey },
+			env: { COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`, FIONAS_UI_API_KEY: stubKey },
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		}

@@ -27,12 +27,13 @@
 	class="mx-auto w-full max-w-[640px] flex-1 px-6 pt-11 pb-[72px] max-[600px]:px-4 max-[600px]:pt-7"
 >
 	<Card class="flex flex-col items-start gap-4" role="status">
-		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">
-			Thanks — we got your request! 🍦
-		</h1>
+		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request received 🍦</h1>
 		<p class="m-0 text-(--text-body)">
-			We'll be in touch at the email you gave us to talk through your event and send a firm quote.
-			This is a request, not a booking: nothing is reserved or charged yet.
+			Thanks for telling us about your event! Fiona's team will review your request and follow up at
+			the email you gave us to talk through the details and send a firm quote.
+		</p>
+		<p class="m-0 text-(--text-body)">
+			This is a request, not a booking yet: your date isn't reserved and nothing has been charged.
 		</p>
 		<dl class="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
 			<dt class={cn(capsXs, 'self-center text-(--text-muted)')}>Reference</dt>

@@ -165,7 +165,16 @@ createServer(async (req, res) => {
 		if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
 			return send(res, 400, { code: 'malformed_request', message: 'Malformed request: header' });
 		}
-		if (!body?.name || !body?.email || !body?.zipCode || !body?.eventDate || !body?.eventType) {
+		// As the real API (definition version 7): pricingInputs is required, there is no plain inquiry.
+		if (
+			!body?.name ||
+			!body?.email ||
+			!body?.zipCode ||
+			!body?.eventDate ||
+			!body?.eventType ||
+			typeof body?.pricingInputs !== 'object' ||
+			body.pricingInputs === null
+		) {
 			return send(res, 400, { code: 'malformed_request', message: 'Malformed request' });
 		}
 		const conflict = (code) =>
@@ -190,7 +199,7 @@ createServer(async (req, res) => {
 			});
 		}
 
-		if (body.pricingInputs && offeringViolation(body.pricingInputs)) {
+		if (offeringViolation(body.pricingInputs)) {
 			return unavailableOffering(res);
 		}
 

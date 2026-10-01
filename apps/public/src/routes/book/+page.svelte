@@ -3,17 +3,16 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { Button, Card, capsXs, cn, hintText } from '@fionas/ui';
 	import {
-		clearSection,
 		emptyAnswers,
 		instagramUrl,
-		isSectionInUse,
+		isSkippable,
 		mailtoUrl,
+		prepareInquiry,
 		site,
 		validateAnswers,
 		type FieldErrors,
 		type InquiryForm,
 		type InquiryFormField,
-		type InquiryFormSection,
 		type InquiryAnswers
 	} from '@fionas/shared';
 	import EstimatePanel from '$lib/components/estimate-panel.svelte';
@@ -33,11 +32,15 @@
 	 */
 	type Phase = 'editing' | 'submitting' | 'ambiguous' | 'review' | 'failed';
 
-	type Review = { fields: string[]; unavailable: string[] };
+	type Review = { fields: string[]; unavailable: string[]; removed: number };
 
 	function reviewOf(failed: SubmissionFailure | null | undefined): Review | null {
 		if (!failed?.refreshedForm) return null;
-		return { fields: failed.reviewFields ?? [], unavailable: failed.unavailableChoices ?? [] };
+		return {
+			fields: failed.reviewFields ?? [],
+			unavailable: failed.unavailableChoices ?? [],
+			removed: failed.removedChoices ?? 0
+		};
 	}
 
 	function phaseOf(failed: SubmissionFailure | null | undefined): Phase {
@@ -107,11 +110,6 @@
 		}
 	});
 
-	const isPricingField = (field: InquiryFormField) =>
-		field.submissionPointer.startsWith('/pricingInputs/');
-
-	const hasPricing = $derived(!!inquiryForm?.sections.some((s) => s.fields.some(isPricingField)));
-
 	function applyFailure(failed: SubmissionFailure | undefined) {
 		if (failed?.refreshedForm) inquiryForm = failed.refreshedForm;
 		if (failed?.answers) answers = failed.answers;
@@ -137,10 +135,6 @@
 		restarted = true;
 		phase = 'editing';
 		formError = null;
-	}
-
-	function clear(section: InquiryFormSection) {
-		if (inquiryForm && answers) answers = clearSection(inquiryForm, section, answers);
 	}
 
 	/** Short single-line answers sit two to a row; chip groups and notes take the full width. */
@@ -172,7 +166,7 @@
 </script>
 
 <svelte:head>
-	<title>Book · {site.name}</title>
+	<title>Request the trailer · {site.name}</title>
 	<meta name="description" content="Tell us about your event and build your ice cream service." />
 </svelte:head>
 
@@ -183,18 +177,19 @@
 		<h1
 			class="m-0 font-sans text-[34px] leading-[1.15] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]"
 		>
-			Book the trailer
+			Request the trailer
 		</h1>
 		<p class="m-0 text-(--text-body) [font:var(--type-body)]">
-			Pick your flavors, tell us about your event, and check your estimate at the bottom — we'll
-			follow up with a firm quote. Sending a request doesn't book anything or charge you.
+			Tell us about your event, build your ice cream service, and check your estimate at the bottom
+			— we'll review your request and follow up with a firm quote. Sending a request doesn't book
+			anything or charge you.
 		</p>
 	</div>
 
 	{#if !inquiryForm || !answers}
 		<Card class="flex flex-col items-start gap-4">
 			<h2 class="m-0 text-(--text-heading) [font:var(--type-h2)]">
-				The booking form isn't available right now
+				The request form isn't available right now
 			</h2>
 			<p class="m-0 text-(--text-body)">
 				Please try again in a little while, or reach us directly and we'll get you sorted.
@@ -221,14 +216,22 @@
 					return;
 				}
 				// Runs for every submit with the latest state (the form may have been refreshed since).
+				// The gate: no complete service configuration, no request. The server checks again.
 				attempted = true;
-				errors = validateAnswers(inquiryForm!, answers!);
 				formError = null;
-				if (Object.keys(errors).length > 0) {
+				const command = prepareInquiry(inquiryForm!, answers!, { catalogRevision });
+				if (!command.ok) {
 					cancel();
-					focusFirstError();
+					if (command.reason === 'invalid') {
+						errors = command.errors;
+						focusFirstError();
+					} else {
+						formError =
+							"We can't take requests online right now. Please try again later, or email us about your event.";
+					}
 					return;
 				}
+				errors = {};
 				const previous = phase;
 				phase = 'submitting';
 				return async ({ result, update }) => {
@@ -271,6 +274,13 @@
 							? 'Our menu changed while you were filling this in'
 							: 'Some of your choices need another look'}
 					</h2>
+					{#if review.removed > 0}
+						<p class="m-0 text-(--text-body) [font:var(--type-body-sm)]">
+							{review.removed === 1
+								? "One of the options you chose isn't on our menu anymore, so we've removed it."
+								: `${review.removed} of the options you chose aren't on our menu anymore, so we've removed them.`}
+						</p>
+					{/if}
 					{#if review.unavailable.length > 0}
 						<p class="m-0 text-(--text-body) [font:var(--type-body-sm)]">
 							{listOf(review.unavailable)}
@@ -296,18 +306,14 @@
 				data-frozen={frozen ? '' : undefined}
 			>
 				{#each currentForm.sections as section (section.key)}
-					<!-- Clearing a started optional pricing section turns the request back into a plain one. -->
-					{@const clearable =
-						section.optional &&
-						section.fields.some(isPricingField) &&
-						isSectionInUse(section, currentAnswers)}
+					<!-- Only a section that may be left blank says so: the service section never can. -->
 					<section class="flex flex-col gap-3.5" aria-labelledby="section-{section.key}">
 						<div class="flex flex-col gap-1">
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
 								<h2 id="section-{section.key}" class={cn(capsXs, 'm-0 text-olive-700')}>
 									{section.title}
 								</h2>
-								{#if section.optional}
+								{#if isSkippable(section)}
 									<span
 										class={cn(
 											capsXs,
@@ -316,15 +322,6 @@
 									>
 										Optional
 									</span>
-								{/if}
-								{#if clearable && hydrated}
-									<button
-										type="button"
-										class="ml-auto cursor-pointer rounded-sm border-0 bg-transparent p-0 font-sans text-xs font-semibold text-olive-700 underline underline-offset-2 hover:text-olive-900 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-(--focus-ring)"
-										onclick={() => clear(section)}
-									>
-										Clear these answers<span class="sr-only">: {section.title}</span>
-									</button>
 								{/if}
 							</div>
 							{#if section.description}
@@ -348,9 +345,7 @@
 					</section>
 				{/each}
 
-				{#if hasPricing}
-					<EstimatePanel form={currentForm} answers={currentAnswers} />
-				{/if}
+				<EstimatePanel form={currentForm} answers={currentAnswers} />
 			</div>
 
 			{#if formError}
@@ -408,7 +403,7 @@
 					We'll only use your details to reply to this request.
 				</p>
 				<Button type="submit" size="lg" disabled={submitting}>
-					{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send booking request'}
+					{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send request'}
 				</Button>
 			</div>
 		</form>

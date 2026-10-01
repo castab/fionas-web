@@ -38,14 +38,14 @@ const choice = (
 // Mirrors the commerce API's documented example so the arithmetic can be checked against it. All
 // amounts are fixture values, not any real catalog revision's prices.
 const form: InquiryForm = {
-	definitionVersion: 6,
+	definitionVersion: 7,
 	catalogId: 'c',
 	catalogRevision: 15,
 	sections: [
 		{
 			key: 'service',
 			title: 'Service',
-			optional: true,
+			optional: false,
 			fields: [
 				{
 					key: 'guestCount',
@@ -247,5 +247,28 @@ describe('computeAdvisoryEstimate', () => {
 		answers.values.durationMinutes = '120';
 		expect(0.1 + 0.2).not.toBe(0.3);
 		expect(computeAdvisoryEstimate(cents, answers)?.total).toBe('0.30');
+	});
+
+	it('multiplies per-guest offering prices exactly', () => {
+		const cents = JSON.parse(JSON.stringify(form)) as InquiryForm;
+		cents.pricingPreview.perGuestAmount = '0.00';
+		cents.pricingPreview.durationOptions[0]!.baseServiceAmount = '0.00';
+		const flavors = cents.sections[0]!.fields.find((f) => f.key === 'offering:soft-serve-flavor')!;
+		if (flavors.input.type === 'OFFERING_CHOICE') {
+			flavors.input.options[1]!.price = {
+				kind: 'PER_QUANTITY',
+				amount: '0.07',
+				currency: 'USD',
+				dimension: 'guest'
+			};
+		}
+		const answers = emptyAnswers(cents);
+		answers.values.guestCount = '100';
+		answers.values.durationMinutes = '120';
+		answers.values['offering:soft-serve-flavor'] = ['horchata'];
+		expect(0.07 * 100).not.toBe(7);
+		const estimate = computeAdvisoryEstimate(cents, answers);
+		expect(estimate?.lines.find((l) => l.description === 'horchata')?.subtotal).toBe('7.00');
+		expect(estimate?.total).toBe('7.00');
 	});
 });

@@ -45,7 +45,7 @@ test('submits through the server with one key and shows the receipt', async ({ p
 	await sendButton(page).click();
 
 	await expect(page).toHaveURL(/\/book\/received$/);
-	await expect(receivedCard(page)).toContainText('we got your request');
+	await expect(receivedCard(page)).toContainText('Request received');
 	await expect(receivedCard(page)).toContainText('not a booking');
 	expect(await attemptsFor(page, email)).toEqual([{ email, key: token, authorized: true }]);
 
@@ -60,29 +60,56 @@ test('submits through the server with one key and shows the receipt', async ({ p
 
 	// Reloading the confirmation re-posts nothing.
 	await page.reload();
-	await expect(receivedCard(page)).toContainText('we got your request');
+	await expect(receivedCard(page)).toContainText('Request received');
 	expect(await attemptsFor(page, email)).toHaveLength(1);
 });
 
-test('a plain inquiry skips the service section and sends no pricing', async ({ page }) => {
-	const email = emailFor('plain');
+test('there is no contact-only inquiry: the service must be configured first', async ({ page }) => {
+	const email = emailFor('contact');
 	await page.goto('/book');
 	await fillContact(page, email);
 	await page.getByLabel('Tell us about your event').fill('Just a question about a school fair');
+	await sendButton(page).click();
 
-	// Starting the service section makes its questions required; clearing it makes it optional again.
-	await page.getByLabel('How many guests?').fill('40');
-	await page
-		.getByRole('region', { name: 'Build your ice cream service' })
-		.getByRole('button', { name: /^Clear these answers/ })
-		.click();
-	await expect(page.getByLabel('How many guests?')).toHaveValue('');
+	// Nothing sent; the service questions say what is missing.
+	await expect(page).toHaveURL(/\/book$/);
+	await expect(page.getByLabel('How many guests?')).toBeFocused();
+	const service = page.getByRole('region', { name: 'Build your ice cream service' });
+	await expect(service.getByText('This field is required.')).toBeVisible();
+	await expect(service.getByText('Choose at least 1.')).toBeVisible();
+	await expect(service.getByText('Choose at least 4.')).toBeVisible();
+	expect(await attemptsFor(page, email)).toEqual([]);
 
+	// Completing the service makes it a real inquiry, priced by the backend.
+	await fillService(page);
 	await sendButton(page).click();
 	await expect(page).toHaveURL(/\/book\/received$/);
-	const submission = await submissionFor(page, email);
-	expect(submission?.message).toBe('Just a question about a school fair');
-	expect(submission?.pricingInputs).toBeUndefined();
+	expect((await submissionFor(page, email))?.pricingInputs.guestCount).toBe(75);
+});
+
+test('a contact-only post without JavaScript is refused by the server', async ({
+	page,
+	baseURL
+}) => {
+	const email = emailFor('nojs');
+	await page.goto('/book');
+	const token = await page.locator('input[name="submissionToken"]').inputValue();
+	const response = await page.request.post('/book', {
+		form: {
+			submissionToken: token,
+			catalogRevision: '15',
+			name: 'Jane Doe',
+			email,
+			zipCode: '02134',
+			eventDate: '2026-12-05',
+			eventType: 'BIRTHDAY',
+			message: 'Contact only, please'
+		},
+		headers: { accept: 'text/html', origin: baseURL! },
+		maxRedirects: 0
+	});
+	expect(response.status()).toBe(422);
+	expect(await attemptsFor(page, email)).toEqual([]);
 });
 
 test('a lost response is retried with the same key and recorded once', async ({ page }) => {
@@ -147,6 +174,8 @@ test('a catalog change asks for review and sends the reviewed form as a new subm
 }) => {
 	const email = emailFor('stale');
 	await fillAll(page, email);
+	// A fifth topping, which revision 16 no longer lists at all.
+	await page.getByRole('checkbox', { name: 'cookie-dough' }).check();
 	await page.getByLabel('Tell us about your event').fill('Backyard party');
 	const token = await page.locator('input[name="submissionToken"]').inputValue();
 	await sendButton(page).click();
@@ -159,6 +188,7 @@ test('a catalog change asks for review and sends the reviewed form as a new subm
 	// Customer details survive. Horchata is temporarily unavailable now: still listed, unselected
 	// and unselectable, and nothing was swapped in for it. Cookie dough was disabled, so it is gone.
 	await expect(notice).toContainText('Horchata is unavailable right now — check back later');
+	await expect(notice).toContainText("One of the options you chose isn't on our menu anymore");
 	await expect(page.getByLabel('Your name')).toHaveValue('Jane Doe');
 	await expect(page.getByLabel('ZIP code')).toHaveValue('02134');
 	await expect(page.getByLabel('Tell us about your event')).toHaveValue('Backyard party');
@@ -181,10 +211,11 @@ test('a catalog change asks for review and sends the reviewed form as a new subm
 	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, reviewedToken]);
 	const submission = await submissionFor(page, email);
 	expect(submission?.pricingInputs?.catalogRevision).toBe(16);
-	expect(submission?.pricingInputs?.selections[0]).toEqual({
-		category: 'soft-serve-flavor',
-		offerings: ['vanilla']
-	});
+	expect(submission?.pricingInputs?.selections).toEqual([
+		{ category: 'soft-serve-flavor', offerings: ['vanilla'] },
+		{ category: 'topping', offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies'] },
+		{ category: 'cone-option', offerings: ['waffle-cone'] }
+	]);
 });
 
 test('a reused key is not retried behind the customer’s back', async ({ page }) => {
@@ -272,7 +303,7 @@ test('nothing the browser receives carries the commerce credential or address', 
 		expect(text).not.toContain(STUB_KEY);
 		expect(text).not.toContain('Bearer');
 		expect(text).not.toContain(stub);
-		expect(text).not.toMatch(/COMMERCE_(UI_API_KEY|API_URL)/);
+		expect(text).not.toMatch(/FIONAS_UI_API_KEY|COMMERCE_API_URL/);
 	}
 
 	// The client build holds no private configuration either.
@@ -286,6 +317,6 @@ test('nothing the browser receives carries the commerce credential or address', 
 	expect(client.length).toBeGreaterThan(0);
 	for (const file of client) {
 		const text = readFileSync(file, 'utf8');
-		expect(text, file).not.toMatch(/COMMERCE_UI_API_KEY|COMMERCE_API_URL|e2e-ui-key/);
+		expect(text, file).not.toMatch(/FIONAS_UI_API_KEY|COMMERCE_API_URL|e2e-ui-key/);
 	}
 });

@@ -40,17 +40,21 @@ npm run dev:admin    # admin on http://localhost:5174
 `POST /estimate-preview`, `POST /inquiries`). The backend sends no CORS headers, so the public app
 calls it server-side only. Copy `apps/public/.env.example` to `apps/public/.env` (git-ignored; restart the dev server after editing) to configure:
 
-| Variable              | Default                 | Purpose                                                                                                                                                 |
-| --------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `COMMERCE_API_URL`    | `http://localhost:8080` | Base URL of the commerce API                                                                                                                            |
-| `COMMERCE_UI_API_KEY` | unset                   | Trusted UI key, sent as `Authorization: Bearer <key>` on the three endpoints above; without it they return 401 and `/book` shows its "unavailable" page |
-| `BOOKING_ENABLED`     | unset (off)             | `true` enables `/book` and links the Book buttons to it; off: `/book` is a 404 and the buttons show the toast                                           |
+| Variable            | Default                 | Purpose                                                                                                                                                                                        |
+| ------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COMMERCE_API_URL`  | `http://localhost:8080` | Base URL of the commerce API                                                                                                                                                                   |
+| `FIONAS_UI_API_KEY` | unset                   | Trusted UI key (same name and value as the backend's), sent as `Authorization: Bearer <key>` on the three endpoints above; without it they return 401 and `/book` shows its "unavailable" page |
+| `BOOKING_ENABLED`   | unset (off)             | `true` enables `/book` and links the Book buttons to it; off: `/book` is a 404 and the buttons show the toast                                                                                  |
 
-`COMMERCE_UI_API_KEY` is a secret: keep it only in the git-ignored `apps/public/.env` (or your host's
+`FIONAS_UI_API_KEY` is a secret: keep it only in the git-ignored `apps/public/.env` (or your host's
 environment), never in `.env.example`, and never in client code. It is read through SvelteKit's
 private env in `src/lib/server/`, so it cannot be bundled into the browser.
 
 While `BOOKING_ENABLED` is off, `/book` (page, form action and estimate endpoint) returns 404. E2E tests use a stub API, so they need no running backend.
+
+Every inquiry is a request for configured ice cream service: the form won't send until guest
+count, duration and the required flavor/topping/cone choices are complete, and the backend prices
+each accepted inquiry into its initial Estimate. The estimate shown while filling in is advisory.
 
 Each rendered form carries one non-secret submission token, which the server sends as
 `POST /inquiries`' `Idempotency-Key` for every delivery and retry of that submission, so double

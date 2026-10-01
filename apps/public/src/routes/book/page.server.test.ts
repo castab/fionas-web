@@ -68,7 +68,7 @@ let warnings: string[];
 
 beforeEach(() => {
 	env.COMMERCE_API_URL = TEST_BASE_URL;
-	env.COMMERCE_UI_API_KEY = TEST_UI_KEY;
+	env.FIONAS_UI_API_KEY = TEST_UI_KEY;
 	env.BOOKING_ENABLED = 'true';
 	backend = fakeCommerce();
 	vi.stubGlobal('fetch', vi.fn(backend.fetch));
@@ -143,6 +143,27 @@ describe('/book load', () => {
 		expect(serialized).not.toContain(TEST_BASE_URL);
 	});
 
+	it('renders the version 7 definition as sent, service section required', async () => {
+		const { data } = await loadPage();
+		expect(data.form?.definitionVersion).toBe(7);
+		expect(data.form?.sections.map((s) => [s.key, s.optional])).toEqual([
+			['contact', false],
+			['event', false],
+			['service', false],
+			['additional', true]
+		]);
+		expect(warnings).toEqual([]);
+	});
+
+	it('fails closed on a form outside the contract', async () => {
+		const broken = formFixture() as unknown as { sections: { fields: { input: unknown }[] }[] };
+		broken.sections[2]!.fields[0]!.input = { type: 'SLIDER', min: 1 };
+		backend.publish(broken as unknown as InquiryForm);
+
+		const { data } = await loadPage();
+		expect(data.form).toBeNull();
+	});
+
 	it('gives every page view its own logical submission', async () => {
 		const first = await loadPage();
 		const second = await loadPage();
@@ -173,6 +194,7 @@ describe('/book submission', () => {
 			pricingInputs: {
 				catalogRevision: 15,
 				guestCount: 75,
+				guestCountIsMinimum: false,
 				durationMinutes: 120,
 				selections: [
 					{ category: 'soft-serve-flavor', offerings: ['vanilla', 'horchata'] },
@@ -186,37 +208,62 @@ describe('/book submission', () => {
 		expect(receiptPage()).toEqual({ receipt });
 	});
 
-	it('submits a plain inquiry when the form asks no pricing questions', async () => {
-		const plain = formFixture();
-		plain.sections = plain.sections.filter((s) => s.key !== 'service');
-		backend.publish(plain);
-
+	// Critical regression: definition version 7 has no plain/contact-only inquiry.
+	it('refuses a contact-only submission and sends nothing', async () => {
 		const { data } = await loadPage();
-		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
-		const outcome = await post(
-			formData(data.submissionToken, 15, { name, email, zipCode, eventDate, eventType })
-		);
-
-		expect(outcome).toMatchObject({ redirect: '/book/received' });
-		expect(backend.posts()[0]?.body).toEqual({ name, email, zipCode, eventDate, eventType });
-	});
-
-	it('sends a plain inquiry when the customer skips the optional service section', async () => {
-		const { data } = await loadPage();
-		expect(data.form?.sections.find((s) => s.key === 'service')?.optional).toBe(true);
 		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
 		const contactOnly = { name, email, zipCode, eventDate, eventType, message: 'Call me?' };
 
 		const outcome = await post(formData(data.submissionToken, 15, contactOnly));
 
-		expect(outcome).toMatchObject({ redirect: '/book/received' });
-		const [call] = backend.posts();
-		expect(call?.headers['idempotency-key']).toBe(data.submissionToken);
-		// No pricingInputs at all: a plain inquiry creates no Estimate.
-		expect(call?.body).toEqual({ ...contactOnly });
+		expect(outcome.status).toBe(422);
+		const failure = failureOf(outcome);
+		expect(failure.outcome).toBe('invalid');
+		expect(Object.keys(failure.errors ?? {}).sort()).toEqual([
+			'durationMinutes',
+			'guestCount',
+			'offering:cone-option',
+			'offering:soft-serve-flavor',
+			'offering:topping'
+		]);
+		expect(failure.submissionToken).toBe(data.submissionToken);
+		expect(backend.posts()).toHaveLength(0);
 	});
 
-	it('still requires the whole service section once the customer has started it', async () => {
+	it('requires the service even when the backend marks its section optional', async () => {
+		const drifted = formFixture();
+		drifted.sections.find((s) => s.key === 'service')!.optional = true;
+		backend.publish(drifted);
+		const { data } = await loadPage();
+		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
+
+		const failure = failureOf(
+			await post(formData(data.submissionToken, 15, { name, email, zipCode, eventDate, eventType }))
+		);
+
+		expect(failure.outcome).toBe('invalid');
+		expect(backend.posts()).toHaveLength(0);
+		expect(warnings.join(' ')).toMatch(/marks section "service" optional/);
+	});
+
+	it('offers no form, and sends nothing, when the definition cannot produce pricingInputs', async () => {
+		const noService = formFixture();
+		noService.sections = noService.sections.filter((s) => s.key !== 'service');
+		backend.publish(noService);
+
+		const { data } = await loadPage();
+		expect(data.form).toBeNull();
+
+		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
+		const failure = failureOf(
+			await post(formData(data.submissionToken, 15, { name, email, zipCode, eventDate, eventType }))
+		);
+		expect(failure.outcome).toBe('unavailable');
+		expect(failure.formError).toMatch(/hasn't been sent/);
+		expect(backend.posts()).toHaveLength(0);
+	});
+
+	it('requires the whole service configuration, not just part of it', async () => {
 		const { data } = await loadPage();
 		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
 		const started = { name, email, zipCode, eventDate, eventType, guestCount: '40' };
@@ -317,7 +364,7 @@ describe('/book submission', () => {
 
 	it('keeps an unresolved submission ambiguous when the retry cannot even start', async () => {
 		const { data } = await loadPage();
-		env.COMMERCE_UI_API_KEY = 'rotated-elsewhere';
+		env.FIONAS_UI_API_KEY = 'rotated-elsewhere';
 
 		const retry = failureOf(
 			await post(formData(data.submissionToken, 15, priced, { outcomeUnknown: 'true' }))
@@ -328,7 +375,7 @@ describe('/book submission', () => {
 
 	it('reports a backend it cannot reach before sending as unavailable, with nothing sent', async () => {
 		const { data } = await loadPage();
-		env.COMMERCE_UI_API_KEY = 'rotated-elsewhere';
+		env.FIONAS_UI_API_KEY = 'rotated-elsewhere';
 
 		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
 		expect(failure).toMatchObject({
@@ -450,11 +497,51 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 			'offering:soft-serve-flavor': ['vanilla']
 		});
 		expect(failure.reviewFields).toEqual(['Choose your soft serve flavors']);
-		// A disabled option is simply gone: nothing more specific can be said about it.
+		// A disabled option is simply gone: counted, never named or described.
 		expect(failure.unavailableChoices).toEqual([]);
+		expect(failure.removedChoices).toBe(1);
 		expect(failure.submissionToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(failure.submissionToken).not.toBe(data.submissionToken);
 		expect(backend.committed.size).toBe(0);
+	});
+
+	/** Revision 16 no longer offers the 120-minute service the customer chose. */
+	function republishWithout120() {
+		const next = formFixture();
+		next.catalogRevision = 16;
+		const duration = next.sections
+			.flatMap((s) => s.fields)
+			.find((f) => f.key === 'durationMinutes');
+		if (duration?.input.type === 'INTEGER_CHOICE') {
+			duration.input.options = duration.input.options.filter((o) => o.value !== 120);
+		}
+		backend.publish(next);
+	}
+
+	it('asks for review, without sending, when older answers no longer fit the service questions', async () => {
+		const { data } = await loadPage();
+		republishWithout120();
+
+		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+
+		expect(failure.outcome).toBe('stale');
+		expect(failure.answers?.values.durationMinutes).toBe('');
+		expect(failure.reviewFields).toEqual(['How long would you like service?']);
+		expect(failure.submissionToken).not.toBe(data.submissionToken);
+		expect(backend.posts()).toHaveLength(0);
+	});
+
+	it('keeps an unresolved submission unknown, never "not sent", when its answers no longer fit', async () => {
+		const { data } = await loadPage();
+		republishWithout120();
+
+		const failure = failureOf(
+			await post(formData(data.submissionToken, 15, priced, { outcomeUnknown: 'true' }))
+		);
+
+		expect(failure).toMatchObject({ outcome: 'ambiguous', submissionToken: data.submissionToken });
+		expect(failure.refreshedForm).toBeUndefined();
+		expect(backend.posts()).toHaveLength(0);
 	});
 
 	it('keeps a newly unavailable choice listed but unselects it and says so', async () => {
@@ -476,6 +563,7 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 		// Unselected, never swapped for another flavor; the minimum now asks the customer to choose.
 		expect(failure.answers?.values['offering:soft-serve-flavor']).toEqual([]);
 		expect(failure.unavailableChoices).toEqual(['Horchata']);
+		expect(failure.removedChoices).toBe(0);
 		expect(failure.reviewFields).toEqual(['Choose your soft serve flavors']);
 		expect(failure.submissionToken).not.toBe(data.submissionToken);
 		expect(backend.posts()).toHaveLength(1);
@@ -557,7 +645,7 @@ describe('/book with a reused key (IDEMPOTENCY_KEY_REUSED)', () => {
 			answers: { values: expect.objectContaining({ guestCount: '90' }) }
 		});
 		expect(failure.formError).toBe(
-			"We couldn't safely verify this submission. Please restart the inquiry or contact us if you're unsure whether it was received."
+			"We couldn't safely verify this submission. Please restart the request or contact us if you're unsure whether it was received."
 		);
 		expect(failure.restartToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(failure.restartToken).not.toBe(data.submissionToken);

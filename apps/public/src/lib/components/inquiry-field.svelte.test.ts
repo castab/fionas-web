@@ -144,7 +144,9 @@ describe('offering question rendering', () => {
 		});
 
 		await expect
-			.element(page.getByText(/Only 1 is available right now — you can still send us a message/))
+			.element(
+				page.getByText(/Only 1 is available right now, so this can't be completed online today/)
+			)
 			.toBeVisible();
 	});
 

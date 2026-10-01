@@ -1,11 +1,11 @@
 import type { Cookies } from '@sveltejs/kit';
 import {
 	answersFromFormData,
-	buildInquiryRequest,
 	CATALOG_STATE_VIOLATIONS,
 	describeViolation,
+	prepareInquiry,
+	pricingContractProblem,
 	reconcileAnswers,
-	validateAnswers,
 	type ApiError,
 	type InquiryAnswers,
 	type InquiryForm
@@ -60,11 +60,14 @@ async function refreshForReview(
 	status: number
 ): Promise<SubmitResult> {
 	const fresh = await getInquiryForm({ fresh: true });
-	if (!fresh.ok) {
+	if (!fresh.ok || pricingContractProblem(fresh.data) !== null) {
 		return { ok: false, status, failure: { outcome, formError: submissionCopy.staleWithoutForm } };
 	}
 	const form = fresh.data;
-	const { answers, changed, unavailable } = reconcileAnswers(form, answersFromFormData(form, data));
+	const { answers, changed, unavailable, removed } = reconcileAnswers(
+		form,
+		answersFromFormData(form, data)
+	);
 	return {
 		ok: false,
 		status,
@@ -74,6 +77,7 @@ async function refreshForReview(
 			refreshedForm: form,
 			reviewFields: labelsOf(form, changed),
 			unavailableChoices: unavailable,
+			removedChoices: removed,
 			catalogRevision: form.catalogRevision,
 			submissionToken: newSubmissionToken()
 		}
@@ -120,9 +124,9 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 		});
 
 	// The current form maps answers to the request (field keys → submission pointers). If it can't
-	// be read, nothing has been sent yet.
+	// be read, or can't produce pricingInputs, nothing has been sent yet.
 	const current = await getInquiryForm();
-	if (!current.ok) {
+	if (!current.ok || pricingContractProblem(current.data) !== null) {
 		return unresolved
 			? stillUnknown()
 			: failed(503, 'unavailable', { formError: submissionCopy.unavailable });
@@ -130,23 +134,35 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	const form = current.data;
 	const answers = answersFromFormData(form, data);
 
-	// Check the answers locally only against the form they were given on. When the catalog has moved
-	// on, the backend decides: an earlier commit of this key replays, anything else is stale.
-	if (revision === form.catalogRevision) {
-		const errors = validateAnswers(form, answers);
-		if (Object.keys(errors).length > 0) return failed(422, 'invalid', { answers, errors });
+	// The submit gate: complete answers, including the whole service configuration, or nothing is
+	// sent. The request is pinned to the customer's revision, never silently to the current one, and
+	// carries intent only (no prices or totals). When the catalog has moved on, option membership is
+	// left to the backend: an earlier commit of this key replays, anything else is stale.
+	const command = prepareInquiry(form, answers, { catalogRevision: revision });
+	if (!command.ok) {
+		if (command.reason === 'unpriceable') {
+			console.error(`[inquiry] cannot build pricingInputs (${command.problem}); nothing sent`);
+			return unresolved
+				? stillUnknown(answers)
+				: failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
+		}
+		// Answers that no longer fit the current form's service questions: review, never a resubmit.
+		// Unless an earlier delivery may have committed: then "not sent" would be untrue, so it stays
+		// unknown (same key, frozen answers) until the customer deliberately changes them.
+		if (revision !== form.catalogRevision) {
+			return unresolved ? stillUnknown(answers) : refreshForReview(data, 'stale', 409);
+		}
+		return failed(422, 'invalid', { answers, errors: command.errors });
 	}
 
-	// Pinned to the customer's revision, never silently to the current one. No prices or totals.
-	const inquiry = buildInquiryRequest({ ...form, catalogRevision: revision }, answers);
-	const result = await createInquiry(inquiry, token);
+	const result = await createInquiry(command.request, token);
 	if (result.ok) return { ok: true, receipt: result.data };
 
 	const { error } = result;
-	if (error.status === 409 && error.code === 'CATALOG_REVISION_STALE') {
+	if (error.kind === 'conflict' && error.code === 'CATALOG_REVISION_STALE') {
 		return refreshForReview(data, 'stale', 409);
 	}
-	if (error.status === 409 && error.code === 'IDEMPOTENCY_KEY_REUSED') {
+	if (error.kind === 'conflict' && error.code === 'IDEMPOTENCY_KEY_REUSED') {
 		// Correct key handling makes this rare: it means one token carried two different requests.
 		console.warn(
 			`[inquiry] Idempotency-Key ${token} was already used for a different request; not retrying. Check the submission-token lifecycle.`
@@ -171,7 +187,7 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	// Sent, but we can't tell whether it was recorded. Only the identical request under the same key
 	// may follow; a deliberate change of answers is a new submission (`restartToken`).
 	if (isOutcomeUnknown(error) || unresolved) return stillUnknown(answers);
-	if (error.status === 401 || error.status === 403) {
+	if (error.kind === 'unauthorized') {
 		// Refused before anything was recorded; the adapter has already logged why for the operator.
 		return failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
 	}

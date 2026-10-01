@@ -1,5 +1,5 @@
 {
-	"definitionVersion": 6,
+	"definitionVersion": 7,
 	"catalogId": "0cde8e0b-aa9c-4129-9853-8db2cbbb909b",
 	"catalogRevision": 15,
 	"sections": [
@@ -118,8 +118,8 @@
 		{
 			"key": "service",
 			"title": "Build your ice cream service",
-			"description": "Choose your guest count, service duration, and ice cream options, or send us a message to discuss your event.",
-			"optional": true,
+			"description": "Choose your guest count, service duration, and ice cream options.",
+			"optional": false,
 			"fields": [
 				{
 					"key": "guestCount",

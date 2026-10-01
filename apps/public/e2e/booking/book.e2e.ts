@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
-import { fillBasics, fillContact, fillService, submissionFor } from './form.js';
+import { fillBasics, fillContact, fillService, sendButton, submissionFor } from './form.js';
 
 const estimatePanel = (page: Page) =>
 	page.getByRole('heading', { name: /^Your estimate/ }).locator('../..');
@@ -8,28 +8,47 @@ const estimatePanel = (page: Page) =>
 test('the form is rendered from the inquiry-form definition', async ({ page }) => {
 	await page.goto('/book');
 
-	await expect(page).toHaveTitle(/^Book/);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Book the trailer');
-	for (const heading of [
+	await expect(page).toHaveTitle(/^Request the trailer/);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Request the trailer');
+	// Sections in the backend's order, titled by the backend.
+	await expect(page.locator('main form section h2')).toHaveText([
 		'Contact information',
 		'Event details',
 		'Build your ice cream service',
 		'Additional information'
-	]) {
-		await expect(page.getByRole('heading', { name: heading })).toBeVisible();
-	}
+	]);
+	// Questions in the backend's order, labelled by the backend.
+	await expect(
+		page
+			.getByRole('region', { name: 'Build your ice cream service' })
+			.locator('[data-slot="field"]')
+	).toContainText([
+		'How many guests?',
+		'How long would you like service?',
+		'Choose your soft serve flavors',
+		'Choose your toppings',
+		'Choose your cones or cups'
+	]);
+	// Options in the backend's order.
+	await expect(
+		page
+			.getByRole('group', { name: /Choose your soft serve flavors/ })
+			.locator('[data-slot="choice-chip"]')
+	).toHaveText([/Vanilla/, /Chocolate/, /Horchata/]);
 
 	// Short choice lists are chips, and nothing is hidden behind a toggle.
 	await expect(page.getByRole('radio', { name: '120 minutes' })).toBeVisible();
 	await expect(page.getByRole('checkbox', { name: 'sprinkles' })).toBeVisible();
 	await expect(page.getByText('0 picked · 4 included, up to 6')).toBeVisible();
 
-	// The service section may be skipped (a plain inquiry).
+	// Definition version 7: the service section is required; only additional information isn't.
 	await expect(
-		page.locator('section', {
-			has: page.getByRole('heading', { name: 'Build your ice cream service' })
-		})
-	).toContainText('Optional');
+		page.getByRole('region', { name: 'Build your ice cream service' })
+	).not.toContainText('Optional');
+	await expect(page.getByRole('region', { name: 'Additional information' })).toContainText(
+		'Optional'
+	);
+	await expect(page.getByRole('button', { name: /Clear these answers/ })).toHaveCount(0);
 });
 
 test('an unavailable option stays listed and readable but cannot be picked', async ({ page }) => {
@@ -50,7 +69,7 @@ test('an unavailable option stays listed and readable but cannot be picked', asy
 
 test('blocks an empty submit and explains what is missing', async ({ page }) => {
 	await page.goto('/book');
-	await page.getByRole('button', { name: 'Send booking request' }).click();
+	await sendButton(page).click();
 
 	await expect(page.getByText('This field is required.').first()).toBeVisible();
 	await expect(page.getByLabel('Your name')).toBeFocused();
@@ -60,7 +79,7 @@ test('blocks an empty submit and explains what is missing', async ({ page }) => 
 test('checks the ZIP code format and the event date before sending', async ({ page }) => {
 	await page.goto('/book');
 	await page.getByLabel('ZIP code').fill('9372');
-	await page.getByRole('button', { name: 'Send booking request' }).click();
+	await sendButton(page).click();
 
 	await expect(page.getByText('Enter 5 digits.')).toBeVisible();
 	await expect(page.getByText('Pick a date.')).toBeVisible();
@@ -130,9 +149,9 @@ test('submits the request pinned to the catalog revision', async ({ page }) => {
 	await fillContact(page, email);
 	await fillService(page);
 	await page.getByLabel('Tell us about your event').fill('  Birthday party  ');
-	await page.getByRole('button', { name: 'Send booking request' }).click();
+	await sendButton(page).click();
 
-	await expect(page.getByRole('status')).toContainText('we got your request');
+	await expect(page.getByRole('status')).toContainText('Request received');
 	await expect.poll(() => submissionFor(page, email)).toBeTruthy();
 	const submission = await submissionFor(page, email);
 	expect(submission).toMatchObject({
@@ -147,6 +166,7 @@ test('submits the request pinned to the catalog revision', async ({ page }) => {
 	expect(submission?.pricingInputs).toMatchObject({
 		catalogRevision: 15,
 		guestCount: 75,
+		guestCountIsMinimum: false,
 		durationMinutes: 120
 	});
 	expect(submission?.pricingInputs?.selections).toEqual([

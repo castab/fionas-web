@@ -42,7 +42,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   `click({ force: true })` on the gated CTAs.
 - The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
   calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), adding the secret UI key
-  (`COMMERCE_UI_API_KEY`, `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
+  (`FIONAS_UI_API_KEY`, the backend's name for it; `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
   `POST /inquiries` require. Never log it or put it in client code or `.env.example`. E2E runs against the stub in
   `apps/public/e2e/stub-commerce.mjs`.
 - **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
@@ -52,11 +52,18 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   explicit "Send as a new request" / "Change my answers" changes it. After an unknown outcome the
   answers freeze (`inert`) so the retry is identical. Never auto-resubmit, and never send totals or
   prices: the backend prices and creates the Estimate. See `docs/public-inquiry-submission.md`.
-- **Offering availability (definition version 6).** Disabled/retired offerings are absent from
-  `/inquiry-form`; `ENABLED` + `UNAVAILABLE` options stay visible but unselectable ("Unavailable —
-  check back later"), never hidden or described as removed. Never hardcode offering keys, names,
-  prices or limits in UI code (`src/catalog-hardcoding.test.ts`). The optional service section may
-  be skipped: an untouched optional section isn't validated or sent, making a plain inquiry.
+- **No inquiry without configured service (definition version 7).** Every inquiry carries complete
+  `pricingInputs` (revision, guest count, duration, required selections); there is no plain/contact-only
+  path and no "just send a message" mode. Build the request only with `prepareInquiry`
+  (`@fionas/shared`), the submit gate used by both the page and the action. A section with
+  `/pricingInputs/` questions is never skippable, even if marked optional; a form that can't produce
+  `pricingInputs` (`pricingContractProblem`) offers no form. Success copy says "Request received", never
+  booked, confirmed or reserved.
+- **Offering availability.** Disabled/retired offerings are absent from `/inquiry-form`; `ENABLED` +
+  `UNAVAILABLE` options stay visible but unselectable ("Unavailable — check back later"), never hidden
+  or described as removed. Never hardcode offering keys, names, prices or limits in UI code
+  (`src/catalog-hardcoding.test.ts`). Browser estimates are advisory (from `pricingPreview`, exact
+  decimals); the backend prices.
 - **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
   to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`

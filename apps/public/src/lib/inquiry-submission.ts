@@ -46,17 +46,19 @@ export type SubmissionFailure = {
 	reviewFields?: string[];
 	/** With `refreshedForm`: names of chosen options unselected because they're unavailable now. */
 	unavailableChoices?: string[];
+	/** With `refreshedForm`: how many chosen options the menu no longer lists (never named). */
+	removedChoices?: number;
 };
 
 export const submissionCopy = {
 	unavailable:
-		"We couldn't reach our booking system, so your request hasn't been sent. Please try again in a moment.",
+		"We couldn't reach our request system, so your request hasn't been sent. Please try again in a moment.",
 	ambiguous:
 		"We couldn't confirm your request was received. Please try sending it again — if it did reach us, we won't record it twice.",
 	serverError:
 		'Something went wrong on our side. Please try again in a moment — sending it again won’t create a duplicate.',
 	keyReused:
-		"We couldn't safely verify this submission. Please restart the inquiry or contact us if you're unsure whether it was received.",
+		"We couldn't safely verify this submission. Please restart the request or contact us if you're unsure whether it was received.",
 	staleWithoutForm:
 		'Our menu changed while you were filling this in. Please reload the page to see the current options.',
 	malformed: 'This page is out of date. Please reload it and try again.',
