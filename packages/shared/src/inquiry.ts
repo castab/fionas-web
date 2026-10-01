@@ -339,13 +339,13 @@ export function isPricingField(field: InquiryFormField): boolean {
 }
 
 /**
- * Whether a whole section may be left blank. The backend marks a section `optional` when it may be
- * omitted (field requirements apply once it is used). A section carrying pricing questions is never
- * skippable, whatever it says: POST /inquiries requires `pricingInputs`, so there is no inquiry
- * without configured service. In definition version 7 only "Additional information" is optional.
+ * Whether a whole section may be left blank: exactly the backend's `optional` flag (field
+ * requirements apply once it is used). In definition version 7 only "Additional information" is
+ * optional. A form marking a pricing section optional is not reinterpreted here: it contradicts
+ * POST /inquiries (`pricingInputs` is required), so `pricingContractProblem` rejects it outright.
  */
 export function isSkippable(section: InquiryFormSection): boolean {
-	return section.optional && !section.fields.some(isPricingField);
+	return section.optional;
 }
 
 /**
@@ -451,11 +451,16 @@ const PRICING_PROPERTIES: Record<string, InquiryInput['type'][]> = {
 const REQUIRED_PRICING = ['guestCount', 'durationMinutes'] as const;
 
 /**
- * Why this form definition cannot produce complete `pricingInputs`, or null when it can. A form
- * that can't (no guest count or duration question, a pricing pointer this UI doesn't understand)
- * can't produce an inquiry at all, so the page must not offer it: the caller fails closed.
+ * Why this form definition is incompatible with POST /inquiries, or null when it isn't: a pricing
+ * section marked optional, no guest count or duration question, or a pricing pointer this UI doesn't
+ * understand. Such a form can't reliably produce an inquiry, so the page must not offer it: the
+ * caller fails closed.
  */
 export function pricingContractProblem(form: InquiryForm): string | null {
+	// An inquiry is configured service: a definition that lets the customer omit it is incompatible
+	// with this UI, not something to quietly make required.
+	const optional = form.sections.find((s) => s.optional && s.fields.some(isPricingField));
+	if (optional) return `section "${optional.key}" has pricing questions but is marked optional`;
 	const pricing = allFields(form).filter(isPricingField);
 	for (const field of pricing) {
 		const property = field.submissionPointer.slice(PRICING_POINTER.length);

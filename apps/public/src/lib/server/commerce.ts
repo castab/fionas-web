@@ -1,7 +1,6 @@
 import { env } from '$env/dynamic/private';
 import {
 	EXPECTED_DEFINITION_VERSION,
-	isPricingField,
 	pricingContractProblem,
 	type ApiError,
 	type CreateInquiryRequest,
@@ -221,7 +220,8 @@ const warnOnce = (message: string) => {
 /**
  * The form is self-describing, so a newer question definition still renders; the operator should
  * know when it differs from what this UI was built against. Logged once each, never shown to
- * customers. A form that can't produce `pricingInputs` at all is refused by the callers.
+ * customers. A form incompatible with POST /inquiries (`pricingContractProblem`, such as an optional
+ * service section) is refused by the callers: no form is offered and nothing is sent.
  */
 function checkDefinition(form: InquiryForm) {
 	if (form.definitionVersion !== EXPECTED_DEFINITION_VERSION) {
@@ -229,17 +229,10 @@ function checkDefinition(form: InquiryForm) {
 			`[commerce] GET /inquiry-form returned definitionVersion ${form.definitionVersion}; this UI expects ${EXPECTED_DEFINITION_VERSION}`
 		);
 	}
-	for (const section of form.sections) {
-		if (section.optional && section.fields.some(isPricingField)) {
-			warnOnce(
-				`[commerce] GET /inquiry-form marks section "${section.key}" optional, but POST /inquiries requires pricingInputs; the UI requires it`
-			);
-		}
-	}
 	const problem = pricingContractProblem(form);
 	if (problem) {
 		warnOnce(
-			`[commerce] GET /inquiry-form cannot produce pricingInputs (${problem}); inquiries are off`
+			`[commerce] GET /inquiry-form is incompatible with POST /inquiries (${problem}); inquiries are off`
 		);
 	}
 }

@@ -230,20 +230,50 @@ describe('/book submission', () => {
 		expect(backend.posts()).toHaveLength(0);
 	});
 
-	it('requires the service even when the backend marks its section optional', async () => {
+	it('rejects a definition with an optional service section: no form, nothing sent', async () => {
 		const drifted = formFixture();
 		drifted.sections.find((s) => s.key === 'service')!.optional = true;
 		backend.publish(drifted);
-		const { data } = await loadPage();
-		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
 
-		const failure = failureOf(
-			await post(formData(data.submissionToken, 15, { name, email, zipCode, eventDate, eventType }))
+		const { data } = await loadPage();
+		expect(data.form).toBeNull();
+		expect(warnings.join(' ')).toMatch(
+			/incompatible with POST \/inquiries \(section "service" has pricing questions but is marked optional\)/
 		);
 
-		expect(failure.outcome).toBe('invalid');
+		// Not coerced into a required section: even a complete, priced submission is refused.
+		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+		expect(failure.outcome).toBe('unavailable');
+		expect(failure.formError).toMatch(/hasn't been sent/);
 		expect(backend.posts()).toHaveLength(0);
-		expect(warnings.join(' ')).toMatch(/marks section "service" optional/);
+	});
+
+	it('offers no refreshed form for review when the new definition is incompatible', async () => {
+		const { data } = await loadPage();
+		const drifted = formFixture();
+		drifted.catalogRevision = 16;
+		drifted.sections.find((s) => s.key === 'service')!.optional = true;
+		// The submit-time read still sees revision 15; only the stale refresh sees the drifted form.
+		backend.script({
+			status: 409,
+			body: { code: 'CATALOG_REVISION_STALE', message: 'diagnostic' }
+		});
+		const publishAfterPost = backend.fetch;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const response = await publishAfterPost(input, init);
+				if (init?.method === 'POST') backend.publish(drifted);
+				return response;
+			})
+		);
+
+		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+
+		expect(failure.outcome).toBe('stale');
+		expect(failure.refreshedForm).toBeUndefined();
+		expect(failure.formError).toMatch(/reload the page/);
+		expect(backend.posts()).toHaveLength(1);
 	});
 
 	it('offers no form, and sends nothing, when the definition cannot produce pricingInputs', async () => {

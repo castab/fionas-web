@@ -55,10 +55,10 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 - **No inquiry without configured service (definition version 7).** Every inquiry carries complete
   `pricingInputs` (revision, guest count, duration, required selections); there is no plain/contact-only
   path and no "just send a message" mode. Build the request only with `prepareInquiry`
-  (`@fionas/shared`), the submit gate used by both the page and the action. A section with
-  `/pricingInputs/` questions is never skippable, even if marked optional; a form that can't produce
-  `pricingInputs` (`pricingContractProblem`) offers no form. Success copy says "Request received", never
-  booked, confirmed or reserved.
+  (`@fionas/shared`), the submit gate used by both the page and the action. Section `optional` is
+  applied as sent; a definition incompatible with `POST /inquiries` (`pricingContractProblem`, e.g. an
+  optional section with `/pricingInputs/` questions) is rejected, never coerced: no form is offered and
+  nothing is sent. Success copy says "Request received", never booked, confirmed or reserved.
 - **Offering availability.** Disabled/retired offerings are absent from `/inquiry-form`; `ENABLED` +
   `UNAVAILABLE` options stay visible but unselectable ("Unavailable — check back later"), never hidden
   or described as removed. Never hardcode offering keys, names, prices or limits in UI code

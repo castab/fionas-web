@@ -247,8 +247,9 @@ describe('isSkippable', () => {
 		expect(isSkippable(section('additional'))).toBe(true);
 	});
 
-	it('never lets a section with pricing questions be skipped, even if marked optional', () => {
-		expect(isSkippable({ ...section('service'), optional: true })).toBe(false);
+	it('reports the backend flag as sent, never reinterpreting it', () => {
+		// An optional service section is rejected as a whole (pricingContractProblem), not coerced.
+		expect(isSkippable({ ...section('service'), optional: true })).toBe(true);
 	});
 });
 
@@ -307,13 +308,17 @@ describe('prepareInquiry', () => {
 			});
 		});
 
-		it('refuses contact-only answers even if the backend marked the service section optional', () => {
+		it('rejects a definition that marks the service section optional, whatever the answers', () => {
 			const drifted = clone();
 			drifted.sections[1]!.optional = true;
-			expect(prepareInquiry(drifted, contactOnly())).toMatchObject({
+			const rejected = {
 				ok: false,
-				reason: 'invalid'
-			});
+				reason: 'unpriceable',
+				problem: 'section "service" has pricing questions but is marked optional'
+			};
+			// Not coerced into a required section: even complete answers produce no request.
+			expect(prepareInquiry(drifted, contactOnly())).toEqual(rejected);
+			expect(prepareInquiry(drifted, answered())).toEqual(rejected);
 		});
 
 		it.each([
@@ -386,6 +391,20 @@ describe('prepareInquiry', () => {
 describe('pricingContractProblem', () => {
 	it('accepts the version 7 form', () => {
 		expect(pricingContractProblem(form)).toBeNull();
+	});
+
+	it('rejects an optional section carrying pricing questions', () => {
+		const next = clone();
+		next.sections[1]!.optional = true;
+		expect(pricingContractProblem(next)).toBe(
+			'section "service" has pricing questions but is marked optional'
+		);
+	});
+
+	it('leaves optional sections without pricing questions alone', () => {
+		const next = clone();
+		next.sections[0]!.optional = true;
+		expect(pricingContractProblem(next)).toBeNull();
 	});
 
 	it('names a missing duration question', () => {

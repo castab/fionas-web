@@ -105,12 +105,14 @@ the form doesn't ask for one. A different `definitionVersion` is logged once on 
 self-describing form still renders.
 
 **Service configuration is mandatory.** The section `optional` flag means "may be omitted entirely";
-in version 7 only "Additional information" is optional, and it alone shows an "Optional" badge. A
-section that carries pricing questions (pointers under `/pricingInputs/`) is never skippable
-(`isSkippable`), even if a future form marked it optional: `POST /inquiries` requires
-`pricingInputs`, and the server logs the drift. A form that can't produce `pricingInputs` at all (no
-guest-count or duration question, or a pricing pointer this UI doesn't understand:
-`pricingContractProblem`) offers no form and accepts no submission.
+in version 7 only "Additional information" is optional, and it alone shows an "Optional" badge. The
+UI applies the flag exactly as sent (`isSkippable`) and never reinterprets it. A definition that is
+incompatible with `POST /inquiries` is rejected as a whole (`pricingContractProblem`): a section with
+pricing questions (pointers under `/pricingInputs/`) marked optional, no guest-count or duration
+question, or a pricing pointer this UI doesn't understand. Such a form is never coerced into a
+required one: `/book` offers no form ("isn't available right now"), the action sends nothing (not even
+complete answers), a stale refresh offers nothing to review, and the server logs
+`GET /inquiry-form is incompatible with POST /inquiries (…)` once.
 
 **The submit gate.** `prepareInquiry(form, answers)` in `@fionas/shared` is the only way to build a
 `POST /inquiries` body, used by both the browser (before posting) and the form action (before
@@ -290,9 +292,10 @@ server keeps no cache of it: every page view and every submit reads it from the 
 ## Tests
 
 - `packages/shared/src/inquiry.test.ts`: the submit gate, including the critical regression that no
-  contact-only or partial request can be built (also when a form marks the service optional, and for
-  a form that can't produce pricing), section skippability, pointer mapping, reconciliation
-  (unavailable, removed, raised minimum, lowered maximum).
+  contact-only or partial request can be built, and that an incompatible definition (an optional
+  service section, missing pricing questions) is rejected rather than coerced, even with complete
+  answers; section skippability, pointer mapping, reconciliation (unavailable, removed, raised
+  minimum, lowered maximum).
 - `packages/shared/src/estimate.test.ts`: every price form against synthetic prices, unavailable
   options contributing nothing, decimal exactness where floats drift.
 - `apps/public/src/lib/server/commerce.test.ts`: Bearer and `Idempotency-Key` headers, same-key
@@ -300,9 +303,10 @@ server keeps no cache of it: every page view and every submit reads it from the 
   and stable codes, fail-closed shapes and redirects, cache bypass, nothing secret in errors or logs.
 - `apps/public/src/routes/book/page.server.test.ts`: integration through the real `load` and action
   with only `fetch` replaced by a contract-faithful fake (`src/lib/server/testing/`): version 7
-  rendering, contact-only refusal, optional-service drift, unpriceable form, priced body, double
-  delivery, lost response, ambiguous then identical same-key retry, unreachable backend, 5xx, 422,
-  catalog-state refresh, stale review with a fresh key, replay after a catalog change, key reuse.
+  rendering, contact-only refusal, an optional-service definition rejected (on load, on submit and on
+  stale refresh), an unpriceable form, priced body, double delivery, lost response, ambiguous then
+  identical same-key retry, unreachable backend, 5xx, 422, catalog-state refresh, stale review with a
+  fresh key, replay after a catalog change, key reuse.
 - `apps/public/src/routes/book/estimate/server.test.ts`: the preview proxy forwards pricing facts
   only, with the key, and never leaks it.
 - `apps/public/src/lib/components/inquiry-field.svelte.test.ts` (browser): backend order, labels and
