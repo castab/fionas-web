@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { Badge, Card } from '@fionas/ui';
+	import { site } from '@fionas/shared';
 </script>
+
+<svelte:head>
+	<title>Admin · {site.name}</title>
+</svelte:head>
 
 <main class="mx-auto flex w-full max-w-(--container-max) flex-col gap-6 px-8 py-14">
 	<div class="flex flex-col items-start gap-3">

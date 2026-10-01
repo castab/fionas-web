@@ -1,23 +1,23 @@
 # AGENTS.md
 
 Fiona's Ice Cream websites. npm-workspaces monorepo: `apps/public` (marketing site), `apps/admin`
-(staff tools, placeholder), and shared packages `@fionas/ui`, `@fionas/design-tokens`,
+(staff console: sign-in today), and shared packages `@fionas/ui`, `@fionas/design-tokens`,
 `@fionas/shared`. Stack mirrors `castab/madres-ui`: SvelteKit 2, Svelte 5 runes-only, Vite 8,
 Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
 ## Where to look
 
-| Need                                     | Read                                                      |
-| ---------------------------------------- | --------------------------------------------------------- |
-| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                   |
-| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                    |
-| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                             |
-| Site details, coming-soon copy           | `packages/shared/src/`                                    |
-| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                          |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts` |
-| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                          |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts` |
-| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/` |
+| Need                                     | Read                                                                                |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                             |
+| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                              |
+| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                       |
+| Site details, coming-soon copy           | `packages/shared/src/`                                                              |
+| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                    |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
+| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
+| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
+| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                           |
 
 ## Commands (run from the repo root)
 
@@ -44,4 +44,8 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   (`COMMERCE_UI_API_KEY`, `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
   `POST /inquiries` require. Never log it or put it in client code or `.env.example`. E2E runs against the stub in
   `apps/public/e2e/stub-commerce.mjs`.
+- **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
+  to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
+  `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`
+  or other client code. Session cookies are re-issued on the admin host. See `docs/admin-architecture.md`.
 - Light mode only. Motion 120–220ms ease-out, no bounces. Radii: pill / 16 / 10 / 6.

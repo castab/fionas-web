@@ -9,7 +9,7 @@ npm-workspaces monorepo:
 fionas-web/
 ├── apps/
 │   ├── public/          # marketing site (SvelteKit) — the landing page today
-│   └── admin/           # staff tools (SvelteKit) — placeholder shell for now
+│   └── admin/           # staff console (SvelteKit) — sign-in so far
 ├── packages/
 │   ├── ui/              # @fionas/ui — Svelte 5 components (Button, Badge, Card, Wordmark, toast…)
 │   ├── design-tokens/   # @fionas/design-tokens — brand CSS tokens + Tailwind v4 theme
@@ -51,6 +51,20 @@ environment), never in `.env.example`, and never in client code. It is read thro
 private env in `src/lib/server/`, so it cannot be bundled into the browser.
 
 While `BOOKING_ENABLED` is off, `/book` (page, form action and estimate endpoint) returns 404. E2E tests use a stub API, so they need no running backend.
+
+## Admin console
+
+`apps/admin` is the staff console (`admin.fionasicecream.com` / `admin-dev.fionasicecream.com`). Staff sign in with
+their commerce API account; the admin server logs in on their behalf and keeps the session cookie on the admin
+host. **All backend calls go through the SvelteKit server**; see [docs/admin-architecture.md](docs/admin-architecture.md).
+Copy `apps/admin/.env.example` to `apps/admin/.env`:
+
+| Variable           | Default                 | Purpose                                                                               |
+| ------------------ | ----------------------- | ------------------------------------------------------------------------------------- |
+| `COMMERCE_API_URL` | `http://localhost:8080` | Base URL of the commerce API                                                          |
+| `ADMIN_ORIGIN`     | request origin          | Admin public origin, sent as `Origin`; must be a trusted origin on the API (else 403) |
+
+E2E tests use a stub of the `/auth` endpoints, so they need no running backend.
 
 ## Scripts (run from the repo root)
 
