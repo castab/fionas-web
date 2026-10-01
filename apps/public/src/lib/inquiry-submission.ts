@@ -12,7 +12,8 @@ import type { FieldErrors, InquiryAnswers, InquiryForm } from '@fionas/shared';
  *   current form, `answers` were fitted to it, and the customer must review before sending again.
  * - `key_reused`: this submission's key already belongs to a different request. Not retried;
  *   `restartToken` lets the customer deliberately send the answers as a new submission.
- * - `unavailable`: nothing was sent (the backend couldn't be reached, or refused our credentials).
+ * - `unavailable`: nothing was sent (the backend couldn't be reached, or refused the site's own
+ *   service identity: an operator problem the visitor is never told about).
  * - `ambiguous`: the request was sent but its outcome is unknown (timeout, lost or garbled response,
  *   gateway error), even after the server's own same-key retry. It may have been recorded. The page
  *   freezes the answers so a retry sends the identical request under the same `submissionToken`;

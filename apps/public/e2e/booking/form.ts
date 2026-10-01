@@ -17,7 +17,14 @@ export type Submission = {
 	};
 };
 
-export type Attempt = { email: string | null; key: string | null; authorized: boolean };
+/** One POST /inquiries the stub saw: under which key, with which access token, and whether it
+ * accepted that token. */
+export type Attempt = {
+	email: string | null;
+	key: string | null;
+	token: string | null;
+	authorized: boolean;
+};
 
 /** Inquiries the stub committed for this email. */
 export async function submissionsFor(page: Page, email: string): Promise<Submission[]> {

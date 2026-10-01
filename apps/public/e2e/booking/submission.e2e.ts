@@ -11,13 +11,20 @@ import {
 	submissionFor,
 	submissionsFor
 } from './form.js';
+import {
+	E2E_ACCESS_TOKEN_PREFIX,
+	E2E_SERVICE_CREDENTIAL,
+	E2E_SERVICE_ID
+} from '../test-service.js';
 
 /*
- * The real path: browser → SvelteKit (production build) → stub fionas-commerce over HTTP. The stub
- * keeps the Idempotency-Key contract and records every POST /inquiries the server made.
+ * The real path: browser → SvelteKit (production build) → stub fionas-commerce over HTTP. The app
+ * authenticates as the stub's test SERVICE (credential → short-lived token). The stub keeps the
+ * Idempotency-Key contract and records every POST /inquiries the server made.
  */
 
-const STUB_KEY = 'e2e-ui-key';
+/** Anything that must never reach the browser: the service identity and the tokens it buys. */
+const SECRETS = [E2E_SERVICE_CREDENTIAL, E2E_SERVICE_ID, E2E_ACCESS_TOKEN_PREFIX, 'Bearer'];
 
 const emailFor = (scenario: string) => `${scenario}-${randomUUID()}@example.com`;
 
@@ -47,7 +54,9 @@ test('submits through the server with one key and shows the receipt', async ({ p
 	await expect(page).toHaveURL(/\/book\/received$/);
 	await expect(receivedCard(page)).toContainText('Request received');
 	await expect(receivedCard(page)).toContainText('not a booking');
-	expect(await attemptsFor(page, email)).toEqual([{ email, key: token, authorized: true }]);
+	expect(await attemptsFor(page, email)).toEqual([
+		{ email, key: token, token: expect.stringMatching(/^e2e-access-token-/), authorized: true }
+	]);
 
 	const submission = await submissionFor(page, email);
 	expect(submission?.pricingInputs?.catalogRevision).toBe(15);
@@ -57,6 +66,9 @@ test('submits through the server with one key and shows the receipt', async ({ p
 	// The browser only ever talked to the site itself, never to fionas-commerce.
 	expect(browserRequests.every((url) => url.startsWith(baseURL!))).toBe(true);
 	expect(browserRequests.some((url) => url.startsWith(stub))).toBe(false);
+	// No cookie holds the service credential or a token (only the receipt rides in one).
+	const cookies = JSON.stringify(await page.context().cookies());
+	for (const secret of SECRETS) expect(cookies).not.toContain(secret);
 
 	// Reloading the confirmation re-posts nothing.
 	await page.reload();
@@ -237,6 +249,45 @@ test('a reused key is not retried behind the customer’s back', async ({ page }
 	expect(keys[1]).not.toBe(token);
 });
 
+test('an expired service token is replaced and the same submission resent under its key', async ({
+	page
+}) => {
+	const email = emailFor('expired');
+	await fillAll(page, email);
+	const token = await page.locator('input[name="submissionToken"]').inputValue();
+	await sendButton(page).click();
+
+	// The visitor never notices: the server got a new token and repeated the identical request.
+	await expect(page).toHaveURL(/\/book\/received$/);
+	const attempts = await attemptsFor(page, email);
+	expect(attempts.map((a) => [a.key, a.authorized])).toEqual([
+		[token, false],
+		[token, true]
+	]);
+	expect(attempts[1]?.token).not.toBe(attempts[0]?.token);
+	expect(await submissionsFor(page, email)).toHaveLength(1);
+});
+
+test('a service without permission is an outage to the visitor, not a form problem', async ({
+	page
+}) => {
+	const email = emailFor('forbidden');
+	await fillAll(page, email);
+	const token = await page.locator('input[name="submissionToken"]').inputValue();
+	await sendButton(page).click();
+
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText("We couldn't reach our request system");
+	await expect(alert).toContainText("hasn't been sent");
+	await expect(page.getByText(/forbidden|permission|fionas\.inquiries/i)).toHaveCount(0);
+	// No field is blamed, the answers stay editable, and the same key is kept for the next try.
+	await expect(page.locator('[data-frozen]')).toHaveCount(0);
+	await expect(page.locator('input[name="submissionToken"]')).toHaveValue(token);
+	// A 403 is never answered with a new token and a retry.
+	expect(await attemptsFor(page, email)).toHaveLength(1);
+	expect(await submissionsFor(page, email)).toEqual([]);
+});
+
 test('a backend validation failure is shown as a form problem', async ({ page }) => {
 	const email = emailFor('invalid');
 	await fillAll(page, email);
@@ -291,20 +342,34 @@ test('a duplicated delivery of one submission records one inquiry', async ({ pag
 	expect(await submissionsFor(page, email)).toHaveLength(1);
 });
 
-test('nothing the browser receives carries the commerce credential or address', async ({
+test('nothing the browser receives carries the service credential, a token or the API address', async ({
 	page
 }) => {
-	const pages = [
-		await (await page.request.get('/book')).text(),
-		await (await page.request.get('/book/__data.json')).text()
+	const responses = [
+		await page.request.get('/book'),
+		await page.request.get('/book/__data.json'),
+		await page.request.post('/book/estimate', {
+			data: {
+				catalogRevision: 15,
+				guestCount: 75,
+				guestCountIsMinimum: false,
+				durationMinutes: 120,
+				selections: [
+					{ category: 'soft-serve-flavor', offerings: ['vanilla'] },
+					{ category: 'topping', offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies'] },
+					{ category: 'cone-option', offerings: ['cup'] }
+				]
+			}
+		})
 	];
-	for (const text of pages) {
-		expect(text).toContain('submissionToken');
-		expect(text).not.toContain(STUB_KEY);
-		expect(text).not.toContain('Bearer');
+	for (const response of responses) {
+		expect(response.ok()).toBe(true);
+		const text = `${JSON.stringify(response.headers())}\n${await response.text()}`;
+		for (const secret of SECRETS) expect(text).not.toContain(secret);
 		expect(text).not.toContain(stub);
-		expect(text).not.toMatch(/FIONAS_UI_API_KEY|COMMERCE_API_URL/);
+		expect(text).not.toMatch(/COMMERCE_SERVICE_ID|COMMERCE_SERVICE_CREDENTIAL|COMMERCE_API_URL/);
 	}
+	expect(await responses[0]!.text()).toContain('submissionToken');
 
 	// The client build holds no private configuration either.
 	const files = (dir: string): string[] =>
@@ -317,6 +382,9 @@ test('nothing the browser receives carries the commerce credential or address', 
 	expect(client.length).toBeGreaterThan(0);
 	for (const file of client) {
 		const text = readFileSync(file, 'utf8');
-		expect(text, file).not.toMatch(/FIONAS_UI_API_KEY|COMMERCE_API_URL|e2e-ui-key/);
+		expect(text, file).not.toMatch(
+			/COMMERCE_SERVICE_ID|COMMERCE_SERVICE_CREDENTIAL|COMMERCE_API_URL|\/auth\/service\/token/
+		);
+		for (const secret of SECRETS) expect(text, file).not.toContain(secret);
 	}
 });

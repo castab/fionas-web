@@ -16,6 +16,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                    |
 | Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
 | Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`            |
+| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"    |
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                           |
@@ -41,10 +42,16 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   `ComingSoonButton` (`aria-disabled`, raises the toast, never navigates); when enabled they link to `/book`. Playwright needs
   `click({ force: true })` on the gated CTAs.
 - The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
-  calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), adding the secret UI key
-  (`FIONAS_UI_API_KEY`, the backend's name for it; `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
-  `POST /inquiries` require. Never log it or put it in client code or `.env.example`. E2E runs against the stub in
-  `apps/public/e2e/stub-commerce.mjs`.
+  calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), authenticated as **`SERVICE:fionas-web`**:
+  `$lib/server/service-auth.ts` exchanges `COMMERCE_SERVICE_ID` + `COMMERCE_SERVICE_CREDENTIAL` at
+  `POST /auth/service/token` for a short-lived access token (in memory only, refreshed early, one exchange at a time),
+  sent as `Authorization: Bearer`. A `401` drops that token (only if still current) and repeats the identical request
+  once; a `403` is never retried. Both, and any token failure, are `service_auth` errors: logged for the operator,
+  "unavailable" (503) to visitors, never a form or selection error. There is no static key. Never log or expose the
+  credential or a token (not in page data, cookies, client code or `.env.example`), never decode tokens, and never give
+  the app the backend's signing key. The credentials are checked lazily, so the site runs without them while booking is
+  off. `apps/admin` uses USER sessions and never this SERVICE. E2E runs against the stub in
+  `apps/public/e2e/stub-commerce.mjs` (test-only service credential in `e2e/test-service.ts`).
 - **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
   back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
   generate a key per backend attempt. Retries keep it; only a reviewed catalog refresh

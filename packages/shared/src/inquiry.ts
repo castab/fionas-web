@@ -119,19 +119,32 @@ export type PricingInputs = {
 	selections: PricingSelection[];
 };
 
+/** POST /inquiries' `eventType` values (the backend's enum; the form offers them as options). */
+export const INQUIRY_EVENT_TYPES = [
+	'BIRTHDAY',
+	'WEDDING',
+	'CORPORATE',
+	'SCHOOL_EVENT',
+	'NEIGHBORHOOD_EVENT',
+	'OTHER'
+] as const;
+
+export type InquiryEventType = (typeof INQUIRY_EVENT_TYPES)[number];
+
 /**
- * POST /inquiries: customer intent only, never amounts. `pricingInputs` is required: there is no
- * plain/contact-only inquiry, because the backend prices every accepted inquiry into Estimate v1.
- * Build one only through `prepareInquiry`, which refuses incomplete service configuration.
+ * POST /inquiries: customer intent only, never amounts. Everything but `message` is required, and
+ * `pricingInputs` above all: there is no plain/contact-only inquiry, because the backend prices
+ * every accepted inquiry into Estimate v1. Build one only through `prepareInquiry`, which refuses
+ * incomplete answers and any form that can't produce this shape.
  */
 export type CreateInquiryRequest = {
 	name: string;
 	email: string;
 	message?: string;
+	pricingInputs: PricingInputs;
 	zipCode: string;
 	eventDate: string;
-	eventType: string;
-	pricingInputs: PricingInputs;
+	eventType: InquiryEventType;
 };
 
 export type EstimateLine = {
@@ -577,13 +590,26 @@ export function completePricingInputs(
 
 /**
  * One logical inquiry command, or why there is none. `invalid`: the answers fail the form's own
- * rules (including unconfigured service). `unpriceable`: the form definition itself can't produce
- * `pricingInputs`; no answers can fix that, so nothing may be sent.
+ * rules (including unconfigured service). `incompatible`: the form definition itself can't produce
+ * a valid POST /inquiries body (no complete `pricingInputs`, or a required field it never asks
+ * for); no answers can fix that, so nothing may be sent.
  */
 export type InquiryCommand =
 	| { ok: true; request: CreateInquiryRequest }
 	| { ok: false; reason: 'invalid'; errors: FieldErrors }
-	| { ok: false; reason: 'unpriceable'; problem: string };
+	| { ok: false; reason: 'incompatible'; problem: string };
+
+const REQUIRED_TEXT = ['name', 'email', 'zipCode', 'eventDate'] as const;
+
+/** Why a built body isn't a valid POST /inquiries request (a required field missing), or null. */
+function requestProblem(request: Record<string, unknown>): string | null {
+	const missing = REQUIRED_TEXT.find((property) => typeof request[property] !== 'string');
+	if (missing) return `the form gave no ${missing}`;
+	if (!INQUIRY_EVENT_TYPES.includes(request.eventType as InquiryEventType)) {
+		return 'the form gave no known eventType';
+	}
+	return null;
+}
 
 /**
  * The submit gate and the only way to build a POST /inquiries body. Validates every question that
@@ -599,7 +625,7 @@ export function prepareInquiry(
 	{ catalogRevision = form.catalogRevision }: { catalogRevision?: number } = {}
 ): InquiryCommand {
 	const problem = pricingContractProblem(form);
-	if (problem) return { ok: false, reason: 'unpriceable', problem };
+	if (problem) return { ok: false, reason: 'incompatible', problem };
 
 	const catalog = catalogRevision === form.catalogRevision;
 	const errors = validateAnswers(form, answers, { catalog });
@@ -607,7 +633,7 @@ export function prepareInquiry(
 
 	const pricingInputs = collectPricing(form, answers, catalogRevision);
 	if (!isCompletePricing(form, pricingInputs)) {
-		return { ok: false, reason: 'unpriceable', problem: 'incomplete pricingInputs' };
+		return { ok: false, reason: 'incompatible', problem: 'incomplete pricingInputs' };
 	}
 
 	const request: Record<string, unknown> = {};
@@ -618,6 +644,9 @@ export function prepareInquiry(
 		const property = field.submissionPointer.replace(/^\//, '');
 		if (text !== '') request[property] = text;
 	}
+	// Validation passed, so this only trips on a form that never asks for a required field.
+	const missing = requestProblem(request);
+	if (missing) return { ok: false, reason: 'incompatible', problem: missing };
 	request.pricingInputs = pricingInputs;
 	return { ok: true, request: request as CreateInquiryRequest };
 }

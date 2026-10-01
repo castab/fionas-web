@@ -3,13 +3,17 @@ import type { EstimatePreview, InquiryForm, PricingInputs } from '@fionas/shared
 
 /*
  * Test double for the fionas-commerce HTTP API, installed as `fetch`. It keeps the contract the
- * public app relies on: Bearer-protected UI endpoints, and POST /inquiries idempotency (same key +
- * same body replays the original 201 receipt, same key + different body is IDEMPOTENCY_KEY_REUSED,
- * an old catalog revision is CATALOG_REVISION_STALE, a pick the current form doesn't offer or lists
- * as UNAVAILABLE is 422 UNKNOWN_OFFERING / OFFERING_UNAVAILABLE, failures consume nothing). Test-only.
+ * public app relies on: SERVICE authentication (POST /auth/service/token exchanges the test service
+ * credential for an opaque access token; the three public endpoints answer 401 without an issued
+ * one, 403 when the service lacks the permission), and POST /inquiries idempotency (same key + same
+ * body replays the original 201 receipt, same key + different body is IDEMPOTENCY_KEY_REUSED, an
+ * old catalog revision is CATALOG_REVISION_STALE, a pick the current form doesn't offer or lists as
+ * UNAVAILABLE is 422 UNKNOWN_OFFERING / OFFERING_UNAVAILABLE, failures consume nothing). Test-only:
+ * the values below are not, and must never become, deployment credentials.
  */
 
-export const TEST_UI_KEY = 'test-ui-secret-7f3a';
+export const TEST_SERVICE_ID = '00000000-0000-4000-8000-0000000000aa';
+export const TEST_SERVICE_CREDENTIAL = 'test-only-service-credential-not-a-secret';
 export const TEST_BASE_URL = 'http://commerce.internal.test';
 
 /** The real form captured from fionas-commerce (also served by the e2e stub). */
@@ -48,8 +52,23 @@ const json = (status: number, body: unknown) =>
 		headers: { 'content-type': 'application/json' }
 	});
 
+/** The permission each public endpoint requires (role fionas.web grants all three). */
+const PERMISSIONS: Record<string, string> = {
+	'GET /inquiry-form': 'fionas.inquiry-form.read',
+	'POST /estimate-preview': 'fionas.estimate-preview.create',
+	'POST /inquiries': 'fionas.inquiries.create'
+};
+
 export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
+	/** Calls to the protected API (token exchanges are in `exchanges`). */
 	const calls: RecordedCall[] = [];
+	/** Every POST /auth/service/token, and whether the credential was accepted. */
+	const exchanges: { serviceId: unknown; accepted: boolean }[] = [];
+	/** Access tokens issued so far, in order; `live` holds the ones the backend still accepts. */
+	const issued: string[] = [];
+	const live = new Set<string>();
+	/** Permissions the service's role grants right now (resolved live on every request). */
+	const granted = new Set(Object.values(PERMISSIONS));
 	const committed = new Map<
 		string,
 		{ fingerprint: string; receipt: { id: string; createdAt: string } }
@@ -57,6 +76,7 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 	const scripted: Scripted[] = [];
 	let form = initialForm;
 	let sequence = 0;
+	let tokenLifetimeSeconds = 900;
 
 	function commit(key: string, body: unknown) {
 		sequence += 1;
@@ -66,6 +86,24 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		};
 		committed.set(key, { fingerprint: JSON.stringify(body), receipt });
 		return receipt;
+	}
+
+	function issueToken(body: unknown): Response {
+		const { serviceId, secret } = (body ?? {}) as { serviceId?: unknown; secret?: unknown };
+		const accepted = serviceId === TEST_SERVICE_ID && secret === TEST_SERVICE_CREDENTIAL;
+		exchanges.push({ serviceId, accepted });
+		if (!accepted) {
+			return json(401, { code: 'unauthenticated', message: 'Service authentication failed' });
+		}
+		const accessToken = `test-access-token-${issued.length + 1}`;
+		issued.push(accessToken);
+		live.add(accessToken);
+		return json(200, {
+			accessToken,
+			tokenType: 'Bearer',
+			expiresAt: new Date(Date.now() + tokenLifetimeSeconds * 1000).toISOString(),
+			expiresIn: tokenLifetimeSeconds
+		});
 	}
 
 	/** The backend's structural check of selections against the current catalog. */
@@ -142,11 +180,20 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		const headers = Object.fromEntries(new Headers(init?.headers).entries());
 		const method = init?.method ?? 'GET';
 		const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
-		calls.push({ method, path: url.pathname, headers, body, cache: init?.cache });
-
 		if (url.origin !== TEST_BASE_URL) throw new TypeError(`unexpected host ${url.origin}`);
-		if (headers.authorization !== `Bearer ${TEST_UI_KEY}`) {
+		if (method === 'POST' && url.pathname === '/auth/service/token') return issueToken(body);
+
+		calls.push({ method, path: url.pathname, headers, body, cache: init?.cache });
+		const bearer = /^Bearer (.+)$/.exec(headers.authorization ?? '')?.[1];
+		if (!bearer || !live.has(bearer)) {
 			return json(401, { code: 'unauthenticated', message: 'Authentication is required' });
+		}
+		const permission = PERMISSIONS[`${method} ${url.pathname}`];
+		if (permission && !granted.has(permission)) {
+			return json(403, {
+				code: 'forbidden',
+				message: 'The authenticated principal is not permitted to perform this request'
+			});
 		}
 		if (method === 'GET' && url.pathname === '/inquiry-form') return json(200, form);
 		if (method === 'POST' && url.pathname === '/estimate-preview') {
@@ -165,7 +212,16 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 	return {
 		fetch,
 		calls,
+		exchanges,
 		committed,
+		/** The access tokens issued so far, oldest first. */
+		tokens: () => [...issued],
+		/** Every issued token stops working (expired, or the backend's signing key rotated). */
+		expireTokens: () => live.clear(),
+		/** Removes a permission from the service's role, as an administrator could at any time. */
+		revoke: (permission: string) => granted.delete(permission),
+		/** Lifetime (`expiresIn`) of tokens issued from now on. */
+		setTokenLifetime: (seconds: number) => (tokenLifetimeSeconds = seconds),
 		/** Queue one-off answers for the next POST /inquiries (or /estimate-preview) calls. */
 		script: (...next: Scripted[]) => scripted.push(...next),
 		/** Publish a new catalog: later GET /inquiry-form calls see it, older revisions go stale. */

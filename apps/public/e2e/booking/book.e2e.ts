@@ -132,6 +132,21 @@ test('keeps the instant estimate when the estimate service is down', async ({ pa
 	await expect(panel.getByText("couldn't update the estimate")).toHaveCount(0);
 });
 
+test('keeps the instant estimate when the site may not request previews (403)', async ({
+	page
+}) => {
+	await page.goto('/book');
+	const answered = page.waitForResponse((r) => r.url().endsWith('/book/estimate'));
+	// The stub answers 403 for 403 guests: a service-permission problem, which the server reports as
+	// an outage (503), never as a refused selection. 250 + 403 * ($4.00 + $0.50 + $0.75).
+	await fillService(page, '403');
+	expect((await answered).status()).toBe(503);
+
+	const panel = estimatePanel(page);
+	await expect(panel.getByText('$2,365.75', { exact: true })).toBeVisible();
+	await expect(panel.getByText("couldn't price that combination")).toHaveCount(0);
+});
+
 test('hides figures the server refuses to price', async ({ page }) => {
 	await page.goto('/book');
 	const answered = page.waitForResponse((r) => r.url().endsWith('/book/estimate'));

@@ -4,7 +4,8 @@ import type { InquiryForm } from '@fionas/shared';
 import type { SubmissionFailure } from '$lib/inquiry-submission.js';
 import {
 	TEST_BASE_URL,
-	TEST_UI_KEY,
+	TEST_SERVICE_CREDENTIAL,
+	TEST_SERVICE_ID,
 	fakeCommerce,
 	formFixture,
 	type FakeCommerce
@@ -20,6 +21,7 @@ vi.mock('$env/dynamic/private', () => ({ env }));
 
 const { actions, load } = await import('./+page.server.js');
 const received = await import('./received/+page.server.js');
+const { resetCommerceClient } = await import('$lib/server/commerce.js');
 
 const ORIGIN = 'https://fionasicecream.com';
 
@@ -68,8 +70,10 @@ let warnings: string[];
 
 beforeEach(() => {
 	env.COMMERCE_API_URL = TEST_BASE_URL;
-	env.FIONAS_UI_API_KEY = TEST_UI_KEY;
+	env.COMMERCE_SERVICE_ID = TEST_SERVICE_ID;
+	env.COMMERCE_SERVICE_CREDENTIAL = TEST_SERVICE_CREDENTIAL;
 	env.BOOKING_ENABLED = 'true';
+	resetCommerceClient();
 	backend = fakeCommerce();
 	vi.stubGlobal('fetch', vi.fn(backend.fetch));
 	cookies = cookieJar();
@@ -82,6 +86,15 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 });
+
+/** Nothing the browser receives may carry the service credential, its id or an access token. */
+function expectNoSecrets(value: unknown) {
+	const text = JSON.stringify(value);
+	expect(text).not.toContain(TEST_SERVICE_CREDENTIAL);
+	expect(text).not.toContain(TEST_SERVICE_ID);
+	expect(text).not.toContain('test-access-token');
+	expect(text).not.toContain('Bearer');
+}
 
 /** Loads /book the way a page view does. */
 async function loadPage() {
@@ -124,23 +137,36 @@ const failureOf = (outcome: Outcome) => {
 };
 
 describe('/book load', () => {
-	it('fetches the form server-side and gives the page a submission token, never the key', async () => {
+	it('fetches the form server-side as the site SERVICE and gives the page only a submission token', async () => {
 		const { data, headers } = await loadPage();
 
+		expect(backend.exchanges).toEqual([{ serviceId: TEST_SERVICE_ID, accepted: true }]);
 		expect(backend.calls).toEqual([
 			expect.objectContaining({
 				path: '/inquiry-form',
-				headers: expect.objectContaining({ authorization: `Bearer ${TEST_UI_KEY}` })
+				headers: expect.objectContaining({ authorization: `Bearer ${backend.tokens()[0]}` })
 			})
 		]);
 		expect(data.form?.catalogRevision).toBe(15);
 		expect(data.submissionToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(headers['cache-control']).toBe('private, no-store');
 
-		const serialized = JSON.stringify(data);
-		expect(serialized).not.toContain(TEST_UI_KEY);
-		expect(serialized).not.toContain('Bearer');
-		expect(serialized).not.toContain(TEST_BASE_URL);
+		expectNoSecrets(data);
+		expect(JSON.stringify(data)).not.toContain(TEST_BASE_URL);
+	});
+
+	it('reuses the server token across page views', async () => {
+		await loadPage();
+		await loadPage();
+		expect(backend.exchanges).toHaveLength(1);
+	});
+
+	it('shows "unavailable" when the service may not read the form, without saying why', async () => {
+		backend.revoke('fionas.inquiry-form.read');
+		const { data } = await loadPage();
+		expect(data.form).toBeNull();
+		expect(backend.exchanges).toHaveLength(1);
+		expectNoSecrets(data);
 	});
 
 	it('renders the version 7 definition as sent, service section required', async () => {
@@ -172,14 +198,14 @@ describe('/book load', () => {
 });
 
 describe('/book submission', () => {
-	it('sends the priced intent with the private key and the page token, then shows the receipt', async () => {
+	it('sends the priced intent with the service token and the page token, then shows the receipt', async () => {
 		const { data } = await loadPage();
 		const outcome = await post(formData(data.submissionToken, 15, priced));
 
 		expect(outcome).toEqual({ redirect: '/book/received', status: 303 });
 		const [call] = backend.posts();
 		expect(call?.headers).toMatchObject({
-			authorization: `Bearer ${TEST_UI_KEY}`,
+			authorization: `Bearer ${backend.tokens()[0]}`,
 			'idempotency-key': data.submissionToken,
 			'content-type': 'application/json'
 		});
@@ -374,7 +400,7 @@ describe('/book submission', () => {
 		// A deliberate "change my answers" would be a new submission; it never replaces the retry key.
 		expect(failure.restartToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(failure.restartToken).not.toBe(data.submissionToken);
-		expect(JSON.stringify(failure)).not.toContain(TEST_UI_KEY);
+		expectNoSecrets(failure);
 
 		// "Try sending again" posts the frozen answers: same token, same body, the original receipt.
 		const retry = await post(
@@ -394,7 +420,7 @@ describe('/book submission', () => {
 
 	it('keeps an unresolved submission ambiguous when the retry cannot even start', async () => {
 		const { data } = await loadPage();
-		env.FIONAS_UI_API_KEY = 'rotated-elsewhere';
+		env.COMMERCE_SERVICE_CREDENTIAL = 'revoked-elsewhere';
 
 		const retry = failureOf(
 			await post(formData(data.submissionToken, 15, priced, { outcomeUnknown: 'true' }))
@@ -403,11 +429,13 @@ describe('/book submission', () => {
 		expect(backend.posts()).toHaveLength(0);
 	});
 
-	it('reports a backend it cannot reach before sending as unavailable, with nothing sent', async () => {
+	it('reports a refused service credential as unavailable, with nothing sent', async () => {
 		const { data } = await loadPage();
-		env.FIONAS_UI_API_KEY = 'rotated-elsewhere';
+		env.COMMERCE_SERVICE_CREDENTIAL = 'revoked-elsewhere';
 
-		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+		const outcome = await post(formData(data.submissionToken, 15, priced));
+		expect(outcome.status).toBe(503);
+		const failure = failureOf(outcome);
 		expect(failure).toMatchObject({
 			outcome: 'unavailable',
 			submissionToken: data.submissionToken
@@ -415,7 +443,58 @@ describe('/book submission', () => {
 		expect(failure.formError).toMatch(/hasn't been sent/);
 		expect(failure.restartToken).toBeUndefined();
 		expect(backend.posts()).toHaveLength(0);
-		expect(JSON.stringify(failure)).not.toContain('rotated-elsewhere');
+		expect(JSON.stringify(failure)).not.toContain('revoked-elsewhere');
+		expectNoSecrets(failure);
+	});
+
+	it('presents a final 403 as a service outage, never as a problem with the answers', async () => {
+		const { data } = await loadPage();
+		backend.revoke('fionas.inquiries.create');
+
+		const outcome = await post(formData(data.submissionToken, 15, priced));
+
+		expect(outcome.status).toBe(503);
+		const failure = failureOf(outcome);
+		expect(failure).toMatchObject({
+			outcome: 'unavailable',
+			submissionToken: data.submissionToken
+		});
+		expect(failure.formError).toMatch(/hasn't been sent/);
+		expect(failure.errors).toBeUndefined();
+		expect(JSON.stringify(failure)).not.toMatch(/forbidden|permission|fionas\./i);
+		// Authenticated but not permitted: a new token can't help, so none was requested.
+		expect(backend.posts()).toHaveLength(1);
+		expect(backend.exchanges).toHaveLength(1);
+	});
+
+	it('recovers from an expired token mid-submission with the same key and body', async () => {
+		const { data } = await loadPage();
+		// The token dies just as the inquiry is sent (after the form was read with it).
+		const deliver = backend.fetch;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				if (String(input).endsWith('/inquiries') && backend.posts().length === 0) {
+					backend.expireTokens();
+				}
+				return deliver(input, init);
+			})
+		);
+
+		expect(await post(formData(data.submissionToken, 15, priced))).toMatchObject({
+			redirect: '/book/received'
+		});
+		const posts = backend.posts();
+		expect(posts.map((c) => c.headers.authorization)).toEqual([
+			`Bearer ${backend.tokens()[0]}`,
+			`Bearer ${backend.tokens()[1]}`
+		]);
+		expect(posts.map((c) => c.headers['idempotency-key'])).toEqual([
+			data.submissionToken,
+			data.submissionToken
+		]);
+		expect(posts[1]?.body).toEqual(posts[0]?.body);
+		expect(backend.committed.size).toBe(1);
 	});
 
 	it('reports an unexpected 5xx as a server error, keeps the key and does not retry it', async () => {
@@ -430,7 +509,7 @@ describe('/book submission', () => {
 		});
 		expect(failure.formError).toMatch(/went wrong on our side/);
 		expect(JSON.stringify(failure)).not.toContain('boom');
-		expect(JSON.stringify(failure)).not.toContain(TEST_UI_KEY);
+		expectNoSecrets(failure);
 		expect(backend.posts()).toHaveLength(1);
 	});
 

@@ -8,16 +8,18 @@ import {
 	type PricingInputs
 } from '@fionas/shared';
 import { isEstimatePreview, isInquiryForm } from './commerce-shapes.js';
+import { createServiceTokenSource } from './service-auth.js';
 
 /*
  * Server-only client for the fionas-commerce API. The backend sends no CORS headers, so the
  * browser never talks to it directly: pages, form actions and endpoints call these helpers instead.
  * See docs/public-inquiry-submission.md.
  *
- * The UI endpoints (/inquiry-form, /estimate-preview, POST /inquiries) require the trusted
- * server-side UI key as a Bearer token. It comes from FIONAS_UI_API_KEY (the backend's own name for
- * it; private env, so SvelteKit keeps it out of client bundles) and is never logged, returned or
- * sent to the browser. The base URL is COMMERCE_API_URL, shared with the admin app.
+ * The public endpoints (/inquiry-form, /estimate-preview, POST /inquiries) are called as
+ * SERVICE:fionas-web, with a short-lived access token from `service-auth.ts` sent as
+ * `Authorization: Bearer`. The service credential it is bought with comes from private env
+ * (COMMERCE_SERVICE_ID, COMMERCE_SERVICE_CREDENTIAL); neither it nor the token is ever logged,
+ * returned or sent to the browser. The base URL is COMMERCE_API_URL, shared with the admin app.
  */
 
 /**
@@ -25,7 +27,10 @@ import { isEstimatePreview, isInquiryForm } from './commerce-shapes.js';
  * - `validation`: 400 / 422, a definite refusal; nothing was written
  * - `not_found`: 404 (catalog not initialized, or an unknown revision)
  * - `conflict`: 409 (`CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`, or the retryable `conflict`)
- * - `unauthorized`: 401 / 403, our credential was refused; nothing was written
+ * - `service_auth`: our SERVICE identity couldn't be used: no token could be obtained (credential
+ *   missing or refused, token endpoint unreachable or answering outside the contract), a fresh
+ *   token was still refused (401), or the service lacks the permission (403). The protected request
+ *   was not processed. An operator problem: visitors see "unavailable", never why
  * - `server`: a 5xx answer
  * - `timeout`: no answer in time. For a POST the outcome is unknown: it may have committed
  * - `network`: the connection failed. For a POST the outcome is unknown too
@@ -36,7 +41,7 @@ export type CommerceFailureKind =
 	| 'validation'
 	| 'not_found'
 	| 'conflict'
-	| 'unauthorized'
+	| 'service_auth'
 	| 'server'
 	| 'timeout'
 	| 'network'
@@ -48,6 +53,21 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: CommerceE
 
 /** What POST /inquiries answers (201): the public-safe identity of the recorded inquiry. */
 export type InquiryReceipt = { id: string; createdAt: string };
+
+export type CommerceClientConfig = {
+	/** fionas-commerce base URL. */
+	baseUrl: string;
+	/** UUID of SERVICE:fionas-web. Checked when the backend is first needed, not at startup. */
+	serviceId?: string;
+	/** Its credential secret. */
+	credential?: string;
+	/** Defaults to the global `fetch`, looked up per call. */
+	fetch?: typeof fetch;
+	/** Defaults to `Date.now`. */
+	now?: () => number;
+	/** Pause before `createInquiry`'s one same-key retry. */
+	retryDelayMs?: number;
+};
 
 const TIMEOUT_MS = 8000;
 
@@ -61,16 +81,14 @@ const SUBMISSION_KEY = /^[A-Za-z0-9_-]{1,128}$/;
 export const isSubmissionKey = (value: unknown): value is string =>
 	typeof value === 'string' && SUBMISSION_KEY.test(value);
 
-const baseUrl = () => (env.COMMERCE_API_URL ?? 'http://localhost:8080').replace(/\/+$/, '');
-
-const uiKey = () => env.FIONAS_UI_API_KEY?.trim() || undefined;
-
 type RequestOptions = {
 	method?: 'GET' | 'POST';
 	json?: unknown;
 	headers?: Record<string, string>;
 	/** Skip every cache between here and the backend (stale-catalog recovery). */
 	fresh?: boolean;
+	/** The fionas.web permission the call needs, named in the operator's log on a 403. */
+	permission: string;
 };
 
 const failure = (
@@ -83,11 +101,14 @@ const failure = (
 	error: { kind, status, code, message, violations: [] }
 });
 
+/** Visitors get the generic outage; the reason is in the server log. */
+const serviceUnavailable = () =>
+	failure('service_auth', 503, 'unavailable', 'Commerce service authentication unavailable');
+
 function kindOf(status: number): CommerceFailureKind {
 	if (status === 400 || status === 422) return 'validation';
 	if (status === 404) return 'not_found';
 	if (status === 409) return 'conflict';
-	if (status === 401 || status === 403) return 'unauthorized';
 	if (status >= 500) return 'server';
 	return 'unexpected';
 }
@@ -95,43 +116,10 @@ function kindOf(status: number): CommerceFailureKind {
 const isTimeout = (e: unknown) =>
 	e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError');
 
-async function request(
-	path: string,
-	{ method = 'GET', json, headers, fresh = false }: RequestOptions = {}
-): Promise<ApiResult<unknown>> {
-	const key = uiKey();
-	let response: Response;
-	try {
-		response = await fetch(`${baseUrl()}${path}`, {
-			method,
-			headers: {
-				accept: 'application/json',
-				...(json === undefined ? {} : { 'content-type': 'application/json' }),
-				...(fresh ? { 'cache-control': 'no-cache' } : {}),
-				...headers,
-				...(key ? { authorization: `Bearer ${key}` } : {})
-			},
-			body: json === undefined ? undefined : JSON.stringify(json),
-			cache: fresh ? 'no-store' : undefined,
-			redirect: 'manual',
-			signal: AbortSignal.timeout(TIMEOUT_MS)
-		});
-	} catch (e) {
-		// For a POST neither proves anything: the backend may have committed before we lost it.
-		return isTimeout(e)
-			? failure('timeout', 504, 'timeout', 'Commerce API did not answer in time')
-			: failure('network', 503, 'unavailable', 'Commerce API unreachable');
-	}
+/** Frees the connection of a response whose body we won't read. */
+const discard = (response: Response) => response.body?.cancel().catch(() => {});
 
-	if (response.status === 401 || response.status === 403) {
-		// Visitors just see "unavailable"; the operator needs to know why. Never the key itself.
-		console.error(
-			key
-				? `[commerce] ${path} rejected the UI API key: check FIONAS_UI_API_KEY in apps/public/.env`
-				: `[commerce] ${path} needs a UI API key: set FIONAS_UI_API_KEY in apps/public/.env`
-		);
-	}
-
+async function decode(response: Response): Promise<ApiResult<unknown>> {
 	let body: unknown = null;
 	try {
 		body = await response.json();
@@ -182,33 +170,19 @@ const isReceipt = (body: unknown): body is InquiryReceipt =>
 /**
  * Worth sending again with the same key: the request may or may not have been committed (network
  * failure, timeout, unreadable success), a gateway hiccup, or the backend's documented retryable
- * `conflict` (a concurrent request created the same customer first). Never a semantic 4xx. If the
- * retry fails the same way, the submission's outcome is still unknown (see `submitInquiry`).
+ * `conflict` (a concurrent request created the same customer first). Never a semantic 4xx, and
+ * never a service-auth failure (nothing was processed: that's an outage). If the retry fails the
+ * same way, the submission's outcome is still unknown (see `submitInquiry`).
  */
 export const isOutcomeUnknown = (error: CommerceError) =>
-	error.kind === 'timeout' ||
-	error.kind === 'network' ||
-	error.code === 'bad_response' ||
-	(error.kind === 'conflict' && error.code === 'conflict') ||
-	error.status === 502 ||
-	error.status === 503 ||
-	error.status === 504;
-
-/**
- * GET /inquiry-form. Every call reaches the backend: nothing here caches the form, so a page view
- * always renders the current revision. `fresh` also tells any HTTP cache in between to revalidate
- * (the backend sends `private, max-age=60, must-revalidate`), for recovery from
- * `CATALOG_REVISION_STALE`.
- */
-export async function getInquiryForm({ fresh = false }: { fresh?: boolean } = {}) {
-	const result = shaped(
-		await request('/inquiry-form', { fresh }),
-		isInquiryForm,
-		'GET /inquiry-form'
-	);
-	if (result.ok) checkDefinition(result.data);
-	return result;
-}
+	error.kind !== 'service_auth' &&
+	(error.kind === 'timeout' ||
+		error.kind === 'network' ||
+		error.code === 'bad_response' ||
+		(error.kind === 'conflict' && error.code === 'conflict') ||
+		error.status === 502 ||
+		error.status === 503 ||
+		error.status === 504);
 
 const warned = new Set<string>();
 const warnOnce = (message: string) => {
@@ -237,54 +211,200 @@ function checkDefinition(form: InquiryForm) {
 	}
 }
 
-/** POST /estimate-preview: authoritative pricing that writes nothing. */
-export async function previewEstimate(pricingInputs: PricingInputs) {
-	return shaped(
-		await request('/estimate-preview', { method: 'POST', json: pricingInputs }),
-		isEstimatePreview,
-		'POST /estimate-preview'
-	);
+/**
+ * A client authenticated as SERVICE:fionas-web. Every protected call takes the current access token
+ * (obtained lazily, cached in memory, refreshed early, one exchange at a time) and, if the backend
+ * answers 401, drops that token, obtains another and repeats the identical request exactly once.
+ * A 403 is never retried: the service is authenticated but not granted the permission, and a new
+ * token carries no new grants (the backend resolves them live).
+ */
+export function createCommerceClient(config: CommerceClientConfig) {
+	const baseUrl = config.baseUrl.replace(/\/+$/, '');
+	const doFetch: typeof fetch = config.fetch ?? ((input, init) => globalThis.fetch(input, init));
+	const retryDelayMs = config.retryDelayMs ?? RETRY_DELAY_MS;
+	const tokens = createServiceTokenSource({
+		baseUrl,
+		serviceId: config.serviceId,
+		credential: config.credential,
+		fetch: doFetch,
+		now: config.now ?? Date.now
+	});
+
+	async function request(
+		path: string,
+		{ method = 'GET', json, headers, fresh = false, permission }: RequestOptions
+	): Promise<ApiResult<unknown>> {
+		// Built once: an authentication retry repeats exactly these headers and bytes, Idempotency-Key
+		// included; only the bearer token differs.
+		const body = json === undefined ? undefined : JSON.stringify(json);
+		const fixed: Record<string, string> = {
+			accept: 'application/json',
+			...(body === undefined ? {} : { 'content-type': 'application/json' }),
+			...(fresh ? { 'cache-control': 'no-cache' } : {}),
+			...headers
+		};
+
+		const send = async (accessToken: string): Promise<Response | ApiResult<never>> => {
+			try {
+				return await doFetch(`${baseUrl}${path}`, {
+					method,
+					headers: { ...fixed, authorization: `Bearer ${accessToken}` },
+					body,
+					cache: fresh ? 'no-store' : undefined,
+					redirect: 'manual',
+					signal: AbortSignal.timeout(TIMEOUT_MS)
+				});
+			} catch (e) {
+				// For a POST neither proves anything: the backend may have committed before we lost it.
+				return isTimeout(e)
+					? failure('timeout', 504, 'timeout', 'Commerce API did not answer in time')
+					: failure('network', 503, 'unavailable', 'Commerce API unreachable');
+			}
+		};
+
+		let token = await tokens.token();
+		if (!token.ok) return serviceUnavailable();
+		let response = await send(token.accessToken);
+		if (!(response instanceof Response)) return response;
+
+		if (response.status === 401) {
+			// Refused before processing (expired, revoked, or the backend's key rotated): one retry.
+			await discard(response);
+			tokens.invalidate(token.accessToken);
+			token = await tokens.token();
+			if (!token.ok) return serviceUnavailable();
+			response = await send(token.accessToken);
+			if (!(response instanceof Response)) return response;
+		}
+
+		if (response.status === 401 || response.status === 403) {
+			await discard(response);
+			console.error(
+				response.status === 403
+					? `[commerce] ${method} ${path} → 403; check fionas-web service permissions (needs ${permission})`
+					: `[commerce] ${method} ${path} → 401 with a fresh service token; check SERVICE:fionas-web is active`
+			);
+			return serviceUnavailable();
+		}
+		return decode(response);
+	}
+
+	/**
+	 * GET /inquiry-form. Every call reaches the backend: nothing here caches the form, so a page view
+	 * always renders the current revision. `fresh` also tells any HTTP cache in between to revalidate
+	 * (the backend sends `private, max-age=60, must-revalidate`), for recovery from
+	 * `CATALOG_REVISION_STALE`.
+	 */
+	async function getInquiryForm({ fresh = false }: { fresh?: boolean } = {}) {
+		const result = shaped(
+			await request('/inquiry-form', { fresh, permission: 'fionas.inquiry-form.read' }),
+			isInquiryForm,
+			'GET /inquiry-form'
+		);
+		if (result.ok) checkDefinition(result.data);
+		return result;
+	}
+
+	/** POST /estimate-preview: authoritative pricing that writes nothing. */
+	async function previewEstimate(pricingInputs: PricingInputs) {
+		return shaped(
+			await request('/estimate-preview', {
+				method: 'POST',
+				json: pricingInputs,
+				permission: 'fionas.estimate-preview.create'
+			}),
+			isEstimatePreview,
+			'POST /estimate-preview'
+		);
+	}
+
+	/**
+	 * POST /inquiries with the logical submission's `Idempotency-Key`. The caller owns the key: it
+	 * names one visible submission and must be the same for every delivery of it. A failure that
+	 * leaves the outcome unknown is retried once here with that same key and the same body, so a
+	 * commit whose response was lost comes back as the original receipt rather than a second inquiry.
+	 */
+	async function createInquiry(
+		inquiry: CreateInquiryRequest,
+		idempotencyKey: string
+	): Promise<ApiResult<InquiryReceipt>> {
+		if (!isSubmissionKey(idempotencyKey)) {
+			throw new Error('createInquiry needs the logical submission key ([A-Za-z0-9_-]{1,128})');
+		}
+		// The type already says so; this guards untyped callers. There is no contact-only inquiry.
+		if (typeof inquiry?.pricingInputs !== 'object' || inquiry.pricingInputs === null) {
+			throw new Error('createInquiry needs pricingInputs: every inquiry is configured service');
+		}
+
+		const send = async (): Promise<ApiResult<InquiryReceipt>> => {
+			const result = await request('/inquiries', {
+				method: 'POST',
+				json: inquiry,
+				headers: { 'idempotency-key': idempotencyKey },
+				permission: 'fionas.inquiries.create'
+			});
+			if (!result.ok) return result;
+			if (!isReceipt(result.data)) {
+				return failure('unexpected', 502, 'bad_response', 'Unexpected receipt shape');
+			}
+			return { ok: true, data: { id: result.data.id, createdAt: result.data.createdAt } };
+		};
+
+		let result = await send();
+		for (let attempt = 1; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
+			if (result.ok || !isOutcomeUnknown(result.error)) break;
+			console.warn(
+				`[commerce] POST /inquiries attempt ${attempt} failed (${result.error.status} ${result.error.code}); retrying with the same Idempotency-Key`
+			);
+			await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+			const retry = await send();
+			// A retry that never reached the backend settles nothing: the first outcome stays unknown.
+			result = !retry.ok && retry.error.kind === 'service_auth' ? result : retry;
+		}
+		return result;
+	}
+
+	return { getInquiryForm, previewEstimate, createInquiry };
 }
+
+export type CommerceClient = ReturnType<typeof createCommerceClient>;
+
+type EnvConfig = { baseUrl: string; serviceId?: string; credential?: string };
+
+let shared: { config: EnvConfig; client: CommerceClient } | null = null;
 
 /**
- * POST /inquiries with the logical submission's `Idempotency-Key`. The caller owns the key: it
- * names one visible submission and must be the same for every delivery of it. A failure that
- * leaves the outcome unknown is retried once here with that same key and the same body, so a
- * commit whose response was lost comes back as the original receipt rather than a second inquiry.
+ * This process's client, built from private env when first needed (so the marketing site starts
+ * without service credentials) and rebuilt if that configuration changes. One client means one
+ * in-memory token per process.
  */
-export async function createInquiry(
-	inquiry: CreateInquiryRequest,
-	idempotencyKey: string
-): Promise<ApiResult<InquiryReceipt>> {
-	if (!isSubmissionKey(idempotencyKey)) {
-		throw new Error('createInquiry needs the logical submission key ([A-Za-z0-9_-]{1,128})');
-	}
-	// The type already says so; this guards untyped callers. There is no contact-only inquiry.
-	if (typeof inquiry?.pricingInputs !== 'object' || inquiry.pricingInputs === null) {
-		throw new Error('createInquiry needs pricingInputs: every inquiry is configured service');
-	}
-
-	const send = async (): Promise<ApiResult<InquiryReceipt>> => {
-		const result = await request('/inquiries', {
-			method: 'POST',
-			json: inquiry,
-			headers: { 'idempotency-key': idempotencyKey }
-		});
-		if (!result.ok) return result;
-		if (!isReceipt(result.data)) {
-			return failure('unexpected', 502, 'bad_response', 'Unexpected receipt shape');
-		}
-		return { ok: true, data: { id: result.data.id, createdAt: result.data.createdAt } };
+function commerce(): CommerceClient {
+	const config: EnvConfig = {
+		baseUrl: env.COMMERCE_API_URL || 'http://localhost:8080',
+		serviceId: env.COMMERCE_SERVICE_ID?.trim() || undefined,
+		credential: env.COMMERCE_SERVICE_CREDENTIAL?.trim() || undefined
 	};
-
-	let result = await send();
-	for (let attempt = 1; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
-		if (result.ok || !isOutcomeUnknown(result.error)) break;
-		console.warn(
-			`[commerce] POST /inquiries attempt ${attempt} failed (${result.error.status} ${result.error.code}); retrying with the same Idempotency-Key`
-		);
-		await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-		result = await send();
+	if (
+		!shared ||
+		shared.config.baseUrl !== config.baseUrl ||
+		shared.config.serviceId !== config.serviceId ||
+		shared.config.credential !== config.credential
+	) {
+		shared = { config, client: createCommerceClient(config) };
 	}
-	return result;
+	return shared.client;
 }
+
+/** Drops this process's client and its cached token (tests start from a clean slate with it). */
+export function resetCommerceClient(): void {
+	shared = null;
+}
+
+export const getInquiryForm: CommerceClient['getInquiryForm'] = (options) =>
+	commerce().getInquiryForm(options);
+
+export const previewEstimate: CommerceClient['previewEstimate'] = (pricingInputs) =>
+	commerce().previewEstimate(pricingInputs);
+
+export const createInquiry: CommerceClient['createInquiry'] = (inquiry, idempotencyKey) =>
+	commerce().createInquiry(inquiry, idempotencyKey);

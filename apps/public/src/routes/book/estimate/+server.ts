@@ -35,8 +35,8 @@ function pricingInputsOf(body: unknown): PricingInputs | null {
 
 /**
  * Proxies the authoritative (non-writing) estimate preview to the commerce API: browser → here →
- * backend, with the server-side key. Answers with the backend's stable codes only, never its
- * diagnostic message.
+ * backend, authenticated as the site's SERVICE. Answers with the backend's stable codes only, never
+ * its diagnostic message.
  */
 export const POST: RequestHandler = async ({ request }) => {
 	assertBookingEnabled();
@@ -46,8 +46,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	const result = await previewEstimate(inputs);
 	if (result.ok) return json(result.data);
 	const { status, code, violations, kind } = result.error;
-	// Our own failures upstream (credential, contract) are an outage to the browser, not a refusal.
-	if (kind === 'unauthorized' || kind === 'unexpected') {
+	// Our own failures upstream (service auth, contract) are an outage to the browser, never a
+	// refusal of the customer's choices: the page keeps its advisory figures.
+	if (kind === 'service_auth' || kind === 'unexpected') {
 		return json({ code: 'unavailable' }, { status: 503 });
 	}
 	return json({ code, violations }, { status });

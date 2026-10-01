@@ -140,8 +140,8 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	// left to the backend: an earlier commit of this key replays, anything else is stale.
 	const command = prepareInquiry(form, answers, { catalogRevision: revision });
 	if (!command.ok) {
-		if (command.reason === 'unpriceable') {
-			console.error(`[inquiry] cannot build pricingInputs (${command.problem}); nothing sent`);
+		if (command.reason === 'incompatible') {
+			console.error(`[inquiry] cannot build POST /inquiries (${command.problem}); nothing sent`);
 			return unresolved
 				? stillUnknown(answers)
 				: failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
@@ -187,8 +187,9 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	// Sent, but we can't tell whether it was recorded. Only the identical request under the same key
 	// may follow; a deliberate change of answers is a new submission (`restartToken`).
 	if (isOutcomeUnknown(error) || unresolved) return stillUnknown(answers);
-	if (error.kind === 'unauthorized') {
-		// Refused before anything was recorded; the adapter has already logged why for the operator.
+	if (error.kind === 'service_auth') {
+		// Our SERVICE identity was refused before anything was processed; the adapter has logged why
+		// for the operator. The visitor sees the generic outage, never the auth failure.
 		return failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
 	}
 	console.error(`[inquiry] POST /inquiries failed unexpectedly (${error.status} ${error.code})`);

@@ -8,6 +8,7 @@ import {
 	emptyAnswers,
 	formatOfferingPrice,
 	hasPricingBasics,
+	INQUIRY_EVENT_TYPES,
 	isEstimateReady,
 	isSelectable,
 	isSkippable,
@@ -59,6 +60,36 @@ const form: InquiryForm = {
 					required: true,
 					input: { type: 'EMAIL', maxLength: 254 },
 					presentation: { control: 'TEXT' }
+				},
+				{
+					key: 'zipCode',
+					label: 'ZIP code',
+					submissionPointer: '/zipCode',
+					required: true,
+					input: { type: 'TEXT', minLength: 5, maxLength: 5, pattern: '^[0-9]{5}$' },
+					presentation: { control: 'TEXT' }
+				},
+				{
+					key: 'eventDate',
+					label: 'Event date',
+					submissionPointer: '/eventDate',
+					required: true,
+					input: { type: 'DATE', format: 'date' },
+					presentation: { control: 'DATE' }
+				},
+				{
+					key: 'eventType',
+					label: 'Event type',
+					submissionPointer: '/eventType',
+					required: true,
+					input: {
+						type: 'STRING_CHOICE',
+						options: [
+							{ value: 'BIRTHDAY', label: 'Birthday' },
+							{ value: 'SCHOOL_EVENT', label: 'School event' }
+						]
+					},
+					presentation: { control: 'SELECT' }
 				}
 			]
 		},
@@ -149,8 +180,16 @@ const form: InquiryForm = {
 
 const clone = (f: InquiryForm = form) => JSON.parse(JSON.stringify(f)) as InquiryForm;
 
+/** Contact and event details, as every inquiry carries them. */
+function withDetails(answers: InquiryAnswers) {
+	answers.values.zipCode = '02134';
+	answers.values.eventDate = '2026-12-05';
+	answers.values.eventType = 'BIRTHDAY';
+	return answers;
+}
+
 function answered() {
-	const answers = emptyAnswers(form);
+	const answers = withDetails(emptyAnswers(form));
 	answers.values.name = '  Jane Doe ';
 	answers.values.email = 'jane@example.com';
 	answers.values.guestCount = '75';
@@ -161,7 +200,7 @@ function answered() {
 
 /** The answers of a customer who filled in contact details and a message, but no service. */
 function contactOnly(): InquiryAnswers {
-	const answers = emptyAnswers(form);
+	const answers = withDetails(emptyAnswers(form));
 	answers.values.name = 'Jane';
 	answers.values.email = 'jane@example.com';
 	answers.values.message = 'Can we talk about a school event?';
@@ -189,9 +228,12 @@ describe('validateAnswers', () => {
 		expect(Object.keys(errors).sort()).toEqual([
 			'durationMinutes',
 			'email',
+			'eventDate',
+			'eventType',
 			'guestCount',
 			'name',
-			'offering:soft-serve-flavor'
+			'offering:soft-serve-flavor',
+			'zipCode'
 		]);
 	});
 
@@ -258,6 +300,9 @@ describe('prepareInquiry', () => {
 		expect(requestOf(prepareInquiry(form, answered()))).toEqual({
 			name: 'Jane Doe',
 			email: 'jane@example.com',
+			zipCode: '02134',
+			eventDate: '2026-12-05',
+			eventType: 'BIRTHDAY',
 			pricingInputs: {
 				catalogRevision: 15,
 				guestCount: 75,
@@ -313,7 +358,7 @@ describe('prepareInquiry', () => {
 			drifted.sections[1]!.optional = true;
 			const rejected = {
 				ok: false,
-				reason: 'unpriceable',
+				reason: 'incompatible',
 				problem: 'section "service" has pricing questions but is marked optional'
 			};
 			// Not coerced into a required section: even complete answers produce no request.
@@ -338,8 +383,18 @@ describe('prepareInquiry', () => {
 			noService.sections = noService.sections.filter((s) => s.key !== 'service');
 			expect(prepareInquiry(noService, contactOnly())).toEqual({
 				ok: false,
-				reason: 'unpriceable',
+				reason: 'incompatible',
 				problem: 'the form must ask exactly one guestCount question'
+			});
+		});
+
+		it('refuses a form that never asks for a field POST /inquiries requires', () => {
+			const noZip = clone();
+			noZip.sections[0]!.fields = noZip.sections[0]!.fields.filter((f) => f.key !== 'zipCode');
+			expect(prepareInquiry(noZip, answered())).toEqual({
+				ok: false,
+				reason: 'incompatible',
+				problem: 'the form gave no zipCode'
 			});
 		});
 
@@ -366,6 +421,33 @@ describe('prepareInquiry', () => {
 				expect(pricingInputs.selections[0]?.category).toBe('soft-serve-flavor');
 				expect(pricingInputs.selections[0]?.offerings.length).toBeGreaterThanOrEqual(1);
 			}
+		});
+	});
+
+	it('sends each of the backend event types as offered', () => {
+		const every = clone();
+		const eventType = every.sections[0]!.fields.find((f) => f.key === 'eventType')!;
+		eventType.input = {
+			type: 'STRING_CHOICE',
+			options: INQUIRY_EVENT_TYPES.map((value) => ({ value, label: value }))
+		};
+		for (const type of INQUIRY_EVENT_TYPES) {
+			const answers = answered();
+			answers.values.eventType = type;
+			expect(requestOf(prepareInquiry(every, answers)).eventType).toBe(type);
+		}
+	});
+
+	it('refuses an event type the backend does not know, even if a form offers it', () => {
+		const drifted = clone();
+		const eventType = drifted.sections[0]!.fields.find((f) => f.key === 'eventType')!;
+		eventType.input = { type: 'STRING_CHOICE', options: [{ value: 'PARADE', label: 'Parade' }] };
+		const answers = answered();
+		answers.values.eventType = 'PARADE';
+		expect(prepareInquiry(drifted, answers)).toEqual({
+			ok: false,
+			reason: 'incompatible',
+			problem: 'the form gave no known eventType'
 		});
 	});
 
@@ -568,6 +650,9 @@ describe('answersFromFormData', () => {
 		const entries: [string, string][] = [
 			['name', 'Jane'],
 			['email', 'jane@example.com'],
+			['zipCode', '02134'],
+			['eventDate', '2026-12-05'],
+			['eventType', 'SCHOOL_EVENT'],
 			['guestCount', '50'],
 			['guestCountIsMinimum', 'on'],
 			['durationMinutes', '90'],

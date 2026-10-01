@@ -1,6 +1,7 @@
 // Minimal stand-in for the fionas-commerce API so e2e needs no real backend. Serves fixtures
-// captured from the real service, keeps the POST /inquiries idempotency contract, and records what
-// the app sent for assertions.
+// captured from the real service, models SERVICE authentication and the POST /inquiries
+// idempotency contract, and records what the app sent for assertions. A behavioral stub: tokens
+// are opaque random strings, not JWTs, and nothing here is a real credential.
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -8,9 +9,15 @@ import { readFileSync } from 'node:fs';
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4174);
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
-// Like the real API, the UI endpoints demand the trusted server-side Bearer key.
-const uiKey = process.env.COMMERCE_STUB_KEY ?? 'e2e-ui-key';
-const secured = new Set(['GET /inquiry-form', 'POST /estimate-preview', 'POST /inquiries']);
+// The test-only SERVICE:fionas-web the app must authenticate as (see playwright.config.ts).
+const serviceId = process.env.COMMERCE_STUB_SERVICE_ID;
+const credential = process.env.COMMERCE_STUB_SERVICE_CREDENTIAL;
+if (!serviceId || !credential) {
+	throw new Error('COMMERCE_STUB_SERVICE_ID and COMMERCE_STUB_SERVICE_CREDENTIAL are required');
+}
+const TOKEN_LIFETIME_SECONDS = 900;
+/** Access tokens issued by POST /auth/service/token; the protected routes accept only these. */
+const issued = new Set();
 
 // Only stale-catalog recovery asks for an uncached form (Cache-Control: no-cache). It gets the
 // "next" catalog: revision 16, where Horchata is temporarily UNAVAILABLE (still listed) and cookie
@@ -58,9 +65,21 @@ const unavailableOffering = (res) =>
 		violations: [{ code: 'OFFERING_UNAVAILABLE' }]
 	});
 
+const unauthenticated = (res) =>
+	send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
+
+const forbidden = (res) =>
+	send(res, 403, {
+		code: 'forbidden',
+		message: 'The authenticated principal is not permitted to perform this request'
+	});
+
 /** Committed inquiries (request bodies), for assertions. */
 const submissions = [];
-/** Every POST /inquiries the app made: who, under which key, whether it carried the UI key. */
+/**
+ * Every POST /inquiries the app made: for whom, under which Idempotency-Key, with which access
+ * token, and whether the stub accepted that token.
+ */
 const attempts = [];
 /** Idempotency-Key → { fingerprint, receipt }. */
 const committed = new Map();
@@ -84,13 +103,21 @@ function readJson(req) {
 	});
 }
 
+/** The issued access token a request carries, or null. */
+function bearerOf(req) {
+	const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+	return token && issued.has(token) ? token : null;
+}
+
 /*
  * Test hooks, chosen by the email's prefix (`seen`: earlier attempts for that email):
- * stale-   → 409 CATALOG_REVISION_STALE until the reviewed revision-16 form is sent
- * lost-    → commit, then drop the connection (the app must retry with the same key)
- * down-    → 503 for the first two attempts
- * reused-  → 409 IDEMPOTENCY_KEY_REUSED for the first key used
- * invalid- → 422 with a stable violation code
+ * stale-     → 409 CATALOG_REVISION_STALE until the reviewed revision-16 form is sent
+ * lost-      → commit, then drop the connection (the app must retry with the same key)
+ * down-      → 503 for the first two attempts
+ * reused-    → 409 IDEMPOTENCY_KEY_REUSED for the first key used
+ * invalid-   → 422 with a stable violation code
+ * expired-   → 401 for the first attempt, as if its access token had just expired
+ * forbidden- → 403: the service lacks fionas.inquiries.create
  */
 function scenario(body, key) {
 	const email = String(body?.email ?? '');
@@ -107,6 +134,10 @@ function scenario(body, key) {
 			return seen.length === 0 || seen[0].key === key ? 'reused' : null;
 		case 'invalid':
 			return 'invalid';
+		case 'expired':
+			return seen.length === 0 ? 'expired' : null;
+		case 'forbidden':
+			return 'forbidden';
 		default:
 			return null;
 	}
@@ -124,21 +155,45 @@ createServer(async (req, res) => {
 	const { pathname } = new URL(req.url ?? '/', 'http://stub');
 
 	if (req.method === 'GET' && pathname === '/ready') return send(res, 200, { ok: true });
-	if (
-		secured.has(`${req.method} ${pathname}`) &&
-		req.headers.authorization !== `Bearer ${uiKey}` &&
-		pathname !== '/inquiries'
-	) {
-		return send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
+
+	if (req.method === 'POST' && pathname === '/auth/service/token') {
+		const body = await readJson(req);
+		if (body === null || typeof body.serviceId !== 'string' || typeof body.secret !== 'string') {
+			return send(res, 400, { code: 'malformed_request', message: 'Malformed request' });
+		}
+		if (body.serviceId !== serviceId || body.secret !== credential) {
+			return send(
+				res,
+				401,
+				{ code: 'unauthenticated', message: 'Service authentication failed' },
+				{ 'cache-control': 'no-store' }
+			);
+		}
+		const accessToken = `e2e-access-token-${randomUUID()}`;
+		issued.add(accessToken);
+		return send(
+			res,
+			200,
+			{
+				accessToken,
+				tokenType: 'Bearer',
+				expiresAt: new Date(Date.now() + TOKEN_LIFETIME_SECONDS * 1000).toISOString(),
+				expiresIn: TOKEN_LIFETIME_SECONDS
+			},
+			{ 'cache-control': 'no-store' }
+		);
 	}
+
 	if (req.method === 'GET' && pathname === '/inquiry-form') {
+		if (!bearerOf(req)) return unauthenticated(res);
 		const fresh = /no-cache/.test(req.headers['cache-control'] ?? '');
 		return send(res, 200, fresh ? nextForm : currentForm, {
 			'cache-control': 'private, max-age=60, must-revalidate'
 		});
 	}
 	if (req.method === 'POST' && pathname === '/estimate-preview') {
-		// Test hooks: these guest counts simulate an outage / a rejected selection.
+		if (!bearerOf(req)) return unauthenticated(res);
+		// Test hooks: these guest counts simulate an outage / a missing permission / a rejection.
 		const body = await readJson(req);
 		if (body?.guestCount === 503) {
 			return send(res, 503, {
@@ -146,6 +201,7 @@ createServer(async (req, res) => {
 				message: 'The request could not be completed'
 			});
 		}
+		if (body?.guestCount === 403) return forbidden(res);
 		if (body?.guestCount === 422) {
 			return send(res, 422, { code: 'validation_failed', message: 'Cannot be estimated' });
 		}
@@ -155,13 +211,13 @@ createServer(async (req, res) => {
 	if (req.method === 'POST' && pathname === '/inquiries') {
 		const body = await readJson(req);
 		const key = req.headers['idempotency-key'];
-		const authorized = req.headers.authorization === `Bearer ${uiKey}`;
+		const token = bearerOf(req);
 		const hook = scenario(body, key);
-		attempts.push({ email: body?.email ?? null, key: key ?? null, authorized });
+		const authorized = token !== null && hook !== 'expired';
+		attempts.push({ email: body?.email ?? null, key: key ?? null, token, authorized });
 
-		if (!authorized) {
-			return send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
-		}
+		if (!authorized) return unauthenticated(res);
+		if (hook === 'forbidden') return forbidden(res);
 		if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
 			return send(res, 400, { code: 'malformed_request', message: 'Malformed request: header' });
 		}

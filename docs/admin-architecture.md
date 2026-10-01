@@ -110,8 +110,10 @@ Because the cookie is `Secure`, SvelteKit sets it with `Secure` too; browsers ac
 | `COMMERCE_API_URL` | yes\*    | Commerce API base URL. Defaults to `http://localhost:8080`.                                                           |
 | `ADMIN_ORIGIN`     | in prod  | The admin site's public origin, sent as `Origin`. Must be trusted by the API. Falls back to the request's own origin. |
 
-Both are read per request with `$env/dynamic/private`. See `apps/admin/.env.example`. The `/auth/*`
-endpoints need no UI key; if later endpoints do, add it to server env only and never log it.
+Both are read per request with `$env/dynamic/private`. See `apps/admin/.env.example`. The admin app
+acts only as the signed-in staff member (a USER session). It never uses the public site's
+`SERVICE:fionas-web` credential or tokens, and never sends a service bearer token; calling the backend
+as a service on a user's behalf (caller + actor delegation) would be designed separately.
 
 The API must list every admin origin as trusted: `http://localhost:5174`,
 `https://admin-dev.fionasicecream.com`, `https://admin.fionasicecream.com`. Otherwise login returns 403

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CreateInquiryRequest } from '@fionas/shared';
 import {
 	TEST_BASE_URL,
-	TEST_UI_KEY,
+	TEST_SERVICE_CREDENTIAL,
+	TEST_SERVICE_ID,
 	estimateFixture,
 	fakeCommerce,
 	type FakeCommerce
@@ -11,14 +12,22 @@ import {
 const env = vi.hoisted(() => ({}) as Record<string, string | undefined>);
 vi.mock('$env/dynamic/private', () => ({ env }));
 
-const { createInquiry, getInquiryForm, previewEstimate } = await import('./commerce.js');
+const {
+	createCommerceClient,
+	createInquiry,
+	getInquiryForm,
+	previewEstimate,
+	resetCommerceClient
+} = await import('./commerce.js');
 
-/** Replaces the backend with one fixed answer (or failure) for every call. */
+/** Replaces the backend's protected endpoints with one fixed answer (or failure) for every call. */
 function answerEvery(respond: () => Response | Promise<Response>) {
 	const calls: { url: string; init?: RequestInit }[] = [];
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async (url: string, init?: RequestInit) => {
+			// Token exchanges still go to the fake backend: only the protected answer is replaced.
+			if (url.endsWith('/auth/service/token')) return backend.fetch(url, init);
 			calls.push({ url, init });
 			return respond();
 		})
@@ -48,7 +57,9 @@ let logs: string[];
 
 beforeEach(() => {
 	env.COMMERCE_API_URL = `${TEST_BASE_URL}/`;
-	env.FIONAS_UI_API_KEY = TEST_UI_KEY;
+	env.COMMERCE_SERVICE_ID = TEST_SERVICE_ID;
+	env.COMMERCE_SERVICE_CREDENTIAL = TEST_SERVICE_CREDENTIAL;
+	resetCommerceClient();
 	backend = fakeCommerce();
 	vi.stubGlobal('fetch', vi.fn(backend.fetch));
 	logs = [];
@@ -62,19 +73,28 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+/** Nothing secret ever appears in a result or a log line. */
+function expectNoSecrets(result: unknown) {
+	const seen = `${JSON.stringify(result)}\n${logs.join('\n')}`;
+	expect(seen).not.toContain(TEST_SERVICE_CREDENTIAL);
+	expect(seen).not.toContain('test-access-token');
+	expect(seen).not.toContain('Bearer');
+}
+
 describe('createInquiry', () => {
-	it('sends the bearer key, the idempotency key and the JSON intent to the configured API', async () => {
+	it('sends the service token, the idempotency key and the JSON intent to the configured API', async () => {
 		const result = await createInquiry(inquiry, KEY);
 
 		expect(result).toEqual({
 			ok: true,
 			data: { id: expect.any(String), createdAt: expect.any(String) }
 		});
+		expect(backend.exchanges).toEqual([{ serviceId: TEST_SERVICE_ID, accepted: true }]);
 		const [post] = backend.posts();
 		expect(post).toMatchObject({
 			path: '/inquiries',
 			headers: {
-				authorization: `Bearer ${TEST_UI_KEY}`,
+				authorization: `Bearer ${backend.tokens()[0]}`,
 				'idempotency-key': KEY,
 				'content-type': 'application/json',
 				accept: 'application/json'
@@ -111,6 +131,15 @@ describe('createInquiry', () => {
 		backend.script({ status: 503 }, { status: 409, body: { code: 'conflict', message: 'm' } });
 		expect((await createInquiry(inquiry, KEY)).ok).toBe(false);
 		expect(backend.posts().map((c) => c.headers['idempotency-key'])).toEqual([KEY, KEY]);
+	});
+
+	it('retries the retryable conflict with the same key and body, then succeeds', async () => {
+		backend.script({ status: 409, body: { code: 'conflict', message: 'm' } });
+		const result = await createInquiry(inquiry, KEY);
+		expect(result.ok).toBe(true);
+		const posts = backend.posts();
+		expect(posts.map((c) => c.headers['idempotency-key'])).toEqual([KEY, KEY]);
+		expect(posts[0]?.body).toEqual(posts[1]?.body);
 	});
 
 	it('gives up after two attempts, reporting the backend as unreachable', async () => {
@@ -180,14 +209,21 @@ describe('createInquiry', () => {
 		expect(backend.posts()).toHaveLength(1);
 	});
 
-	it('maps violation codes and never exposes or logs the bearer key', async () => {
-		env.FIONAS_UI_API_KEY = 'wrong-key';
+	it('reports a refused service credential as an outage, sends nothing and leaks nothing', async () => {
+		env.COMMERCE_SERVICE_CREDENTIAL = 'wrong-credential-value';
 		const result = await createInquiry(inquiry, KEY);
-		expect(result).toMatchObject({ ok: false, error: { status: 401, code: 'unauthenticated' } });
-		expect(JSON.stringify(result)).not.toContain('wrong-key');
-		expect(logs.join('\n')).not.toContain('wrong-key');
-		expect(logs.join('\n')).toMatch(/FIONAS_UI_API_KEY/);
-		expect(result.ok || result.error.kind).toBe('unauthorized');
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: { kind: 'service_auth', status: 503, code: 'unavailable' }
+		});
+		expect(backend.exchanges).toEqual([{ serviceId: TEST_SERVICE_ID, accepted: false }]);
+		expect(backend.posts()).toHaveLength(0);
+		expect(logs.join('\n')).toMatch(
+			/service token exchange failed → 401; check COMMERCE_SERVICE_ID/
+		);
+		expect(`${JSON.stringify(result)}\n${logs.join('\n')}`).not.toContain('wrong-credential-value');
+		expectNoSecrets(result);
 	});
 
 	it.each([
@@ -204,13 +240,13 @@ describe('createInquiry', () => {
 });
 
 describe('getInquiryForm', () => {
-	it('reads the form with the bearer key', async () => {
+	it('reads the form with the service token', async () => {
 		const result = await getInquiryForm();
 		expect(result.ok && result.data.catalogRevision).toBe(15);
 		expect(backend.calls[0]).toMatchObject({
 			method: 'GET',
 			path: '/inquiry-form',
-			headers: { authorization: `Bearer ${TEST_UI_KEY}` }
+			headers: { authorization: `Bearer ${backend.tokens()[0]}` }
 		});
 		expect(backend.calls[0]?.headers['cache-control']).toBeUndefined();
 	});
@@ -233,24 +269,31 @@ describe('getInquiryForm', () => {
 		expect(logs.join(' ')).toMatch(/outside the contract/);
 	});
 
-	it('sends no Authorization header when no key is configured', async () => {
-		env.FIONAS_UI_API_KEY = '  ';
+	it('calls nothing when the service credential is not configured', async () => {
+		env.COMMERCE_SERVICE_CREDENTIAL = '  ';
 		const result = await getInquiryForm();
-		expect(result).toMatchObject({ ok: false, error: { status: 401 } });
-		expect(backend.calls[0]?.headers.authorization).toBeUndefined();
+		expect(result).toMatchObject({ ok: false, error: { kind: 'service_auth', status: 503 } });
+		expect(backend.exchanges).toHaveLength(0);
+		expect(backend.calls).toHaveLength(0);
+		expect(logs.join('\n')).toMatch(
+			/COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL must be set/
+		);
 	});
 });
 
 describe('previewEstimate', () => {
 	const pricing = inquiry.pricingInputs;
 
-	it('posts the pricing inputs with the bearer key and returns the backend figures', async () => {
+	it('posts the pricing inputs with the service token and returns the backend figures', async () => {
 		const result = await previewEstimate(pricing);
 		expect(result).toEqual({ ok: true, data: estimateFixture() });
 		expect(backend.calls[0]).toMatchObject({
 			method: 'POST',
 			path: '/estimate-preview',
-			headers: { authorization: `Bearer ${TEST_UI_KEY}`, 'content-type': 'application/json' },
+			headers: {
+				authorization: `Bearer ${backend.tokens()[0]}`,
+				'content-type': 'application/json'
+			},
 			body: pricing
 		});
 		// Previews write nothing and need no Idempotency-Key.
@@ -278,5 +321,215 @@ describe('previewEstimate', () => {
 			ok: false,
 			error: { kind: 'validation', violations: ['TOO_MANY_SELECTIONS'] }
 		});
+	});
+});
+
+describe('service authentication', () => {
+	let clock: number;
+
+	/** A client of its own, on the fake backend, with a clock the test moves. */
+	function client(fetch: typeof globalThis.fetch = backend.fetch) {
+		clock = Date.UTC(2026, 9, 1, 12);
+		return createCommerceClient({
+			baseUrl: TEST_BASE_URL,
+			serviceId: TEST_SERVICE_ID,
+			credential: TEST_SERVICE_CREDENTIAL,
+			fetch,
+			now: () => clock,
+			retryDelayMs: 0
+		});
+	}
+
+	const pricing = inquiry.pricingInputs;
+	const bearers = () => backend.calls.map((c) => c.headers.authorization);
+
+	it('acquires a token lazily, on the first protected call', async () => {
+		const commerce = client();
+		expect(backend.exchanges).toHaveLength(0);
+
+		await commerce.getInquiryForm();
+		expect(backend.exchanges).toHaveLength(1);
+		expect(bearers()).toEqual(['Bearer test-access-token-1']);
+	});
+
+	it('reuses the token across sequential calls', async () => {
+		const commerce = client();
+		await commerce.getInquiryForm();
+		await commerce.previewEstimate(pricing);
+		await commerce.createInquiry(inquiry, KEY);
+		expect(backend.exchanges).toHaveLength(1);
+		expect(new Set(bearers())).toEqual(new Set(['Bearer test-access-token-1']));
+	});
+
+	it('performs one exchange for many concurrent calls', async () => {
+		const commerce = client();
+		const results = await Promise.all([
+			commerce.getInquiryForm(),
+			commerce.getInquiryForm(),
+			commerce.previewEstimate(pricing),
+			commerce.previewEstimate(pricing),
+			commerce.createInquiry(inquiry, KEY)
+		]);
+		expect(results.every((r) => r.ok)).toBe(true);
+		expect(backend.exchanges).toHaveLength(1);
+	});
+
+	it('replaces the token before it expires, using the injected clock', async () => {
+		const commerce = client();
+		await commerce.getInquiryForm();
+		clock += 14 * 60_000; // a 15-minute token is due for replacement a minute early
+		await commerce.getInquiryForm();
+		expect(backend.exchanges).toHaveLength(2);
+		expect(bearers()).toEqual(['Bearer test-access-token-1', 'Bearer test-access-token-2']);
+	});
+
+	it('recovers from a 401 with a new token and repeats the identical POST /inquiries once', async () => {
+		const commerce = client();
+		await commerce.getInquiryForm();
+		backend.expireTokens();
+
+		const result = await commerce.createInquiry(inquiry, KEY);
+
+		expect(result.ok).toBe(true);
+		const posts = backend.posts();
+		expect(posts).toHaveLength(2);
+		expect(posts.map((c) => c.headers.authorization)).toEqual([
+			'Bearer test-access-token-1',
+			'Bearer test-access-token-2'
+		]);
+		// Same business request: same Idempotency-Key, same body; only the bearer token changed.
+		expect(posts.map((c) => c.headers['idempotency-key'])).toEqual([KEY, KEY]);
+		expect(posts[1]?.body).toEqual(posts[0]?.body);
+		expect({ ...posts[1]?.headers, authorization: '' }).toEqual({
+			...posts[0]?.headers,
+			authorization: ''
+		});
+		expect(backend.committed.size).toBe(1);
+	});
+
+	it('never retries authentication more than once', async () => {
+		// Every protected call is refused, however fresh the token.
+		const commerce = client(async (input, init) => {
+			const response = await backend.fetch(input, init);
+			return String(input).endsWith('/auth/service/token')
+				? response
+				: Response.json({ code: 'unauthenticated', message: 'm' }, { status: 401 });
+		});
+
+		const result = await commerce.createInquiry(inquiry, KEY);
+
+		expect(result).toMatchObject({ ok: false, error: { kind: 'service_auth', status: 503 } });
+		expect(backend.posts()).toHaveLength(2);
+		expect(backend.exchanges).toHaveLength(2);
+		expect(logs.join('\n')).toMatch(/POST \/inquiries → 401 with a fresh service token/);
+		expectNoSecrets(result);
+	});
+
+	it('does not let a slow 401 discard a newer token another request installed', async () => {
+		let release!: () => void;
+		let hold: Promise<void> | null = new Promise((resolve) => (release = resolve));
+		const commerce = client(async (input, init) => {
+			const response = await backend.fetch(input, init);
+			// Request A's first answer (a 401 for the expired token) arrives late.
+			if (hold && String(input).endsWith('/inquiry-form')) {
+				const late = hold;
+				hold = null;
+				await late;
+			}
+			return response;
+		});
+		await commerce.previewEstimate(pricing);
+		backend.expireTokens();
+
+		const a = commerce.getInquiryForm();
+		// Request B also gets a 401, refreshes, and installs token 2.
+		expect((await commerce.previewEstimate(pricing)).ok).toBe(true);
+		expect(backend.tokens()).toEqual(['test-access-token-1', 'test-access-token-2']);
+		release();
+		expect((await a).ok).toBe(true);
+
+		// A's late 401 named token 1, so token 2 survived: A retried with it, and so does C.
+		await commerce.previewEstimate(pricing);
+		expect(backend.exchanges).toHaveLength(2);
+		expect(
+			backend.calls.filter((c) => c.path === '/inquiry-form').map((c) => c.headers.authorization)
+		).toEqual(['Bearer test-access-token-1', 'Bearer test-access-token-2']);
+		expect(bearers().at(-1)).toBe('Bearer test-access-token-2');
+	});
+
+	it.each([
+		[
+			'GET /inquiry-form',
+			'fionas.inquiry-form.read',
+			(c: ReturnType<typeof client>) => c.getInquiryForm()
+		],
+		[
+			'POST /estimate-preview',
+			'fionas.estimate-preview.create',
+			(c: ReturnType<typeof client>) => c.previewEstimate(pricing)
+		],
+		[
+			'POST /inquiries',
+			'fionas.inquiries.create',
+			(c: ReturnType<typeof client>) => c.createInquiry(inquiry, KEY)
+		]
+	])(
+		'treats a 403 on %s as an outage and never refreshes for it',
+		async (route, permission, call) => {
+			const commerce = client();
+			backend.revoke(permission);
+
+			const result = await call(commerce);
+
+			expect(result).toMatchObject({
+				ok: false,
+				error: { kind: 'service_auth', status: 503, code: 'unavailable' }
+			});
+			expect(backend.calls).toHaveLength(1);
+			expect(backend.exchanges).toHaveLength(1);
+			expect(logs.join('\n')).toContain(
+				`[commerce] ${route} → 403; check fionas-web service permissions (needs ${permission})`
+			);
+			expect(JSON.stringify(result)).not.toMatch(/forbidden|permission|fionas\./);
+			expectNoSecrets(result);
+		}
+	);
+
+	it('treats an unusable token response as the backend being unavailable', async () => {
+		const commerce = client(async (input, init) =>
+			String(input).endsWith('/auth/service/token')
+				? Response.json({ accessToken: 'test-access-token-x', tokenType: 'Bearer' })
+				: backend.fetch(input, init)
+		);
+		const result = await commerce.getInquiryForm();
+		expect(result).toMatchObject({ ok: false, error: { kind: 'service_auth', status: 503 } });
+		expect(backend.calls).toHaveLength(0);
+		expectNoSecrets(result);
+	});
+
+	it('keeps a submission unknown when its retry could not even authenticate', async () => {
+		let refuse = false;
+		const commerce = client(async (input, init) => {
+			if (refuse && String(input).endsWith('/auth/service/token')) {
+				return Response.json({ code: 'unauthenticated', message: 'm' }, { status: 401 });
+			}
+			try {
+				return await backend.fetch(input, init);
+			} finally {
+				if (String(input).endsWith('/inquiries')) {
+					// The first delivery is lost in transit; then the service is locked out.
+					backend.expireTokens();
+					refuse = true;
+				}
+			}
+		});
+		backend.script('commit-then-drop');
+
+		const result = await commerce.createInquiry(inquiry, KEY);
+
+		// The first delivery may have committed (it did); "nothing was sent" would be untrue.
+		expect(result).toMatchObject({ ok: false, error: { kind: 'timeout' } });
+		expect(backend.posts()).toHaveLength(2);
+		expect(backend.committed.size).toBe(1);
 	});
 });

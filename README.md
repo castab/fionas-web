@@ -40,15 +40,19 @@ npm run dev:admin    # admin on http://localhost:5174
 `POST /estimate-preview`, `POST /inquiries`). The backend sends no CORS headers, so the public app
 calls it server-side only. Copy `apps/public/.env.example` to `apps/public/.env` (git-ignored; restart the dev server after editing) to configure:
 
-| Variable            | Default                 | Purpose                                                                                                                                                                                        |
-| ------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `COMMERCE_API_URL`  | `http://localhost:8080` | Base URL of the commerce API                                                                                                                                                                   |
-| `FIONAS_UI_API_KEY` | unset                   | Trusted UI key (same name and value as the backend's), sent as `Authorization: Bearer <key>` on the three endpoints above; without it they return 401 and `/book` shows its "unavailable" page |
-| `BOOKING_ENABLED`   | unset (off)             | `true` enables `/book` and links the Book buttons to it; off: `/book` is a 404 and the buttons show the toast                                                                                  |
+| Variable                      | Default                 | Purpose                                                                                                            |
+| ----------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `COMMERCE_API_URL`            | `http://localhost:8080` | Base URL of the commerce API                                                                                       |
+| `COMMERCE_SERVICE_ID`         | unset                   | UUID of the site's SERVICE principal, `SERVICE:fionas-web` (see [Service authentication](#service-authentication)) |
+| `COMMERCE_SERVICE_CREDENTIAL` | unset                   | That service's credential secret. Secret                                                                           |
+| `BOOKING_ENABLED`             | unset (off)             | `true` enables `/book` and links the Book buttons to it; off: `/book` is a 404 and the buttons show the toast      |
 
-`FIONAS_UI_API_KEY` is a secret: keep it only in the git-ignored `apps/public/.env` (or your host's
-environment), never in `.env.example`, and never in client code. It is read through SvelteKit's
-private env in `src/lib/server/`, so it cannot be bundled into the browser.
+The service variables are needed only while booking is on: the marketing site starts and runs
+without them, and they are checked when `/book` first needs the backend (missing or refused, `/book`
+shows its "unavailable" page and the server log says why). Keep them only in the git-ignored
+`apps/public/.env` (or your host's secret store), never in `.env.example` or client code. They are
+read through SvelteKit's private env in `src/lib/server/`, so they cannot be bundled into the
+browser.
 
 While `BOOKING_ENABLED` is off, `/book` (page, form action and estimate endpoint) returns 404. E2E tests use a stub API, so they need no running backend.
 
@@ -62,11 +66,119 @@ clicks, lost responses and retries never create duplicate inquiries. A changed c
 (`CATALOG_REVISION_STALE`) refreshes the form for the customer to review; nothing is resubmitted for
 them. See [docs/public-inquiry-submission.md](docs/public-inquiry-submission.md).
 
+### Service authentication
+
+The public site calls fionas-commerce as a first-class SERVICE principal, never as a user and
+never with a static key:
+
+```
+browser
+  │  same-origin requests only (/book, /book/estimate); receives no credential or token
+  ▼
+apps/public SvelteKit server (src/lib/server/)
+  │  COMMERCE_SERVICE_ID + COMMERCE_SERVICE_CREDENTIAL (private deployment env)
+  ▼
+POST /auth/service/token  →  short-lived access token (15 min), kept in server memory
+  │  Authorization: Bearer <access token>
+  ▼
+fionas-commerce  →  SERVICE:fionas-web  →  role fionas.web  →  fionas.inquiry-form.read
+                                                               fionas.estimate-preview.create
+                                                               fionas.inquiries.create
+```
+
+Three different secrets are involved, and they are never interchangeable:
+
+| Secret                           | Held by                                | Purpose                                                    |
+| -------------------------------- | -------------------------------------- | ---------------------------------------------------------- |
+| `SERVICE_TOKENS_SIGNING_KEY`     | fionas-commerce only                   | Signs access tokens. This app never has it                 |
+| Service credential (id + secret) | apps/public's private deployment env   | Long-lived; exchanged for access tokens                    |
+| Access token                     | apps/public server memory, per process | Short-lived `Authorization: Bearer`; carries identity only |
+
+The browser receives none of them. The server obtains a token lazily, reuses it until shortly
+before it expires, shares one exchange between concurrent requests, and after a `401` gets a new
+one and repeats the request once. A `403` (the service lacks a permission) is never retried. Both are
+logged for the operator (`[commerce] POST /inquiries → 403; check fionas-web service permissions`)
+and shown to visitors only as the generic "unavailable" message. Details:
+[docs/public-inquiry-submission.md](docs/public-inquiry-submission.md#service-authentication).
+
+`apps/admin` is intentionally separate: staff sign in with their own USER sessions and the admin
+server never authenticates as `SERVICE:fionas-web`.
+
+**Provisioning (once per environment, by a staff administrator; never at startup).** Use the
+backend's `/admin/access` API as an administrator (the bootstrap administrator holds every
+permission needed):
+
+1. Log in to fionas-commerce as an administrator.
+2. Create the service: `POST /admin/access/services` `{"name": "fionas-web"}`; note its `id`.
+3. Create the role: `POST /admin/access/roles` with key `fionas.web`, granting exactly
+   `fionas.inquiry-form.read`, `fionas.estimate-preview.create` and `fionas.inquiries.create`.
+   Never staff, offering-management, financial, role or credential permissions.
+4. Assign it: `PUT /admin/access/services/{serviceId}/roles/fionas.web`.
+5. Create a credential: `POST /admin/access/services/{serviceId}/credentials` `{"label": "…"}`.
+   The response shows the `secret` exactly once.
+6. Put the service `id` in `COMMERCE_SERVICE_ID` and the `secret` in `COMMERCE_SERVICE_CREDENTIAL`
+   in the deployment's secret configuration. The app never stores them anywhere else.
+
+**Rotation (no downtime, no backend restart).** With credential A active: create credential B
+(step 5), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
+revoke A (`DELETE /admin/access/services/{serviceId}/credentials/{credentialId}`). Tokens A already
+bought stay valid until they expire (at most 15 minutes); that is expected. After a suspected
+compromise, also disable the service (`PUT /admin/access/services/{serviceId}/status`) until that
+lifetime has passed.
+
+### Local smoke test against a real backend
+
+1. Start fionas-commerce locally (see its README) with `SERVICE_TOKENS_SIGNING_KEY`
+   (`openssl rand -base64 32`), `SERVICE_TOKENS_ISSUER=fionas-commerce-local`,
+   `FIONAS_TRUSTED_ORIGINS=http://localhost:8080`, the bootstrap administrator variables, and a
+   seeded catalog (`node scripts/setup-local-commerce.mjs` there).
+2. Log in as the bootstrap administrator and keep the session cookie:
+
+   ```bash
+   API=http://localhost:8080
+   ORIGIN=http://localhost:8080
+   COOKIE=$(curl -s -o /dev/null -D - -X POST "$API/auth/login" -H "Origin: $ORIGIN" \
+     -H 'Content-Type: application/json' -d '{"username":"admin","password":"<local admin password>"}' \
+     | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-fionas_session=[^;]*\).*/\1/p')
+   admin() { curl -s -H "Cookie: $COOKIE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' "$@"; }
+   ```
+
+3. Provision `SERVICE:fionas-web`, its `fionas.web` role with the three permissions, the
+   assignment, and a credential:
+
+   ```bash
+   SERVICE=$(admin -X POST "$API/admin/access/services" -d '{"name":"fionas-web"}' \
+     | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+   admin -X POST "$API/admin/access/roles" -d '{"key":"fionas.web","displayName":"Fiona web frontend",
+     "permissions":["fionas.inquiry-form.read","fionas.estimate-preview.create","fionas.inquiries.create"]}'
+   admin -X PUT "$API/admin/access/services/$SERVICE/roles/fionas.web"
+   admin -X POST "$API/admin/access/services/$SERVICE/credentials" -d '{"label":"local fionas-web"}' \
+     | node -pe 'const c = JSON.parse(require("fs").readFileSync(0));
+       `COMMERCE_SERVICE_ID=${c.serviceId}\nCOMMERCE_SERVICE_CREDENTIAL=${c.secret}`'
+   ```
+
+4. Paste the two printed lines into `apps/public/.env`, set `BOOKING_ENABLED=true`, and run
+   `npm run dev`. Never copy an access token anywhere: the app obtains its own.
+5. Visit `http://localhost:5173/book`: the form loads, choosing guests, duration and flavors shows
+   the estimate (the authoritative preview replaces the instant one), and sending shows
+   "Request received" with a reference.
+6. Confirm in the backend that the inquiry and its Estimate v1 exist:
+
+   ```bash
+   admin "$API/inquiries/<reference>"
+   admin "$API/inquiries/<reference>/financial-documents"
+   ```
+
+If `/book` says it isn't available, the dev server's log names the cause, for example
+`service token exchange failed → 401; check COMMERCE_SERVICE_ID / COMMERCE_SERVICE_CREDENTIAL` or
+`GET /inquiry-form → 403; check fionas-web service permissions (needs fionas.inquiry-form.read)`.
+
 ## Admin console
 
 `apps/admin` is the staff console (`admin.fionasicecream.com` / `admin-dev.fionasicecream.com`). Staff sign in with
 their commerce API account; the admin server logs in on their behalf and keeps the session cookie on the admin
 host. **All backend calls go through the SvelteKit server**; see [docs/admin-architecture.md](docs/admin-architecture.md).
+It uses each staff member's own USER session, never the public site's SERVICE credential.
 Copy `apps/admin/.env.example` to `apps/admin/.env`:
 
 | Variable           | Default                 | Purpose                                                                               |
