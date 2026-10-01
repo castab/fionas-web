@@ -12,6 +12,7 @@ export {
 	hasPricingBasics,
 	isDigitsOnly,
 	isEstimateReady,
+	reconcileAnswers,
 	validateAnswers,
 	type AnswerValue,
 	type ApiError,

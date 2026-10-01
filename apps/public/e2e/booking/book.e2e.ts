@@ -1,48 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
-
-const stub = `http://127.0.0.1:${process.env.COMMERCE_STUB_PORT ?? '4174'}`;
-
-type Submission = {
-	name: string;
-	email: string;
-	message?: string;
-	pricingInputs?: {
-		catalogRevision: number;
-		guestCount: number;
-		durationMinutes: number;
-		selections: { category: string; offerings: string[] }[];
-	};
-};
-
-async function submissionFor(page: Page, email: string): Promise<Submission | undefined> {
-	const all = (await (await page.request.get(`${stub}/__submissions`)).json()) as Submission[];
-	return all.find((s) => s.email === email);
-}
-
-async function fillContact(page: Page, email: string) {
-	await page.getByLabel('Your name').fill('Jane Doe');
-	await page.getByLabel('Email address').fill(email);
-	await page.getByLabel('ZIP code').fill('02134');
-	await page.getByLabel('Event date').fill('2026-12-05');
-	await page.getByLabel('Event type').selectOption('BIRTHDAY');
-}
-
-/** Guest count and service length: enough for an "estimate so far". */
-async function fillBasics(page: Page, guests = '75') {
-	await page.getByLabel('How many guests?').fill(guests);
-	await page.getByRole('radio', { name: '120 minutes' }).check();
-}
-
-async function fillService(page: Page, guests = '75') {
-	await fillBasics(page, guests);
-	await page.getByRole('checkbox', { name: 'Vanilla' }).check();
-	await page.getByRole('checkbox', { name: 'Horchata' }).check();
-	for (const topping of ['sprinkles', 'oreos', 'strawberries', 'brownies']) {
-		await page.getByRole('checkbox', { name: topping }).check();
-	}
-	await page.getByRole('radio', { name: 'Waffle cones' }).check();
-}
+import { fillBasics, fillContact, fillService, submissionFor } from './form.js';
 
 const estimatePanel = (page: Page) =>
 	page.getByRole('heading', { name: /^Your estimate/ }).locator('../..');

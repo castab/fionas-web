@@ -7,6 +7,7 @@ import {
 	formatOfferingPrice,
 	hasPricingBasics,
 	isEstimateReady,
+	reconcileAnswers,
 	validateAnswers,
 	type InquiryForm
 } from './inquiry.ts';
@@ -199,6 +200,57 @@ describe('buildInquiryRequest', () => {
 		const answers = answered();
 		answers.values.message = ' Birthday party ';
 		expect(buildInquiryRequest(form, answers).message).toBe('Birthday party');
+	});
+});
+
+describe('reconcileAnswers', () => {
+	/** The same form after a catalog publication: Horchata retired, at most one flavor, 150 min added. */
+	function republished(): InquiryForm {
+		const next = JSON.parse(JSON.stringify(form)) as InquiryForm;
+		next.catalogRevision = 16;
+		for (const field of next.sections.flatMap((s) => s.fields)) {
+			if (field.input.type === 'OFFERING_CHOICE') {
+				field.input.maxSelections = 1;
+				field.input.options = field.input.options.filter((o) => o.key !== 'horchata');
+			}
+		}
+		return next;
+	}
+
+	it('keeps every answer and flags nothing when the form is unchanged', () => {
+		const answers = answered();
+		answers.values.guestCountIsMinimum = true;
+		expect(reconcileAnswers(form, answers)).toEqual({ answers, changed: [] });
+	});
+
+	it('keeps contact details but drops a retired choice instead of substituting one', () => {
+		const { answers, changed } = reconcileAnswers(republished(), answered());
+		expect(answers.values.name).toBe('  Jane Doe ');
+		expect(answers.values.email).toBe('jane@example.com');
+		expect(answers.values.guestCount).toBe('75');
+		expect(answers.values['offering:soft-serve-flavor']).toEqual(['vanilla']);
+		expect(changed).toEqual(['offering:soft-serve-flavor']);
+	});
+
+	it('flags a pick list that no longer fits its limits without trimming it', () => {
+		const answers = answered();
+		answers.values['offering:soft-serve-flavor'] = ['vanilla', 'chocolate'];
+		const result = reconcileAnswers(republished(), answers);
+		expect(result.answers.values['offering:soft-serve-flavor']).toEqual(['vanilla', 'chocolate']);
+		expect(result.changed).toEqual(['offering:soft-serve-flavor']);
+		expect(validateAnswers(republished(), result.answers)['offering:soft-serve-flavor']).toMatch(
+			/no more than 1/
+		);
+	});
+
+	it('clears a choice the new form no longer lists', () => {
+		const next = republished();
+		const duration = next.sections[1]!.fields.find((f) => f.key === 'durationMinutes')!;
+		if (duration.input.type === 'INTEGER_CHOICE')
+			duration.input.options = [{ value: 90, label: '90' }];
+		const { answers, changed } = reconcileAnswers(next, answered());
+		expect(answers.values.durationMinutes).toBe('');
+		expect(changed).toContain('durationMinutes');
 	});
 });
 

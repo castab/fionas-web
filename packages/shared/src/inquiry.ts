@@ -288,6 +288,52 @@ export function validateAnswers(form: InquiryForm, answers: InquiryAnswers): Fie
 	return errors;
 }
 
+// --- Catalog refresh ------------------------------------------------------------------------
+
+/**
+ * Fits answers given on an older form to a refreshed one (after `CATALOG_REVISION_STALE`) without
+ * guessing. Contact and event answers carry over. A choice the new form no longer offers is
+ * dropped, never swapped for another, and a pick list that no longer fits its limits is left as is
+ * for validation to flag. `changed` lists the keys of every question the customer must look at again.
+ */
+export function reconcileAnswers(
+	form: InquiryForm,
+	previous: InquiryAnswers
+): { answers: InquiryAnswers; changed: string[] } {
+	const answers = emptyAnswers(form);
+	const changed: string[] = [];
+	for (const field of allFields(form)) {
+		const value = previous.values[field.key];
+		const input = field.input;
+		switch (input.type) {
+			case 'OFFERING_CHOICE': {
+				const picked = Array.isArray(value) ? value : [];
+				const offered = new Set(input.options.map((o) => o.key));
+				const kept = picked.filter((key) => offered.has(key));
+				answers.values[field.key] = kept;
+				if (kept.length !== picked.length || (kept.length > 0 && validateField(field, kept))) {
+					changed.push(field.key);
+				}
+				break;
+			}
+			case 'STRING_CHOICE':
+			case 'INTEGER_CHOICE': {
+				const raw = typeof value === 'string' ? value : '';
+				const offered = input.options.some((o) => String(o.value) === raw);
+				answers.values[field.key] = offered ? raw : '';
+				if (raw !== '' && !offered) changed.push(field.key);
+				break;
+			}
+			case 'BOOLEAN':
+				if (typeof value === 'boolean') answers.values[field.key] = value;
+				break;
+			default:
+				if (typeof value === 'string') answers.values[field.key] = value;
+		}
+	}
+	return { answers, changed };
+}
+
 // --- Request building -----------------------------------------------------------------------
 
 const PRICING_POINTER = '/pricingInputs/';
@@ -378,7 +424,9 @@ const violationCopy: Record<string, string> = {
 	UNKNOWN_OFFERING:
 		'One of your choices is no longer available. Reload the page to see the current options.',
 	INVALID_GUEST_COUNT: "That guest count isn't something we can price. Try a different number.",
-	UNSUPPORTED_DURATION: "We can't offer that service length. Pick one of the listed options."
+	UNSUPPORTED_DURATION: "We can't offer that service length. Pick one of the listed options.",
+	PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED:
+		"One of your choices can't be requested online. Reload the page to see the current options."
 };
 
 /** Friendly copy for a stable violation code; never surfaces the server's diagnostic message. */

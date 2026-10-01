@@ -52,6 +52,12 @@ private env in `src/lib/server/`, so it cannot be bundled into the browser.
 
 While `BOOKING_ENABLED` is off, `/book` (page, form action and estimate endpoint) returns 404. E2E tests use a stub API, so they need no running backend.
 
+Each rendered form carries one non-secret submission token, which the server sends as
+`POST /inquiries`' `Idempotency-Key` for every delivery and retry of that submission, so double
+clicks, lost responses and retries never create duplicate inquiries. A changed catalog
+(`CATALOG_REVISION_STALE`) refreshes the form for the customer to review; nothing is resubmitted for
+them. See [docs/public-inquiry-submission.md](docs/public-inquiry-submission.md).
+
 ## Admin console
 
 `apps/admin` is the staff console (`admin.fionasicecream.com` / `admin-dev.fionasicecream.com`). Staff sign in with

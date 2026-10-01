@@ -15,6 +15,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Site details, coming-soon copy           | `packages/shared/src/`                                                              |
 | Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                    |
 | Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
+| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`            |
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                           |
@@ -44,6 +45,12 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   (`COMMERCE_UI_API_KEY`, `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
   `POST /inquiries` require. Never log it or put it in client code or `.env.example`. E2E runs against the stub in
   `apps/public/e2e/stub-commerce.mjs`.
+- **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
+  back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
+  generate a key per backend attempt. Retries keep it; only a reviewed `CATALOG_REVISION_STALE`
+  refresh or the customer's explicit "Send as a new request" (after `IDEMPOTENCY_KEY_REUSED`) changes
+  it. Never auto-resubmit a stale form, and never send totals or prices: the backend prices and
+  creates the Estimate. See `docs/public-inquiry-submission.md`.
 - **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
   to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`
