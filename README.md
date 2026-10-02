@@ -106,23 +106,36 @@ and shown to visitors only as the generic "unavailable" message. Details:
 `apps/admin` is intentionally separate: staff sign in with their own USER sessions and the admin
 server never authenticates as `SERVICE:fionas-web`.
 
-**Provisioning (once per environment, by a staff administrator; never at startup).** Use the
-backend's `/admin/access` API as an administrator (the bootstrap administrator holds every
-permission needed):
+**Provisioning (once per environment, by a staff administrator; never at startup).** Run the
+script and answer its prompts: the backend URL, then the administrator's username and password
+(the bootstrap administrator holds every permission needed):
 
-1. Log in to fionas-commerce as an administrator.
-2. Create the service: `POST /admin/access/services` `{"name": "fionas-web"}`; note its `id`.
-3. Create the role: `POST /admin/access/roles` with key `fionas.web`, granting exactly
-   `fionas.inquiry-form.read`, `fionas.estimate-preview.create` and `fionas.inquiries.create`.
-   Never staff, offering-management, financial, role or credential permissions.
-4. Assign it: `PUT /admin/access/services/{serviceId}/roles/fionas.web`.
-5. Create a credential: `POST /admin/access/services/{serviceId}/credentials` `{"label": "…"}`.
-   The response shows the `secret` exactly once.
-6. Put the service `id` in `COMMERCE_SERVICE_ID` and the `secret` in `COMMERCE_SERVICE_CREDENTIAL`
-   in the deployment's secret configuration. The app never stores them anywhere else.
+```bash
+npm run provision:service
+```
+
+It signs in as that administrator through the backend's `/admin/access` API, and then:
+
+1. Creates the service `fionas-web` (`POST /admin/access/services`), or reuses it.
+2. Creates the role `fionas.web` (`POST /admin/access/roles`), granting exactly
+   `fionas.inquiry-form.read`, `fionas.estimate-preview.create` and `fionas.inquiries.create`
+   (never staff, offering-management, financial, role or credential permissions). If the role
+   exists with other grants, they are reset to exactly these.
+3. Assigns it (`PUT /admin/access/services/{serviceId}/roles/fionas.web`) if it isn't already.
+4. Creates a credential (`POST /admin/access/services/{serviceId}/credentials`). The backend shows
+   the `secret` exactly once, so every run creates a new credential and never revokes the old ones.
+5. Writes `COMMERCE_API_URL`, `COMMERCE_SERVICE_ID` and `COMMERCE_SERVICE_CREDENTIAL` into
+   `apps/public/.env`, keeping the other lines. If that file already holds service credentials it asks
+   before replacing them.
+
+For a deployment, `npm run provision:service -- --print` prints the three variables instead of
+writing a file, to paste into the host's secret store. The app never stores them anywhere else. Other
+options (`--url`, `--username`, `--origin`, `--out`, `--yes`): `npm run provision:service -- --help`.
+The login is sent with an `Origin` header, which must be a trusted origin on the API; it defaults to
+the backend URL's own origin, and `--origin` overrides it.
 
 **Rotation (no downtime, no backend restart).** With credential A active: create credential B
-(step 5), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
+(run the script again), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
 revoke A (`DELETE /admin/access/services/{serviceId}/credentials/{credentialId}`). Tokens A already
 bought stay valid until their configured expiry (15 minutes by default); that is expected. After a suspected
 compromise, also disable the service (`PUT /admin/access/services/{serviceId}/status`) until that
@@ -134,42 +147,22 @@ lifetime has passed.
    (`openssl rand -base64 32`), `SERVICE_TOKENS_ISSUER=fionas-commerce-local`,
    `FIONAS_TRUSTED_ORIGINS=http://localhost:8080`, the bootstrap administrator variables, and a
    seeded catalog (`node scripts/setup-local-commerce.mjs` there).
-2. Log in as the bootstrap administrator and keep the session cookie:
+2. Provision the site's service identity and credentials (backend URL `http://localhost:8080`,
+   then the bootstrap administrator's username and password):
 
    ```bash
-   API=http://localhost:8080
-   ORIGIN=http://localhost:8080
-   COOKIE=$(curl -s -o /dev/null -D - -X POST "$API/auth/login" -H "Origin: $ORIGIN" \
-     -H 'Content-Type: application/json' -d '{"username":"admin","password":"<local admin password>"}' \
-     | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-fionas_session=[^;]*\).*/\1/p')
-   admin() { curl -s -H "Cookie: $COOKIE" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' "$@"; }
+   npm run provision:service
    ```
 
-3. Provision `SERVICE:fionas-web`, its `fionas.web` role with the three permissions, the
-   assignment, and a credential:
-
-   ```bash
-   SERVICE=$(admin -X POST "$API/admin/access/services" -d '{"name":"fionas-web"}' \
-     | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
-   admin -X POST "$API/admin/access/roles" -d '{"key":"fionas.web","displayName":"Fiona web frontend",
-     "permissions":["fionas.inquiry-form.read","fionas.estimate-preview.create","fionas.inquiries.create"]}'
-   admin -X PUT "$API/admin/access/services/$SERVICE/roles/fionas.web"
-   admin -X POST "$API/admin/access/services/$SERVICE/credentials" -d '{"label":"local fionas-web"}' \
-     | node -pe 'const c = JSON.parse(require("fs").readFileSync(0));
-       `COMMERCE_SERVICE_ID=${c.serviceId}\nCOMMERCE_SERVICE_CREDENTIAL=${c.secret}`'
-   ```
-
-4. Paste the two printed lines into `apps/public/.env`, set `BOOKING_ENABLED=true`, and run
-   `npm run dev`. Never copy an access token anywhere: the app obtains its own.
-5. Visit `http://localhost:5173/book`: the form loads, choosing guests, duration and flavors shows
+3. Set `BOOKING_ENABLED=true` in `apps/public/.env` (the script already wrote the three
+   `COMMERCE_*` variables there) and run `npm run dev`. Never copy an access token anywhere: the
+   app obtains its own.
+4. Visit `http://localhost:5173/book`: the form loads, choosing guests, duration and flavors shows
    the estimate (the authoritative preview replaces the instant one), and sending shows
    "Request received" with a reference.
-6. Confirm in the backend that the inquiry and its Estimate v1 exist:
-
-   ```bash
-   admin "$API/inquiries/<reference>"
-   admin "$API/inquiries/<reference>/financial-documents"
-   ```
+5. Confirm in the backend, as the bootstrap administrator (sign in at `POST /auth/login`, then send
+   the session cookie and an `Origin` header), that the inquiry and its Estimate v1 exist:
+   `GET /inquiries/<reference>` and `GET /inquiries/<reference>/financial-documents`.
 
 If `/book` says it isn't available, the dev server's log names the cause, for example
 `service token exchange failed → 401; check COMMERCE_SERVICE_ID / COMMERCE_SERVICE_CREDENTIAL` or
@@ -200,3 +193,4 @@ E2E tests use a stub of the `/auth` endpoints, so they need no running backend.
 | `npm run test:unit -- --run` | Vitest once (bare `test:unit` starts watch mode)  |
 | `npm run test:e2e`           | Playwright against a production build of each app |
 | `npm run build`              | Build every app                                   |
+| `npm run provision:service`  | Mint `SERVICE:fionas-web` credentials (see above) |
