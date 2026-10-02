@@ -20,6 +20,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`)                   |
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
+| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                  |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                           |
 
 ## Commands (run from the repo root)
