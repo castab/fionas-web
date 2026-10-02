@@ -47,9 +47,12 @@ Complete configured service       →  POST /inquiries
 - **Page data is safe to show.** The browser receives the inquiry form definition (the backend's
   public form), a submission token, and, after a failed submit, its own answers and a customer-facing
   message. Backend diagnostic messages are never rendered or parsed.
-- **Credentials are provisioned by hand.** A staff administrator creates the service, its
-  `fionas.web` role and a credential (README, "Service authentication"); the app never provisions or
-  rotates anything itself. No OAuth, refresh tokens or JWT handling in the frontend.
+- **Credentials are provisioned by an operator.** A staff administrator runs
+  `npm run provision:service`, which provisions or validates a dedicated `SERVICE:fionas-web`
+  holding exactly `fionas.web` (exactly the three public inquiry permissions), refuses ambiguous or
+  broader existing state instead of repairing it, and only then mints a credential (README,
+  "Service authentication"). The app never provisions or rotates anything itself. No OAuth, refresh
+  tokens or JWT handling in the frontend.
 
 | Variable                      | Where           | Purpose                                                              |
 | ----------------------------- | --------------- | -------------------------------------------------------------------- |
@@ -235,9 +238,9 @@ A token changes only when the customer starts a new logical submission:
 | --------------------------------------------------- | ----------------------------------------------- |
 | Page view                                           | new                                             |
 | Local or backend validation failure (`422`)         | kept (failures don't consume keys)              |
-| Outcome unknown (timeout, lost response, 502–504)   | kept, with its delivered request, until settled |
+| Outcome unknown (timeout, lost response, any 5xx)   | kept, with its delivered request, until settled |
 | ...then the customer chooses "Change my answers"    | new (a deliberate new submission)               |
-| Nothing sent (backend unreachable), `5xx`           | kept                                            |
+| Nothing sent (form unreadable, service auth)        | kept                                            |
 | `CATALOG_REVISION_STALE` → refreshed form to review | new (the reviewed form is a new submission)     |
 | `422` naming unknown/disabled/unavailable offerings | new, with a refreshed form to review            |
 | `IDEMPOTENCY_KEY_REUSED`                            | kept; "Send as a new request" uses a new one    |
@@ -261,18 +264,17 @@ membership to the backend, which either replays an earlier commit of this key or
 
 The action reports one `SubmissionFailure.outcome` per case (`apps/public/src/lib/inquiry-submission.ts`):
 
-| Situation                                                                                    | `outcome`      | Customer sees                                                          | Key  |
-| -------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------- | ---- |
-| `201` (new or replayed — same receipt)                                                       | — (303)        | `/book/received`: "Request received", reference + time, not a booking  | done |
-| answers fail the gate (including unconfigured service)                                       | `invalid`      | inline field errors; nothing sent                                      | kept |
-| no usable token or revision posted                                                           | `malformed`    | "This page is out of date"                                             | —    |
-| `409 CATALOG_REVISION_STALE`                                                                 | `stale`        | refreshed form + "Our menu changed" review notice                      | new  |
-| `422` with a catalog-state violation (below)                                                 | `rejected`     | refreshed form + "Some of your choices need another look"              | new  |
-| other `422`, `400`, `404`                                                                    | `rejected`     | form error from stable violation codes (`describeViolation`)           | kept |
-| `409 IDEMPOTENCY_KEY_REUSED`                                                                 | `key_reused`   | "We couldn't safely verify this submission…" + "Send as a new request" | kept |
-| form unreadable or incompatible before sending; service auth failed (`service_auth`)         | `unavailable`  | "hasn't been sent"; edit freely, send again                            | kept |
-| timeout, network failure, garbled `2xx`, `502`–`504`, `conflict` (after the adapter's retry) | `ambiguous`    | frozen answers, "Try sending again", optional "Change my answers"      | kept |
-| `500` or another unexpected status                                                           | `server_error` | "Something went wrong on our side"; send again                         | kept |
+| Situation                                                                                                                   | `outcome`     | Customer sees                                                                             | Key  |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------- | ---- |
+| `201` (new or replayed — same receipt)                                                                                      | — (303)       | `/book/received`: "Request received", reference + time, not a booking                     | done |
+| answers fail the gate (including unconfigured service)                                                                      | `invalid`     | inline field errors; nothing sent                                                         | kept |
+| no usable token or revision posted                                                                                          | `malformed`   | "This page is out of date"                                                                | —    |
+| `409 CATALOG_REVISION_STALE`                                                                                                | `stale`       | refreshed form + "Our menu changed" review notice                                         | new  |
+| `422` with a catalog-state violation (below)                                                                                | `rejected`    | refreshed form + "Some of your choices need another look"                                 | new  |
+| other `422`, `400`, `404`                                                                                                   | `rejected`    | form error from stable violation codes (`describeViolation`)                              | kept |
+| `409 IDEMPOTENCY_KEY_REUSED`                                                                                                | `key_reused`  | "We couldn't safely verify this submission…" + "Send as a new request"                    | kept |
+| form unreadable or incompatible before sending; service auth failed (`service_auth`)                                        | `unavailable` | "hasn't been sent"; edit freely, send again                                               | kept |
+| timeout, network failure, garbled `2xx`, any `5xx`, `conflict`, any status outside the contract (after the adapter's retry) | `ambiguous`   | frozen answers + the delivered request, "Try sending again", optional "Change my answers" | kept |
 
 Catalog-state violations (`CATALOG_STATE_VIOLATIONS`): `UNKNOWN_OFFERING`, `OFFERING_DISABLED`,
 `OFFERING_UNAVAILABLE`, `PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED`. An honest current page can't produce
@@ -315,10 +317,15 @@ is not secret; no customer payload is logged) and offers a `restartToken`; the c
 A failed or timed-out request does not prove the backend failed: it may have committed before the
 response was lost. Nothing infers from a timeout whether the inquiry exists. `createInquiry`
 therefore retries **once**, after 250 ms, **with the same key and the same body**, when the outcome
-is unknown or transient: a timeout or network failure, a `2xx` body that could not be read,
-`502`/`503`/`504`, or the backend's documented retryable `409 conflict` (concurrent customer
-creation). It never retries `400`, `404`, `422`, `CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`
-or `500`. If the retry fails too, the action reports `ambiguous` with the same token.
+is unknown or transient: a timeout or network failure, a `2xx` body that could not be read, **any
+`5xx`** (a `500` included: the backend may fail after its database work but before answering, so a
+`500` proves nothing), the backend's documented retryable `409 conflict` (concurrent customer
+creation), or any status outside the contract (`isOutcomeUnknown`). Only documented refusals settle
+a delivery: `400`, `404`, `422`, `CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`, and a
+service-auth failure (refused before processing); those are never retried. If the retry fails too,
+the action reports `ambiguous` with the same token and the request it delivered. There is no
+editable "server error" state for a delivered request: a request that may have been recorded is
+never followed by a different one under its key.
 
 The page then **freezes the submission**, at two levels:
 
@@ -397,7 +404,9 @@ server keeps no cache of it: every page view and every submit reads it from the 
   with only `fetch` replaced by a contract-faithful fake (`src/lib/server/testing/`): version 7
   rendering, contact-only refusal, an optional-service definition rejected (on load, on submit and on
   stale refresh), an incompatible form, a leaked `DISABLED` offering refused, priced body, double
-  delivery, lost response, ambiguous then identical same-key retry, unreachable backend, 5xx, 422,
+  delivery, lost response, ambiguous then identical same-key retry, unreachable backend, persistent
+  `500`s ambiguous with the exact replay (and a `500` that hid a commit recovering its receipt; edited
+  answers never becoming another request under the key; "Change my answers" using the restart key), 422,
   catalog-state refresh, stale review with a fresh key, replay after a catalog change, key reuse; the
   exact replay: request A resent unchanged under key K (no form read first) when nothing changed,
   after revision 16 changed the form (original receipt if it committed, stale review under a new key

@@ -44,7 +44,9 @@ export type Scripted =
 	/** The backend commits, then the response is lost (reset / timeout). */
 	| 'commit-then-drop'
 	/** The backend commits and answers 201 with a body that cannot be parsed. */
-	| 'commit-then-garble';
+	| 'commit-then-garble'
+	/** The backend commits, then fails before answering: a 500 that hides a recorded inquiry. */
+	| 'commit-then-500';
 
 const json = (status: number, body: unknown) =>
 	new Response(JSON.stringify(body), {
@@ -135,6 +137,10 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		if (next === 'commit-then-garble') {
 			commit(key, body);
 			return new Response('{"id": "trunc', { status: 201 });
+		}
+		if (next === 'commit-then-500') {
+			commit(key, body);
+			return json(500, { code: 'internal_failure', message: 'The request could not be completed' });
 		}
 		if (next) return json(next.status, next.body ?? {});
 

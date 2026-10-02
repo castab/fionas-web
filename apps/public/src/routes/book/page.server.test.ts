@@ -529,20 +529,96 @@ describe('/book submission', () => {
 		expect(backend.committed.size).toBe(1);
 	});
 
-	it('reports an unexpected 5xx as a server error, keeps the key and does not retry it', async () => {
-		const { data } = await loadPage();
-		backend.script({ status: 500, body: { code: 'internal_failure', message: 'boom' } });
+	describe('a persistent 500 (it may have committed)', () => {
+		const internal = { status: 500, body: { code: 'internal_failure', message: 'boom' } };
 
-		const outcome = await post(formData(data.submissionToken, 15, priced));
-		const failure = failureOf(outcome);
-		expect(failure).toMatchObject({
-			outcome: 'server_error',
-			submissionToken: data.submissionToken
+		it('is ambiguous: same token, the exact request kept for replay, nothing editable', async () => {
+			const { data } = await loadPage();
+			backend.script(internal, internal);
+
+			const outcome = await post(formData(data.submissionToken, 15, priced));
+
+			expect(outcome.status).toBe(503);
+			const failure = failureOf(outcome);
+			expect(failure).toMatchObject({
+				outcome: 'ambiguous',
+				submissionToken: data.submissionToken,
+				catalogRevision: 15
+			});
+			expect(failure.errors).toBeUndefined();
+			// The server already retried once under the same key, with the same body.
+			const posts = backend.posts();
+			expect(posts.map((c) => c.headers['idempotency-key'])).toEqual([
+				data.submissionToken,
+				data.submissionToken
+			]);
+			expect(failure.replay?.request).toEqual(posts[0]?.body);
+			expect(failure.formError).toMatch(/couldn't confirm/);
+			expect(JSON.stringify(failure)).not.toContain('boom');
+			expectNoSecrets(failure);
 		});
-		expect(failure.formError).toMatch(/went wrong on our side/);
-		expect(JSON.stringify(failure)).not.toContain('boom');
-		expectNoSecrets(failure);
-		expect(backend.posts()).toHaveLength(1);
+
+		it('resends exactly that request under that key, and gets the receipt', async () => {
+			const { data } = await loadPage();
+			backend.script(internal, internal);
+			const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+
+			expect(await post(retryOf(failure))).toMatchObject({ redirect: '/book/received' });
+			const posts = backend.posts();
+			expect(posts).toHaveLength(3);
+			expect(new Set(posts.map((c) => c.headers['idempotency-key']))).toEqual(
+				new Set([data.submissionToken])
+			);
+			expect(new Set(posts.map((c) => JSON.stringify(c.body))).size).toBe(1);
+			expect(backend.committed.size).toBe(1);
+		});
+
+		it('recovers the receipt of a commit hidden behind the 500s', async () => {
+			const { data } = await loadPage();
+			backend.script('commit-then-500', internal);
+			const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+			expect(failure.outcome).toBe('ambiguous');
+
+			expect(await post(retryOf(failure))).toMatchObject({ redirect: '/book/received' });
+			expect(backend.committed.size).toBe(1);
+			expect(receiptPage()).toEqual({
+				receipt: backend.committed.get(data.submissionToken)?.receipt
+			});
+		});
+
+		it('never lets edited answers become request B under key K', async () => {
+			const { data } = await loadPage();
+			backend.script('commit-then-500', internal);
+			const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+
+			// The visible answers are edited (as only a tampered page could), then "Try sending again".
+			const edited = { ...priced, guestCount: '300', message: 'Changed' };
+			expect(await post(retryOf(failure, edited))).toMatchObject({ redirect: '/book/received' });
+
+			const bodies = backend.posts().map((c) => JSON.stringify(c.body));
+			expect(new Set(bodies).size).toBe(1);
+			expect(bodies[0]).not.toContain('Changed');
+			expect(backend.committed.size).toBe(1);
+		});
+
+		it('sends changed answers only as a new submission under the restart key', async () => {
+			const { data } = await loadPage();
+			backend.script('commit-then-500', internal);
+			const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+
+			// "Change my answers": the page switches to `restartToken` and drops the replay.
+			const changed = { ...priced, guestCount: '90' };
+			const outcome = await post(formData(failure.restartToken!, 15, changed));
+
+			expect(outcome).toMatchObject({ redirect: '/book/received' });
+			const last = backend.posts().at(-1);
+			expect(last?.headers['idempotency-key']).toBe(failure.restartToken);
+			expect(last?.headers['idempotency-key']).not.toBe(data.submissionToken);
+			expect(last?.body).toMatchObject({ pricingInputs: { guestCount: 90 } });
+			expect(backend.committed.get(data.submissionToken)?.fingerprint).not.toBe(
+				JSON.stringify(last?.body)
+			);
+		});
 	});
 
 	it('presents a backend 422 as a form problem, in our own words', async () => {

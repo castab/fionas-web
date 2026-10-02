@@ -163,6 +163,48 @@ test('an unknown outcome freezes the answers and resends them under the same key
 	expect(await submissionsFor(page, email)).toEqual([replay]);
 });
 
+test('a 500 that hid a commit freezes the answers and the retry gets the one receipt', async ({
+	page
+}) => {
+	const email = emailFor('hidden500');
+	await fillAll(page, email);
+	const token = await page.locator('input[name="submissionToken"]').inputValue();
+	await sendButton(page).click();
+
+	// Two 500s: the visitor is not told it failed, nor invited to edit and resend under this key.
+	await expect(page.getByRole('alert')).toContainText("couldn't confirm your request was received");
+	await expect(page.locator('[data-frozen]')).toHaveAttribute('inert', '');
+	await expect(page.locator('input[name="submissionToken"]')).toHaveValue(token);
+	const replay = JSON.parse(await page.locator('input[name="replayRequest"]').inputValue());
+
+	await retryButton(page).click();
+	await expect(page).toHaveURL(/\/book\/received$/);
+	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, token, token]);
+	expect(await submissionsFor(page, email)).toEqual([replay]);
+});
+
+test('after persistent 500s, changed answers go only as a new request under a new key', async ({
+	page
+}) => {
+	const email = emailFor('error500');
+	await fillAll(page, email);
+	const token = await page.locator('input[name="submissionToken"]').inputValue();
+	await sendButton(page).click();
+	await expect(retryButton(page)).toBeVisible();
+
+	await page.getByRole('button', { name: 'Change my answers' }).click();
+	await expect(page.locator('input[name="replayRequest"]')).toHaveCount(0);
+	const newToken = await page.locator('input[name="submissionToken"]').inputValue();
+	expect(newToken).not.toBe(token);
+	await page.getByLabel('How many guests?').fill('90');
+	await sendButton(page).click();
+
+	await expect(page).toHaveURL(/\/book\/received$/);
+	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, token, newToken]);
+	const [submission] = await submissionsFor(page, email);
+	expect(submission?.pricingInputs.guestCount).toBe(90);
+});
+
 test('a tampered replay is never sent, and the page offers no retry under that key', async ({
 	page
 }) => {

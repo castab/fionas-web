@@ -20,22 +20,14 @@ import type {
  * - `unavailable`: nothing was sent (the backend couldn't be reached, or refused the site's own
  *   service identity: an operator problem the visitor is never told about).
  * - `ambiguous`: the request was sent but its outcome is unknown (timeout, lost or garbled response,
- *   gateway error), even after the server's own same-key retry. It may have been recorded. `replay`
+ *   any 5xx, an answer outside the contract), even after the server's own same-key retry. It may have been recorded. `replay`
  *   carries the exact request that was delivered; the page freezes the answers and posts `replay`
  *   back, so "Try sending again" resends that same command under the same `submissionToken`.
  *   Without a usable `replay` nothing can safely be resent under that key. `restartToken` is only
  *   for a customer who deliberately changes their answers instead (a new submission).
- * - `server_error`: the backend failed unexpectedly (5xx). Safe to send again under the same token.
  */
 export type SubmissionOutcome =
-	| 'invalid'
-	| 'malformed'
-	| 'rejected'
-	| 'stale'
-	| 'key_reused'
-	| 'unavailable'
-	| 'ambiguous'
-	| 'server_error';
+	'invalid' | 'malformed' | 'rejected' | 'stale' | 'key_reused' | 'unavailable' | 'ambiguous';
 
 /**
  * The immutable command an unresolved submission already delivered to POST /inquiries: exactly the
@@ -74,8 +66,6 @@ export const submissionCopy = {
 		"We couldn't reach our request system, so your request hasn't been sent. Please try again in a moment.",
 	ambiguous:
 		"We couldn't confirm your request was received. Please try sending it again — if it did reach us, we won't record it twice.",
-	serverError:
-		'Something went wrong on our side. Please try again in a moment — sending it again won’t create a duplicate.',
 	keyReused:
 		"We couldn't safely verify this submission. Please restart the request or contact us if you're unsure whether it was received.",
 	staleWithoutForm:

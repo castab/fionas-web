@@ -17,7 +17,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
 | Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`            |
 | Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"    |
-| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`)                   |
+| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`   |
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
 | Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                  |
@@ -53,12 +53,17 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   "unavailable" (503) to visitors, never a form or selection error. There is no static key. Never log or expose the
   credential or a token (not in page data, cookies, client code or `.env.example`), never decode tokens, and never give
   the app the backend's signing key. The credentials are checked lazily, so the site runs without them while booking is
-  off. `apps/admin` uses USER sessions and never this SERVICE. E2E runs against the stub in
+  off. `apps/admin` uses USER sessions and never this SERVICE. `npm run provision:service` (`scripts/lib/provision.mjs`)
+  provisions or validates a dedicated service holding exactly `fionas.web` (exactly the three inquiry permissions); it
+  refuses duplicate, disabled or broader existing state and never rewrites the global role, removes roles or revokes
+  credentials, and it mints a credential only after re-checking that state. It writes `.env` owner-only (`0600`). E2E runs against the stub in
   `apps/public/e2e/stub-commerce.mjs` (test-only service credential in `e2e/test-service.ts`).
 - **One `Idempotency-Key` names one immutable `CreateInquiryRequest`.** After an ambiguous delivery, preserve and
   replay the exact canonical command (the failure's `replay`, posted back as `replayRequest` and checked by
   `isCreateInquiryRequest`); never rebuild that key's request from a newer inquiry-form definition, and never send a
-  replay that fails the check. Only a definite answer (receipt, stale, refusal) ends it.
+  replay that fails the check. Only a definite answer (receipt, stale, refusal) ends it. Every `5xx` from
+  `POST /inquiries` (`500` included) leaves the outcome unknown (`isOutcomeUnknown`): same-key retry, then replay;
+  never an editable state under the same key.
 - **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
   back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
   generate a key per backend attempt. Retries keep it; only a reviewed catalog refresh

@@ -114,19 +114,42 @@ script and answer its prompts: the backend URL, then the administrator's usernam
 npm run provision:service
 ```
 
-It signs in as that administrator through the backend's `/admin/access` API, and then:
+It signs in as that administrator through the backend's `/admin/access` API and provisions, or
+validates, a **dedicated least-privilege** `SERVICE:fionas-web`: one active service holding exactly
+the role `fionas.web`, which grants exactly `fionas.inquiry-form.read`,
+`fionas.estimate-preview.create` and `fionas.inquiries.create` (never staff, offering-management,
+financial, role or credential permissions). It only adds what is missing and **refuses, rather than
+repairs**, existing state that is ambiguous or broader than that, because on the backend a service
+is identified by its UUID (its name is only a label), roles are global and may be shared by other
+principals, and a service's current roles decide what its tokens may do:
 
-1. Creates the service `fionas-web` (`POST /admin/access/services`), or reuses it.
-2. Creates the role `fionas.web` (`POST /admin/access/roles`), granting exactly
-   `fionas.inquiry-form.read`, `fionas.estimate-preview.create` and `fionas.inquiries.create`
-   (never staff, offering-management, financial, role or credential permissions). If the role
-   exists with other grants, they are reset to exactly these.
-3. Assigns it (`PUT /admin/access/services/{serviceId}/roles/fionas.web`) if it isn't already.
-4. Creates a credential (`POST /admin/access/services/{serviceId}/credentials`). The backend shows
-   the `secret` exactly once, so every run creates a new credential and never revokes the old ones.
-5. Writes `COMMERCE_API_URL`, `COMMERCE_SERVICE_ID` and `COMMERCE_SERVICE_CREDENTIAL` into
-   `apps/public/.env`, keeping the other lines. If that file already holds service credentials it asks
-   before replacing them.
+| Existing state                                         | What the script does                                 |
+| ------------------------------------------------------ | ---------------------------------------------------- |
+| no service named `fionas-web`                          | creates it                                           |
+| exactly one, `ACTIVE`, holding `fionas.web` or no role | reuses it (assigning `fionas.web` if missing)        |
+| several services named `fionas-web`                    | stops and lists their ids; picks none                |
+| the service is `DISABLED`                              | stops; never re-enables it                           |
+| the service holds any role besides `fionas.web`        | stops and names the roles; never removes them        |
+| no role `fionas.web`                                   | creates it with exactly the three grants             |
+| `fionas.web` with exactly those grants (in any order)  | reuses it                                            |
+| `fionas.web` with other grants                         | stops, listing expected, actual, missing, unexpected |
+
+A stopped run changes nothing that existed and creates no credential: every check runs before any
+change, the result is read back and checked again, and only then does it:
+
+1. Create a credential (`POST /admin/access/services/{serviceId}/credentials`). The backend shows
+   the `secret` exactly once. If the service already has active credentials it asks first (the new
+   one is added alongside; nothing is ever revoked).
+2. Write `COMMERCE_API_URL`, `COMMERCE_SERVICE_ID` and `COMMERCE_SERVICE_CREDENTIAL` into
+   `apps/public/.env`, keeping the other lines (it asks before replacing existing service
+   credentials there). On Linux and macOS the file is then made readable and writable by its owner
+   only (`0600`), even if it existed before (say, copied from `.env.example`); if that can't be
+   done, or the file system ignores it, the script says so and exits non-zero. On Windows the
+   file's access follows its folder's permissions. If the file can't be written at all, the
+   variables are printed once instead.
+
+Fix a conflict deliberately, with the `/admin/access` API, then run the script again; it is safe to
+re-run.
 
 For a deployment, `npm run provision:service -- --print` prints the three variables instead of
 writing a file, to paste into the host's secret store. The app never stores them anywhere else. Other
@@ -135,7 +158,7 @@ The login is sent with an `Origin` header, which must be a trusted origin on the
 the backend URL's own origin, and `--origin` overrides it.
 
 **Rotation (no downtime, no backend restart).** With credential A active: create credential B
-(run the script again), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
+(run the script again; it adds B and leaves A working), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
 revoke A (`DELETE /admin/access/services/{serviceId}/credentials/{credentialId}`). Tokens A already
 bought stay valid until their configured expiry (15 minutes by default); that is expected. After a suspected
 compromise, also disable the service (`PUT /admin/access/services/{serviceId}/status`) until that
@@ -185,12 +208,12 @@ E2E tests use a stub of the `/auth` endpoints, so they need no running backend.
 
 ## Scripts (run from the repo root)
 
-| Script                       | What it does                                      |
-| ---------------------------- | ------------------------------------------------- |
-| `npm run check`              | `tsc` / `svelte-check` in every workspace         |
-| `npm run lint`               | Prettier check + ESLint                           |
-| `npm run format`             | Prettier write                                    |
-| `npm run test:unit -- --run` | Vitest once (bare `test:unit` starts watch mode)  |
-| `npm run test:e2e`           | Playwright against a production build of each app |
-| `npm run build`              | Build every app                                   |
-| `npm run provision:service`  | Mint `SERVICE:fionas-web` credentials (see above) |
+| Script                       | What it does                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `npm run check`              | `tsc` / `svelte-check` in every workspace                                    |
+| `npm run lint`               | Prettier check + ESLint                                                      |
+| `npm run format`             | Prettier write                                                               |
+| `npm run test:unit -- --run` | Vitest once (bare `test:unit` starts watch mode)                             |
+| `npm run test:e2e`           | Playwright against a production build of each app                            |
+| `npm run build`              | Build every app                                                              |
+| `npm run provision:service`  | Provision or validate `SERVICE:fionas-web` and mint a credential (see above) |

@@ -1,32 +1,29 @@
 // Mint the credentials apps/public needs to talk to fionas-commerce as SERVICE:fionas-web.
 //
-// Asks for the backend URL and an administrator login, then uses that admin session to make sure
-// the service, its `fionas.web` role (exactly three permissions) and the assignment exist, and
-// creates a new credential for it. Writes COMMERCE_API_URL, COMMERCE_SERVICE_ID and
-// COMMERCE_SERVICE_CREDENTIAL into apps/public/.env.
+// Asks for the backend URL and an administrator login, then uses that admin session to provision or
+// validate a dedicated, least-privilege SERVICE:fionas-web (lib/provision.mjs): the service, its
+// `fionas.web` role (exactly three permissions) and that one assignment. Ambiguous or broader
+// existing state is refused, never repaired. Only then does it create a credential, and it writes
+// COMMERCE_API_URL, COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL into apps/public/.env
+// (owner-only on POSIX) or prints them.
 //
 // Operator tool, not part of either app: it signs in as a USER, only to provision. Safe to re-run
 // (it looks before creating). It never revokes anything. See README, "Service authentication".
 
-import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import {
+	parseEnv,
+	permissionNotice,
+	readEnvFile,
+	upsertEnv,
+	writeSecretEnvFile
+} from './lib/env-file.mjs';
+import { ProvisionError, ROLE, SERVICE_NAME, provisionService } from './lib/provision.mjs';
 
-const SERVICE_NAME = 'fionas-web';
-const ROLE = {
-	key: 'fionas.web',
-	displayName: 'Fiona web frontend',
-	description: 'Public site: read the inquiry form, preview estimates, create inquiries',
-	// Exactly these, never staff, offering-management, financial, role or credential permissions.
-	permissions: [
-		'fionas.inquiry-form.read',
-		'fionas.estimate-preview.create',
-		'fionas.inquiries.create'
-	]
-};
 const DEFAULT_URL = 'http://localhost:8080';
 const TIMEOUT_MS = 10_000;
 
@@ -35,8 +32,9 @@ const defaultEnvFile = path.join(repoRoot, 'apps', 'public', '.env');
 
 const USAGE = `Usage: npm run provision:service -- [options]
 
-Creates (or reuses) SERVICE:${SERVICE_NAME} with role ${ROLE.key} on the commerce backend and
-issues a new credential for it, using an administrator login you enter.
+Provisions (or validates) a dedicated SERVICE:${SERVICE_NAME} holding only role ${ROLE.key} on the
+commerce backend and issues a new credential for it, using an administrator login you enter. Stops,
+creating no credential, if the existing service or role is ambiguous or grants more than that.
 
 Options
   --url <url>         Backend URL (otherwise asked; default: COMMERCE_API_URL in the env file)
@@ -47,8 +45,6 @@ Options
   --print             Print the variables instead of writing a file (for a host's secret store)
   --yes               Don't ask for confirmation (replace existing values, add another credential)
   -h, --help          Show this help`;
-
-class ProvisionError extends Error {}
 
 // ── Prompts ──────────────────────────────────────────────────────────────────────────────────
 
@@ -176,147 +172,6 @@ async function logout(session) {
 	await request(session, 'POST', '/auth/logout');
 }
 
-const sameSet = (a, b) => a.length === b.length && a.every((item) => b.includes(item));
-
-async function ensureService(session) {
-	const { services } = expectOk(
-		session,
-		await request(session, 'GET', '/admin/access/services'),
-		'GET /admin/access/services'
-	);
-	const existing = services.find((service) => service.name === SERVICE_NAME);
-	if (existing) {
-		if (String(existing.status).toUpperCase() === 'DISABLED') {
-			throw new ProvisionError(
-				`Service "${SERVICE_NAME}" (${existing.id}) is disabled. Enable it with ` +
-					`PUT /admin/access/services/${existing.id}/status first; the script won't re-enable it.`
-			);
-		}
-		console.log(`Service "${SERVICE_NAME}" already exists (${existing.id}).`);
-		return existing.id;
-	}
-	const created = expectOk(
-		session,
-		await request(session, 'POST', '/admin/access/services', { name: SERVICE_NAME }),
-		'POST /admin/access/services'
-	);
-	console.log(`Created service "${SERVICE_NAME}" (${created.id}).`);
-	return created.id;
-}
-
-async function ensureRole(session) {
-	const { roles } = expectOk(
-		session,
-		await request(session, 'GET', '/admin/access/roles'),
-		'GET /admin/access/roles'
-	);
-	const existing = roles.find((role) => role.key === ROLE.key);
-	if (!existing) {
-		expectOk(
-			session,
-			await request(session, 'POST', '/admin/access/roles', ROLE),
-			'POST /admin/access/roles'
-		);
-		console.log(`Created role ${ROLE.key} with ${ROLE.permissions.length} permissions.`);
-	} else if (!sameSet(existing.permissions, ROLE.permissions)) {
-		expectOk(
-			session,
-			await request(session, 'PUT', `/admin/access/roles/${ROLE.key}/permissions`, {
-				permissions: ROLE.permissions
-			}),
-			`PUT /admin/access/roles/${ROLE.key}/permissions`
-		);
-		console.log(`Reset role ${ROLE.key} to exactly its ${ROLE.permissions.length} permissions.`);
-	} else {
-		console.log(
-			`Role ${ROLE.key} already grants exactly its ${ROLE.permissions.length} permissions.`
-		);
-	}
-}
-
-async function ensureAssignment(session, serviceId) {
-	const base = `/admin/access/services/${serviceId}/roles`;
-	const { roles } = expectOk(session, await request(session, 'GET', base), `GET ${base}`);
-	if (roles.includes(ROLE.key)) {
-		console.log(`Role ${ROLE.key} is already assigned.`);
-		return;
-	}
-	expectOk(
-		session,
-		await request(session, 'PUT', `${base}/${ROLE.key}`),
-		`PUT ${base}/${ROLE.key}`
-	);
-	console.log(`Assigned role ${ROLE.key} to the service.`);
-}
-
-/** Ids of credentials that can still be exchanged for tokens. */
-async function activeCredentialIds(session, serviceId) {
-	const route = `/admin/access/services/${serviceId}/credentials`;
-	const { credentials } = expectOk(session, await request(session, 'GET', route), `GET ${route}`);
-	return credentials.filter((credential) => !credential.revoked).map((c) => c.credentialId);
-}
-
-async function mintCredential(session, serviceId) {
-	const route = `/admin/access/services/${serviceId}/credentials`;
-	const label = `${SERVICE_NAME} ${new Date().toISOString().slice(0, 10)}`;
-	const issued = expectOk(
-		session,
-		await request(session, 'POST', route, { label }),
-		`POST ${route}`
-	);
-	if (typeof issued?.secret !== 'string' || !issued.secret) {
-		throw new ProvisionError(`POST ${route} returned no secret.`);
-	}
-	return issued;
-}
-
-// ── Env file ─────────────────────────────────────────────────────────────────────────────────
-
-const ENV_SAFE_VALUE = /^[\w./:@+=-]*$/;
-
-function formatEnvValue(value) {
-	return ENV_SAFE_VALUE.test(value) ? value : `"${value.replace(/[\\"]/g, '\\$&')}"`;
-}
-
-/** `KEY=value` pairs of a dotenv file (unquoted, no interpolation), later lines winning. */
-export function parseEnv(text) {
-	const values = new Map();
-	for (const line of text.split(/\r?\n/)) {
-		const match = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*=\s*(.*?)\s*$/.exec(line);
-		if (!match) continue;
-		const raw = match[2];
-		const quote = raw[0];
-		const quoted = (quote === '"' || quote === "'") && raw.length >= 2 && raw.at(-1) === quote;
-		values.set(match[1], quoted ? raw.slice(1, -1) : raw.replace(/\s+#.*$/, ''));
-	}
-	return values;
-}
-
-/** Set `entries` in a dotenv file's text: replace a key's line in place, else append; keep the rest. */
-export function upsertEnv(text, entries) {
-	const eol = text.includes('\r\n') ? '\r\n' : '\n';
-	const lines = text === '' ? [] : text.split(/\r?\n/);
-	if (lines.at(-1) === '') lines.pop();
-	for (const [key, value] of Object.entries(entries)) {
-		const line = `${key}=${formatEnvValue(value)}`;
-		const index = lines.findIndex((existing) =>
-			new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(existing)
-		);
-		if (index === -1) lines.push(line);
-		else lines[index] = line;
-	}
-	return lines.join(eol) + eol;
-}
-
-async function readEnvFile(file) {
-	try {
-		return await readFile(file, 'utf8');
-	} catch (error) {
-		if (error.code === 'ENOENT') return '';
-		throw error;
-	}
-}
-
 function printVariables(entries) {
 	console.log(
 		Object.entries(entries)
@@ -393,29 +248,18 @@ async function main() {
 		await login(session, username, password);
 		console.log(`Signed in to ${baseUrl} as ${username}.`);
 
-		let serviceId;
-		let issued;
-		let previous;
+		const api = async (method, route, json) =>
+			expectOk(session, await request(session, method, route, json), `${method} ${route}`);
+		let result;
 		try {
-			serviceId = await ensureService(session);
-			await ensureRole(session);
-			await ensureAssignment(session, serviceId);
-
-			previous = await activeCredentialIds(session, serviceId);
-			if (previous.length > 0) {
-				const mint = await prompter.confirm(
-					`The service already has ${previous.length} active credential${previous.length === 1 ? '' : 's'} ` +
-						'(a new one is added; the old ones keep working). Create another?',
-					{ defaultYes: true }
-				);
-				if (!mint) {
-					console.log('No credential created. The existing secret cannot be read back.');
-					return;
-				}
-			}
-			issued = await mintCredential(session, serviceId);
+			result = await provisionService({ api, confirm: prompter.confirm, log: console.log });
 		} finally {
 			await logout(session);
+		}
+		const { serviceId, issued, previous } = result;
+		if (!issued) {
+			console.log('No credential created. The existing secret cannot be read back.');
+			return;
 		}
 
 		const entries = {
@@ -429,10 +273,12 @@ async function main() {
 			console.log('\nSet these in the deployment (the secret is shown only now):\n');
 			printVariables(entries);
 		} else {
+			const displayPath = path.relative(repoRoot, envFile) || envFile;
+			let written;
 			try {
-				await writeFile(envFile, upsertEnv(envText, entries), { encoding: 'utf8', mode: 0o600 });
+				written = await writeSecretEnvFile(envFile, upsertEnv(envText, entries));
 				console.log(
-					`\nWrote COMMERCE_API_URL, COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL to ${path.relative(repoRoot, envFile)}.`
+					`\nWrote COMMERCE_API_URL, COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL to ${displayPath}.`
 				);
 			} catch (error) {
 				console.error(`\nCould not write ${envFile}: ${error.message}`);
@@ -440,6 +286,15 @@ async function main() {
 				printVariables(entries);
 				process.exitCode = 1;
 				return;
+			}
+			const notice = permissionNotice(written, displayPath);
+			if (written.permissions === 'failed') {
+				console.error(`\n${notice}`);
+				process.exitCode = 1;
+			} else if (notice) {
+				console.log(`\n${notice}`);
+			} else {
+				console.log(`${displayPath} is readable and writable by its owner only (0600).`);
 			}
 		}
 

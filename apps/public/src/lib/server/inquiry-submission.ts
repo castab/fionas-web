@@ -15,7 +15,6 @@ import { submissionCopy, type SubmissionFailure } from '$lib/inquiry-submission.
 import {
 	createInquiry,
 	getInquiryForm,
-	isOutcomeUnknown,
 	isSubmissionKey,
 	type CommerceError,
 	type InquiryReceipt
@@ -156,23 +155,22 @@ async function settle(
 			formError: rejectionMessage(error)
 		});
 	}
-	// Sent, but we can't tell whether it was recorded; or a replay that nothing settled. Only this
-	// same command under the same key may follow. A deliberate change of answers is a new submission
-	// (`restartToken`).
-	if (isOutcomeUnknown(error) || replaying) return stillUnknown(failed, request, await answers());
-	if (error.kind === 'service_auth') {
-		// Our SERVICE identity was refused before anything was processed; the adapter has logged why
-		// for the operator. The visitor sees the generic outage, never the auth failure.
+	// Our SERVICE identity was refused before anything was processed (the adapter has logged why for
+	// the operator): nothing was sent, so the visitor sees the generic outage, never the auth
+	// failure. Unless this is a replay: then the earlier delivery's outcome is still open.
+	if (error.kind === 'service_auth' && !replaying) {
 		return failed(503, 'unavailable', {
 			answers: await answers(),
 			formError: submissionCopy.unavailable
 		});
 	}
-	console.error(`[inquiry] POST /inquiries failed unexpectedly (${error.status} ${error.code})`);
-	return failed(502, 'server_error', {
-		answers: await answers(),
-		formError: submissionCopy.serverError
-	});
+	// Anything else (timeouts, lost or garbled answers, any 5xx, statuses outside the contract) may
+	// have been recorded. Only this same command under the same key may follow; a deliberate change
+	// of answers is a new submission (`restartToken`).
+	console.warn(
+		`[inquiry] POST /inquiries outcome unknown (${error.status} ${error.code}); keeping the request for an identical retry`
+	);
+	return stillUnknown(failed, request, await answers());
 }
 
 type Delivery = {

@@ -17,6 +17,7 @@ const {
 	createCommerceClient,
 	createInquiry,
 	getInquiryForm,
+	isOutcomeUnknown,
 	previewEstimate,
 	resetCommerceClient
 } = await import('./commerce.js');
@@ -202,12 +203,64 @@ describe('createInquiry', () => {
 		[409, { code: 'CATALOG_REVISION_STALE', message: 'm' }],
 		[409, { code: 'IDEMPOTENCY_KEY_REUSED', message: 'm' }],
 		[400, { code: 'malformed_request', message: 'm' }],
-		[500, { code: 'internal_failure', message: 'm' }]
-	])('never retries a %i %o', async (status, body) => {
+		[404, { code: 'not_found', message: 'm' }]
+	])('never retries a definite refusal: %i %o', async (status, body) => {
 		backend.script({ status, body });
 		const result = await createInquiry(inquiry, KEY);
 		expect(result).toMatchObject({ ok: false, error: { status, code: body.code } });
 		expect(backend.posts()).toHaveLength(1);
+	});
+
+	describe('a 500 proves nothing was written', () => {
+		const internal = { status: 500, body: { code: 'internal_failure', message: 'm' } };
+
+		it('retries once with the identical body and key, and takes the receipt', async () => {
+			backend.script(internal);
+			const result = await createInquiry(inquiry, KEY);
+
+			expect(result.ok).toBe(true);
+			const posts = backend.posts();
+			expect(posts).toHaveLength(2);
+			expect(posts.map((c) => c.headers['idempotency-key'])).toEqual([KEY, KEY]);
+			expect(JSON.stringify(posts[1]?.body)).toBe(JSON.stringify(posts[0]?.body));
+		});
+
+		it('leaves the outcome unknown when both deliveries answer 500', async () => {
+			backend.script(internal, internal);
+			const result = await createInquiry(inquiry, KEY);
+
+			expect(result).toMatchObject({ ok: false, error: { kind: 'server', status: 500 } });
+			expect(!result.ok && isOutcomeUnknown(result.error)).toBe(true);
+			expect(backend.posts()).toHaveLength(2);
+		});
+
+		it('recovers the original receipt when the 500 hid a commit', async () => {
+			backend.script('commit-then-500');
+			const result = await createInquiry(inquiry, KEY);
+
+			expect(result.ok && result.data).toEqual(backend.committed.get(KEY)?.receipt);
+			expect(backend.committed.size).toBe(1);
+			expect(backend.posts()).toHaveLength(2);
+		});
+	});
+
+	it.each([
+		['a timeout', { kind: 'timeout', status: 504, code: 'timeout' }, true],
+		['a network failure', { kind: 'network', status: 503, code: 'unavailable' }, true],
+		['a 500', { kind: 'server', status: 500, code: 'internal_failure' }, true],
+		['a 502', { kind: 'server', status: 502, code: 'bad_gateway' }, true],
+		['a 503', { kind: 'server', status: 503, code: 'internal_failure' }, true],
+		['a misshapen success', { kind: 'unexpected', status: 502, code: 'bad_response' }, true],
+		['a redirect', { kind: 'unexpected', status: 302, code: 'internal_failure' }, true],
+		['the retryable conflict', { kind: 'conflict', status: 409, code: 'conflict' }, true],
+		['400', { kind: 'validation', status: 400, code: 'malformed_request' }, false],
+		['404', { kind: 'not_found', status: 404, code: 'not_found' }, false],
+		['422', { kind: 'validation', status: 422, code: 'validation_failed' }, false],
+		['a stale catalog', { kind: 'conflict', status: 409, code: 'CATALOG_REVISION_STALE' }, false],
+		['a reused key', { kind: 'conflict', status: 409, code: 'IDEMPOTENCY_KEY_REUSED' }, false],
+		['a service-auth failure', { kind: 'service_auth', status: 503, code: 'unavailable' }, false]
+	] as const)('decides whether %s leaves the outcome unknown', (_, error, unknown) => {
+		expect(isOutcomeUnknown({ ...error, message: 'm', violations: [] })).toBe(unknown);
 	});
 
 	it('reports a refused service credential as an outage, sends nothing and leaks nothing', async () => {
@@ -234,7 +287,8 @@ describe('createInquiry', () => {
 		[409, 'conflict'],
 		[500, 'server']
 	])('classifies a %i as %s and keeps the stable code', async (status, kind) => {
-		backend.script({ status, body: { code: 'SOME_STABLE_CODE', message: 'diagnostic' } });
+		const answer = { status, body: { code: 'SOME_STABLE_CODE', message: 'diagnostic' } };
+		backend.script(answer, answer);
 		const result = await createInquiry(inquiry, KEY);
 		expect(result).toMatchObject({ ok: false, error: { kind, code: 'SOME_STABLE_CODE' } });
 	});

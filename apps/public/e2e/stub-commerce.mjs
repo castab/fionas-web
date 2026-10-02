@@ -118,6 +118,8 @@ function bearerOf(req) {
  * invalid-   → 422 with a stable violation code
  * expired-   → 401 for the first attempt, as if its access token had just expired
  * forbidden- → 403: the service lacks fionas.inquiries.create
+ * error500-  → 500 for the first two attempts, nothing recorded
+ * hidden500- → the first attempt is recorded but answers 500; the second answers 500 too
  */
 function scenario(body, key) {
 	const email = String(body?.email ?? '');
@@ -138,6 +140,10 @@ function scenario(body, key) {
 			return seen.length === 0 ? 'expired' : null;
 		case 'forbidden':
 			return 'forbidden';
+		case 'error500':
+			return seen.length < 2 ? 'error500' : null;
+		case 'hidden500':
+			return seen.length === 0 ? 'commit500' : seen.length === 1 ? 'error500' : null;
 		default:
 			return null;
 	}
@@ -236,6 +242,11 @@ createServer(async (req, res) => {
 		const conflict = (code) =>
 			send(res, 409, { code, message: `${code} (diagnostic)` }, { 'cache-control': 'no-store' });
 
+		// A failure before the idempotency lookup: whatever an earlier attempt did stays unknown.
+		const internal = () =>
+			send(res, 500, { code: 'internal_failure', message: 'The request could not be completed' });
+		if (hook === 'error500') return internal();
+
 		// Replay detection comes before any catalog check, as in the real API.
 		const prior = committed.get(key);
 		if (prior) {
@@ -260,6 +271,8 @@ createServer(async (req, res) => {
 		}
 
 		const receipt = commit(key, body);
+		// The commit happened, then the backend failed before answering.
+		if (hook === 'commit500') return internal();
 		// The commit happened; the response never arrives.
 		if (hook === 'drop') return req.socket.destroy();
 		return send(res, 201, receipt, { location: `/inquiries/${receipt.id}` });

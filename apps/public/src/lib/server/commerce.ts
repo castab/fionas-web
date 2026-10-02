@@ -167,22 +167,26 @@ const isReceipt = (body: unknown): body is InquiryReceipt =>
 	typeof (body as InquiryReceipt).id === 'string' &&
 	typeof (body as InquiryReceipt).createdAt === 'string';
 
+/** The 409 codes that definitely mean "nothing was recorded for this request". */
+const DEFINITE_CONFLICTS: ReadonlySet<string> = new Set([
+	'CATALOG_REVISION_STALE',
+	'IDEMPOTENCY_KEY_REUSED'
+]);
+
 /**
- * Worth sending again with the same key: the request may or may not have been committed (network
- * failure, timeout, unreadable success), a gateway hiccup, or the backend's documented retryable
- * `conflict` (a concurrent request created the same customer first). Never a semantic 4xx, and
- * never a service-auth failure (nothing was processed: that's an outage). If the retry fails the
- * same way, the submission's outcome is still unknown (see `submitInquiry`).
+ * Whether a failed POST /inquiries may have been committed anyway. Only documented refusals prove
+ * nothing was written: `400`, `404`, `422`, `409 CATALOG_REVISION_STALE` / `IDEMPOTENCY_KEY_REUSED`,
+ * and a service-auth failure (refused before processing). Everything else leaves the outcome
+ * unknown: a timeout or network failure, an unreadable or misshapen success, the documented
+ * retryable `409 conflict`, and **every 5xx**, `500` included (a failure after the database work
+ * but before the response proves nothing), as well as any status outside the contract. Such a
+ * request is only ever sent again identically, under the same key (see `submitInquiry`).
  */
-export const isOutcomeUnknown = (error: CommerceError) =>
-	error.kind !== 'service_auth' &&
-	(error.kind === 'timeout' ||
-		error.kind === 'network' ||
-		error.code === 'bad_response' ||
-		(error.kind === 'conflict' && error.code === 'conflict') ||
-		error.status === 502 ||
-		error.status === 503 ||
-		error.status === 504);
+export const isOutcomeUnknown = (error: CommerceError) => {
+	if (error.kind === 'service_auth') return false;
+	if (error.status === 400 || error.status === 404 || error.status === 422) return false;
+	return !(error.kind === 'conflict' && DEFINITE_CONFLICTS.has(error.code));
+};
 
 const warned = new Set<string>();
 const warnOnce = (message: string) => {
