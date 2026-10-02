@@ -16,8 +16,9 @@ import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
+	NEXT_STEP,
+	envFileReport,
 	parseEnv,
-	permissionNotice,
 	readEnvFile,
 	upsertEnv,
 	writeSecretEnvFile
@@ -272,6 +273,7 @@ async function main() {
 		if (options.print) {
 			console.log('\nSet these in the deployment (the secret is shown only now):\n');
 			printVariables(entries);
+			console.log(`\n${NEXT_STEP}`);
 		} else {
 			const displayPath = path.relative(repoRoot, envFile) || envFile;
 			let written;
@@ -287,18 +289,16 @@ async function main() {
 				process.exitCode = 1;
 				return;
 			}
-			const notice = permissionNotice(written, displayPath);
-			if (written.permissions === 'failed') {
-				console.error(`\n${notice}`);
-				process.exitCode = 1;
-			} else if (notice) {
-				console.log(`\n${notice}`);
-			} else {
-				console.log(`${displayPath} is readable and writable by its owner only (0600).`);
+			// A file other users may read is not a finished setup: warn, fail, and stop before the
+			// "enable booking" step. The file is kept: its secret can't be read back from the backend.
+			const report = envFileReport(written, displayPath);
+			for (const line of report.err) console.error(`\n${line}`);
+			for (const line of report.out) console.log(`\n${line}`);
+			if (report.exitCode !== 0) {
+				process.exitCode = report.exitCode;
+				return;
 			}
 		}
-
-		console.log('\nNext: set BOOKING_ENABLED=true, then (re)start the public site: npm run dev');
 		if (previous.length > 0) {
 			console.log(
 				`Rotating? After verifying /book, revoke the old credential${previous.length === 1 ? '' : 's'}: ` +

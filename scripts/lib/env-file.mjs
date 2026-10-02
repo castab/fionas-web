@@ -97,3 +97,31 @@ export function permissionNotice(result, displayPath) {
 			);
 	}
 }
+
+export const NEXT_STEP =
+	'Next: set BOOKING_ENABLED=true, then (re)start the public site: npm run dev';
+
+/**
+ * What to tell the operator once the credential is in the env file, and whether provisioning ends
+ * normally. A file that may be readable by other users is not a finished setup: the warning, a
+ * non-zero exit and no "enable booking" next step. The file is kept (its secret can't be read back
+ * from the backend). Windows (`unsupported`) ends normally, with its note.
+ */
+export function envFileReport(result, displayPath) {
+	const notice = permissionNotice(result, displayPath);
+	if (result.permissions === 'failed') {
+		return {
+			exitCode: 1,
+			out: [],
+			err: [
+				notice,
+				`The credential was written, but fix the permissions of ${displayPath} before enabling booking.`
+			]
+		};
+	}
+	return {
+		exitCode: 0,
+		out: [notice ?? `${displayPath} is readable and writable by its owner only (0600).`, NEXT_STEP],
+		err: []
+	};
+}

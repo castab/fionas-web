@@ -144,9 +144,10 @@ change, the result is read back and checked again, and only then does it:
    `apps/public/.env`, keeping the other lines (it asks before replacing existing service
    credentials there). On Linux and macOS the file is then made readable and writable by its owner
    only (`0600`), even if it existed before (say, copied from `.env.example`); if that can't be
-   done, or the file system ignores it, the script says so and exits non-zero. On Windows the
-   file's access follows its folder's permissions. If the file can't be written at all, the
-   variables are printed once instead.
+   done, or the file system ignores it, the script says so, keeps the file, exits non-zero and
+   stops before the "enable booking" step: fix the permissions first. On Windows the file's access
+   follows its folder's permissions. If the file can't be written at all, the variables are
+   printed once instead.
 
 Fix a conflict deliberately, with the `/admin/access` API, then run the script again; it is safe to
 re-run.

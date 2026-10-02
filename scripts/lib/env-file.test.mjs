@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	NEXT_STEP,
+	envFileReport,
 	parseEnv,
 	permissionNotice,
 	readEnvFile,
@@ -122,5 +124,49 @@ describe('writeSecretEnvFile', () => {
 
 	it('says nothing more once the file is owner-only', () => {
 		expect(permissionNotice({ permissions: 'owner-only' }, '.env')).toBeNull();
+	});
+});
+
+describe('envFileReport', () => {
+	const all = (report) => [...report.out, ...report.err].join('\n');
+
+	it('fails, warns and withholds the enable-booking step when permissions could not be set', async () => {
+		// The real write path, with a chmod that fails, on a temporary file.
+		const file = path.join(dir, '.env');
+		const fs = { writeFile, chmod: vi.fn(async () => Promise.reject({ code: 'EPERM' })), stat };
+		const written = await writeSecretEnvFile(file, `COMMERCE_SERVICE_CREDENTIAL=${SECRET}\n`, {
+			platform: 'linux',
+			fs
+		});
+
+		const report = envFileReport(written, 'apps/public/.env');
+
+		expect(report.exitCode).not.toBe(0);
+		expect(report.err[0]).toMatch(/Warning: could not make apps\/public\/\.env readable/);
+		expect(report.err[1]).toBe(
+			'The credential was written, but fix the permissions of apps/public/.env before enabling booking.'
+		);
+		expect(all(report)).not.toContain(NEXT_STEP);
+		expect(all(report)).not.toMatch(/BOOKING_ENABLED=true/);
+		expect(all(report)).not.toContain(SECRET);
+		// The credential stays in the file: it can't be read back from the backend.
+		expect(await readFile(file, 'utf8')).toContain(SECRET);
+	});
+
+	it('finishes normally on Windows, with its note and the next step', () => {
+		const report = envFileReport({ permissions: 'unsupported' }, '.env');
+		expect(report.exitCode).toBe(0);
+		expect(report.err).toEqual([]);
+		expect(report.out[0]).toMatch(/On Windows/);
+		expect(report.out.at(-1)).toBe(NEXT_STEP);
+	});
+
+	it('finishes normally once the file is owner-only', () => {
+		const report = envFileReport({ permissions: 'owner-only' }, '.env');
+		expect(report).toEqual({
+			exitCode: 0,
+			out: ['.env is readable and writable by its owner only (0600).', NEXT_STEP],
+			err: []
+		});
 	});
 });
