@@ -12,13 +12,26 @@ export type OfferingPrice =
 	| { kind: 'PER_QUANTITY'; amount: string; currency: string; dimension: string }
 	| { kind: 'PER_DURATION'; amount: string; currency: string; interval: string };
 
+/**
+ * One choice in an OFFERING_CHOICE question (commerce-runtime's `OfferingDto`). The public form only
+ * lists ENABLED offerings: disabled and retired ones are absent. `availability` is independent: an
+ * UNAVAILABLE option stays visible (name, description, price) but must not be selectable. It is
+ * temporarily out, not removed from the menu.
+ */
 export type OfferingOption = {
 	key: string;
 	category: string;
 	displayName: string;
 	description?: string | null;
+	/** Descriptive only; absent means the option adds no independent charge. */
 	price?: OfferingPrice;
+	selectionState: 'ENABLED' | 'DISABLED';
+	availability: 'AVAILABLE' | 'UNAVAILABLE';
 };
+
+/** Whether a customer may pick this option right now (enabled and available). */
+export const isSelectable = (option: OfferingOption): boolean =>
+	option.selectionState === 'ENABLED' && option.availability === 'AVAILABLE';
 
 export type InquiryInput =
 	| { type: 'TEXT'; minLength: number; maxLength: number; pattern?: string }
@@ -86,25 +99,52 @@ export type InquiryForm = {
 	catalogId: string;
 	catalogRevision: number;
 	sections: InquiryFormSection[];
-	/** Added in definition version 2; absent from older backends, so the estimate degrades to server-only. */
-	pricingPreview?: InquiryPricingPreview;
+	/** Facts for the instant advisory estimate, for exactly this `catalogRevision`. */
+	pricingPreview: InquiryPricingPreview;
 };
+
+/**
+ * The question-definition version this UI was built against (GET /inquiry-form). From version 7 the
+ * service section is required: every inquiry is a request for configured ice cream service.
+ */
+export const EXPECTED_DEFINITION_VERSION = 7;
 
 export type PricingSelection = { category: string; offerings: string[] };
 
 export type PricingInputs = {
 	catalogRevision: number;
 	guestCount: number;
-	guestCountIsMinimum?: boolean;
+	guestCountIsMinimum: boolean;
 	durationMinutes: number;
 	selections: PricingSelection[];
 };
 
+/** POST /inquiries' `eventType` values (the backend's enum; the form offers them as options). */
+export const INQUIRY_EVENT_TYPES = [
+	'BIRTHDAY',
+	'WEDDING',
+	'CORPORATE',
+	'SCHOOL_EVENT',
+	'NEIGHBORHOOD_EVENT',
+	'OTHER'
+] as const;
+
+export type InquiryEventType = (typeof INQUIRY_EVENT_TYPES)[number];
+
+/**
+ * POST /inquiries: customer intent only, never amounts. Everything but `message` is required, and
+ * `pricingInputs` above all: there is no plain/contact-only inquiry, because the backend prices
+ * every accepted inquiry into Estimate v1. Build one only through `prepareInquiry`, which refuses
+ * incomplete answers and any form that can't produce this shape.
+ */
 export type CreateInquiryRequest = {
 	name: string;
 	email: string;
 	message?: string;
-	pricingInputs?: PricingInputs;
+	pricingInputs: PricingInputs;
+	zipCode: string;
+	eventDate: string;
+	eventType: InquiryEventType;
 };
 
 export type EstimateLine = {
@@ -213,7 +253,21 @@ function allFields(form: InquiryForm): InquiryFormField[] {
 	return form.sections.flatMap((s) => s.fields);
 }
 
-function validateField(field: InquiryFormField, value: AnswerValue | undefined): string | null {
+type ValidateOptions = {
+	/**
+	 * Check offering picks against the options this form lists (known, selectable). Off only when
+	 * answers given on an older catalog revision are checked against the current form: the backend
+	 * then decides (replaying an earlier commit of the key, or refusing the revision as stale).
+	 * Every other rule (required answers, guest count, duration, selection counts) always applies.
+	 */
+	catalog?: boolean;
+};
+
+function validateField(
+	field: InquiryFormField,
+	value: AnswerValue | undefined,
+	{ catalog = true }: ValidateOptions = {}
+): string | null {
 	const input = field.input;
 	switch (input.type) {
 		case 'TEXT': {
@@ -262,9 +316,16 @@ function validateField(field: InquiryFormField, value: AnswerValue | undefined):
 			return null;
 		case 'OFFERING_CHOICE': {
 			const picked = Array.isArray(value) ? value : [];
-			const known = new Set(input.options.map((o) => o.key));
-			if (picked.some((key) => !known.has(key)))
-				return 'One of those options is no longer available.';
+			if (catalog) {
+				const options = new Map(input.options.map((o) => [o.key, o]));
+				if (picked.some((key) => !options.has(key)))
+					return 'One of those options is no longer offered.';
+				const unavailable = picked.map((key) => options.get(key)!).find((o) => !isSelectable(o));
+				if (unavailable) {
+					return `${unavailable.displayName} is unavailable right now — please choose another.`;
+				}
+			}
+			if (new Set(picked).size !== picked.length) return 'Choose each option only once.';
 			if (picked.length < input.minSelections) {
 				return input.maxSelections === input.minSelections
 					? `Choose ${input.minSelections}.`
@@ -278,22 +339,156 @@ function validateField(field: InquiryFormField, value: AnswerValue | undefined):
 	}
 }
 
-/** Per-field error messages for every field; empty when valid. */
-export function validateAnswers(form: InquiryForm, answers: InquiryAnswers): FieldErrors {
+function hasAnswer(field: InquiryFormField, value: AnswerValue | undefined): boolean {
+	if (Array.isArray(value)) return value.length > 0;
+	return typeof value === 'string' && value.trim() !== '';
+}
+
+const PRICING_POINTER = '/pricingInputs/';
+
+/** A question whose answer belongs in `pricingInputs` (guest count, duration, offering picks). */
+export function isPricingField(field: InquiryFormField): boolean {
+	return field.submissionPointer.startsWith(PRICING_POINTER);
+}
+
+/**
+ * Whether a whole section may be left blank: exactly the backend's `optional` flag (field
+ * requirements apply once it is used). In definition version 7 only "Additional information" is
+ * optional. A form marking a pricing section optional is not reinterpreted here: it contradicts
+ * POST /inquiries (`pricingInputs` is required), so `pricingContractProblem` rejects it outright.
+ */
+export function isSkippable(section: InquiryFormSection): boolean {
+	return section.optional;
+}
+
+/**
+ * Whether the customer has started answering a section. A checkbox alone (it always has a value)
+ * doesn't count as starting.
+ */
+function isSectionInUse(section: InquiryFormSection, answers: InquiryAnswers): boolean {
+	return section.fields.some(
+		(field) => field.input.type !== 'BOOLEAN' && hasAnswer(field, answers.values[field.key])
+	);
+}
+
+/** The questions that apply: every non-skippable section, plus skippable ones the customer started. */
+function activeFields(form: InquiryForm, answers: InquiryAnswers): InquiryFormField[] {
+	return form.sections
+		.filter((section) => !isSkippable(section) || isSectionInUse(section, answers))
+		.flatMap((section) => section.fields);
+}
+
+/** Per-field error messages for every question that applies; empty when valid. */
+export function validateAnswers(
+	form: InquiryForm,
+	answers: InquiryAnswers,
+	options: ValidateOptions = {}
+): FieldErrors {
 	const errors: FieldErrors = {};
-	for (const field of allFields(form)) {
-		const error = validateField(field, answers.values[field.key]);
+	for (const field of activeFields(form, answers)) {
+		const error = validateField(field, answers.values[field.key], options);
 		if (error) errors[field.key] = error;
 	}
 	return errors;
 }
 
+// --- Catalog refresh ------------------------------------------------------------------------
+
+/**
+ * Fits answers given on an older form to a refreshed one (after `CATALOG_REVISION_STALE`) without
+ * guessing. Contact and event answers carry over. A choice the new form no longer offers (disabled
+ * or retired: absent) or can't take right now (UNAVAILABLE: still listed) is unselected, never
+ * swapped for another. A pick list that no longer fits changed limits is never padded to a new
+ * minimum and never trimmed to a new maximum: the customer sees the limit and decides (checked
+ * choices stay uncheckable). `changed` lists the keys of every question the customer must look at
+ * again; `unavailable` names the picks unselected because they are temporarily unavailable;
+ * `removed` counts picks the menu no longer lists (disabled or retired, which the public form can't
+ * tell apart and must not describe further).
+ */
+export function reconcileAnswers(
+	form: InquiryForm,
+	previous: InquiryAnswers
+): { answers: InquiryAnswers; changed: string[]; unavailable: string[]; removed: number } {
+	const answers = emptyAnswers(form);
+	const changed: string[] = [];
+	const unavailable: string[] = [];
+	let removed = 0;
+	for (const field of allFields(form)) {
+		const value = previous.values[field.key];
+		const input = field.input;
+		switch (input.type) {
+			case 'OFFERING_CHOICE': {
+				const picked = Array.isArray(value) ? value : [];
+				const options = new Map(input.options.map((o) => [o.key, o]));
+				const kept = picked.filter((key) => {
+					const option = options.get(key);
+					if (!option) removed += 1;
+					else if (!isSelectable(option)) unavailable.push(option.displayName);
+					return option !== undefined && isSelectable(option);
+				});
+				answers.values[field.key] = kept;
+				if (kept.length !== picked.length || (kept.length > 0 && validateField(field, kept))) {
+					changed.push(field.key);
+				}
+				break;
+			}
+			case 'STRING_CHOICE':
+			case 'INTEGER_CHOICE': {
+				const raw = typeof value === 'string' ? value : '';
+				const offered = input.options.some((o) => String(o.value) === raw);
+				answers.values[field.key] = offered ? raw : '';
+				if (raw !== '' && !offered) changed.push(field.key);
+				break;
+			}
+			case 'BOOLEAN':
+				if (typeof value === 'boolean') answers.values[field.key] = value;
+				break;
+			default:
+				if (typeof value === 'string') answers.values[field.key] = value;
+		}
+	}
+	return { answers, changed, unavailable, removed };
+}
+
 // --- Request building -----------------------------------------------------------------------
 
-const PRICING_POINTER = '/pricingInputs/';
+/** `pricingInputs` properties that a form question may point at, by the input types that fit. */
+const PRICING_PROPERTIES: Record<string, InquiryInput['type'][]> = {
+	guestCount: ['INTEGER', 'INTEGER_CHOICE'],
+	guestCountIsMinimum: ['BOOLEAN'],
+	durationMinutes: ['INTEGER', 'INTEGER_CHOICE'],
+	selections: ['OFFERING_CHOICE']
+};
 
-function isPricingField(field: InquiryFormField): boolean {
-	return field.submissionPointer.startsWith(PRICING_POINTER);
+/** `pricingInputs` properties the request cannot do without; the form must ask for each. */
+const REQUIRED_PRICING = ['guestCount', 'durationMinutes'] as const;
+
+/**
+ * Why this form definition is incompatible with POST /inquiries, or null when it isn't: a pricing
+ * section marked optional, no guest count or duration question, or a pricing pointer this UI doesn't
+ * understand. Such a form can't reliably produce an inquiry, so the page must not offer it: the
+ * caller fails closed.
+ */
+export function pricingContractProblem(form: InquiryForm): string | null {
+	// An inquiry is configured service: a definition that lets the customer omit it is incompatible
+	// with this UI, not something to quietly make required.
+	const optional = form.sections.find((s) => s.optional && s.fields.some(isPricingField));
+	if (optional) return `section "${optional.key}" has pricing questions but is marked optional`;
+	const pricing = allFields(form).filter(isPricingField);
+	for (const field of pricing) {
+		const property = field.submissionPointer.slice(PRICING_POINTER.length);
+		const types = PRICING_PROPERTIES[property];
+		if (!types) return `unsupported pricing pointer ${field.submissionPointer}`;
+		if (!types.includes(field.input.type)) {
+			return `${field.submissionPointer} has an unsupported input type ${field.input.type}`;
+		}
+	}
+	for (const property of REQUIRED_PRICING) {
+		const asked = pricing.filter((f) => f.submissionPointer === `${PRICING_POINTER}${property}`);
+		if (asked.length !== 1) return `the form must ask exactly one ${property} question`;
+		if (!asked[0]!.required) return `the ${property} question must be required`;
+	}
+	return null;
 }
 
 /** True when every pricing question has a valid answer, i.e. an estimate can be requested. */
@@ -303,27 +498,18 @@ export function isEstimateReady(form: InquiryForm, answers: InquiryAnswers): boo
 }
 
 /**
- * True once the answers that set the base price (guest count, service length) are valid. That is
- * enough for an instant "estimate so far" even before every offering has been chosen.
+ * Reads the pricing answers into `pricingInputs` by submission pointer, without judging them. Picks
+ * go in form order, one block per category that has any (a category whose minimum is 0 may be left
+ * empty). `guestCountIsMinimum` is false unless a question sets it, as the backend defaults it.
  */
-export function hasPricingBasics(form: InquiryForm, answers: InquiryAnswers): boolean {
-	const fields = allFields(form).filter(
-		(f) => isPricingField(f) && (f.input.type === 'INTEGER' || f.input.type === 'INTEGER_CHOICE')
-	);
-	return fields.length > 0 && fields.every((f) => validateField(f, answers.values[f.key]) === null);
-}
-
-/** `pricingInputs` for POST /estimate-preview and POST /inquiries, or undefined when unused. */
-export function buildPricingInputs(
+function collectPricing(
 	form: InquiryForm,
-	answers: InquiryAnswers
-): PricingInputs | undefined {
-	const fields = allFields(form).filter(isPricingField);
-	if (fields.length === 0) return undefined;
-
-	const pricing: Record<string, unknown> = { catalogRevision: form.catalogRevision };
+	answers: InquiryAnswers,
+	catalogRevision: number
+): PricingInputs {
+	const pricing: Record<string, unknown> = { catalogRevision, guestCountIsMinimum: false };
 	const selections: PricingSelection[] = [];
-	for (const field of fields) {
+	for (const field of allFields(form).filter(isPricingField)) {
 		const value = answers.values[field.key];
 		const property = field.submissionPointer.slice(PRICING_POINTER.length);
 		switch (field.input.type) {
@@ -345,22 +531,124 @@ export function buildPricingInputs(
 	return pricing as PricingInputs;
 }
 
-/** The POST /inquiries body. Blank `message` is omitted; options/prices are never sent. */
-export function buildInquiryRequest(
+const isCount = (n: unknown, minimum: number) =>
+	typeof n === 'number' && Number.isInteger(n) && n >= minimum && n <= INT32_MAX;
+
+/**
+ * The transport-level floor under every inquiry: a revision, a guest count, a duration and a
+ * selection block meeting every category's minimum. Checked again after validation so that no
+ * future change to validation can let a contact-only or partial request through.
+ */
+function isCompletePricing(form: InquiryForm, pricing: PricingInputs): boolean {
+	if (!isCount(pricing.catalogRevision, 1) || !isCount(pricing.guestCount, 1)) return false;
+	if (!isCount(pricing.durationMinutes, 1) || typeof pricing.guestCountIsMinimum !== 'boolean') {
+		return false;
+	}
+	return allFields(form).every((field) => {
+		if (field.input.type !== 'OFFERING_CHOICE' || field.input.minSelections === 0) return true;
+		const { category, minSelections } = field.input;
+		const block = pricing.selections.find((s) => s.category === category);
+		return block !== undefined && block.offerings.length >= minSelections;
+	});
+}
+
+/**
+ * True once the answers that set the base price (guest count, service length) are valid. That is
+ * enough for an instant "estimate so far" even before every offering has been chosen.
+ */
+export function hasPricingBasics(form: InquiryForm, answers: InquiryAnswers): boolean {
+	const fields = allFields(form).filter(
+		(f) => isPricingField(f) && (f.input.type === 'INTEGER' || f.input.type === 'INTEGER_CHOICE')
+	);
+	return fields.length > 0 && fields.every((f) => validateField(f, answers.values[f.key]) === null);
+}
+
+/**
+ * The service configured so far, for the advisory "estimate so far": null until guest count and
+ * service length are valid. Presentation only, never submitted.
+ */
+export function draftPricingInputs(
 	form: InquiryForm,
 	answers: InquiryAnswers
-): CreateInquiryRequest {
+): PricingInputs | null {
+	if (!hasPricingBasics(form, answers)) return null;
+	return collectPricing(form, answers, form.catalogRevision);
+}
+
+/**
+ * Complete `pricingInputs` for POST /estimate-preview: null until every pricing question has a
+ * valid answer.
+ */
+export function completePricingInputs(
+	form: InquiryForm,
+	answers: InquiryAnswers
+): PricingInputs | null {
+	if (pricingContractProblem(form) !== null || !isEstimateReady(form, answers)) return null;
+	const pricing = collectPricing(form, answers, form.catalogRevision);
+	return isCompletePricing(form, pricing) ? pricing : null;
+}
+
+/**
+ * One logical inquiry command, or why there is none. `invalid`: the answers fail the form's own
+ * rules (including unconfigured service). `incompatible`: the form definition itself can't produce
+ * a valid POST /inquiries body (no complete `pricingInputs`, or a required field it never asks
+ * for); no answers can fix that, so nothing may be sent.
+ */
+export type InquiryCommand =
+	| { ok: true; request: CreateInquiryRequest }
+	| { ok: false; reason: 'invalid'; errors: FieldErrors }
+	| { ok: false; reason: 'incompatible'; problem: string };
+
+const REQUIRED_TEXT = ['name', 'email', 'zipCode', 'eventDate'] as const;
+
+/** Why a built body isn't a valid POST /inquiries request (a required field missing), or null. */
+function requestProblem(request: Record<string, unknown>): string | null {
+	const missing = REQUIRED_TEXT.find((property) => typeof request[property] !== 'string');
+	if (missing) return `the form gave no ${missing}`;
+	if (!INQUIRY_EVENT_TYPES.includes(request.eventType as InquiryEventType)) {
+		return 'the form gave no known eventType';
+	}
+	return null;
+}
+
+/**
+ * The submit gate and the only way to build a POST /inquiries body. Validates every question that
+ * applies (the service section always applies), then maps answers to the request by submission
+ * pointer, pinned to `catalogRevision`: the revision the customer answered on, which is the form's
+ * own unless the caller is checking older answers against a newer form (then option membership is
+ * left to the backend; see `ValidateOptions`). The body is customer intent only: complete
+ * `pricingInputs`, no prices, totals, lines or estimate identity. A blank `message` is omitted.
+ */
+export function prepareInquiry(
+	form: InquiryForm,
+	answers: InquiryAnswers,
+	{ catalogRevision = form.catalogRevision }: { catalogRevision?: number } = {}
+): InquiryCommand {
+	const problem = pricingContractProblem(form);
+	if (problem) return { ok: false, reason: 'incompatible', problem };
+
+	const catalog = catalogRevision === form.catalogRevision;
+	const errors = validateAnswers(form, answers, { catalog });
+	if (Object.keys(errors).length > 0) return { ok: false, reason: 'invalid', errors };
+
+	const pricingInputs = collectPricing(form, answers, catalogRevision);
+	if (!isCompletePricing(form, pricingInputs)) {
+		return { ok: false, reason: 'incompatible', problem: 'incomplete pricingInputs' };
+	}
+
 	const request: Record<string, unknown> = {};
-	for (const field of allFields(form)) {
+	for (const field of activeFields(form, answers)) {
 		if (isPricingField(field)) continue;
 		const value = answers.values[field.key];
 		const text = typeof value === 'string' ? value.trim() : '';
 		const property = field.submissionPointer.replace(/^\//, '');
 		if (text !== '') request[property] = text;
 	}
-	const pricingInputs = buildPricingInputs(form, answers);
-	if (pricingInputs) request.pricingInputs = pricingInputs;
-	return request as CreateInquiryRequest;
+	// Validation passed, so this only trips on a form that never asks for a required field.
+	const missing = requestProblem(request);
+	if (missing) return { ok: false, reason: 'incompatible', problem: missing };
+	request.pricingInputs = pricingInputs;
+	return { ok: true, request: request as CreateInquiryRequest };
 }
 
 // --- Errors ---------------------------------------------------------------------------------
@@ -375,11 +663,26 @@ export type ApiError = {
 const violationCopy: Record<string, string> = {
 	TOO_MANY_SELECTIONS: 'You picked too many options in one of the lists.',
 	TOO_FEW_SELECTIONS: "You haven't picked enough options in one of the lists.",
-	UNKNOWN_OFFERING:
-		'One of your choices is no longer available. Reload the page to see the current options.',
+	UNKNOWN_OFFERING: 'One of your choices is no longer on our menu. Please choose again.',
+	OFFERING_DISABLED: 'One of your choices is no longer on our menu. Please choose again.',
+	OFFERING_UNAVAILABLE:
+		'One of your choices is unavailable right now. Please choose another, or check back later.',
 	INVALID_GUEST_COUNT: "That guest count isn't something we can price. Try a different number.",
-	UNSUPPORTED_DURATION: "We can't offer that service length. Pick one of the listed options."
+	UNSUPPORTED_DURATION: "We can't offer that service length. Pick one of the listed options.",
+	PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED:
+		"One of your choices can't be requested online. Please choose again."
 };
+
+/**
+ * Violations meaning the page's options no longer match the catalog (the form is out of date or was
+ * tampered with). The right recovery is a fresh form for the customer to review, never a resubmit.
+ */
+export const CATALOG_STATE_VIOLATIONS: ReadonlySet<string> = new Set([
+	'UNKNOWN_OFFERING',
+	'OFFERING_DISABLED',
+	'OFFERING_UNAVAILABLE',
+	'PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED'
+]);
 
 /** Friendly copy for a stable violation code; never surfaces the server's diagnostic message. */
 export function describeViolation(code: string): string {

@@ -3,6 +3,7 @@
 	import {
 		formatOfferingPrice,
 		isDigitsOnly,
+		isSelectable,
 		type AnswerValue,
 		type InquiryFormField,
 		type InquiryPricingPreview,
@@ -62,17 +63,27 @@
 		return `${picked.length} picked · choose ${min}–${max}`;
 	});
 
-	/** Field description plus, for the topping category, what the price adjustment means. */
+	/**
+	 * Field description plus, for the topping category, what the price adjustment means, and a
+	 * heads-up when too few options are available right now to meet the minimum.
+	 */
 	const hint = $derived.by(() => {
+		if (input.type !== 'OFFERING_CHOICE') return field.description;
 		const extra =
-			input.type === 'OFFERING_CHOICE' &&
 			preview?.toppingAdjustment.category === input.category &&
 			input.maxSelections !== undefined &&
 			input.maxSelections > preview.toppingAdjustment.includedSelections
 				? `First ${preview.toppingAdjustment.includedSelections} are included — each extra adds a little per guest.`
 				: undefined;
-		return [field.description, extra].filter(Boolean).join(' ') || undefined;
+		const selectable = input.options.filter(isSelectable).length;
+		const short =
+			selectable < input.minSelections
+				? `Only ${selectable} ${selectable === 1 ? 'is' : 'are'} available right now, so this can't be completed online today. Please check back later or email us.`
+				: undefined;
+		return [field.description, extra, short].filter(Boolean).join(' ') || undefined;
 	});
+
+	const UNAVAILABLE_NOTE = 'Unavailable — check back later';
 
 	/** Browser autofill hints for the common contact questions. */
 	function autocompleteFor(key: string, type: string) {
@@ -112,14 +123,22 @@
 		<div class="flex flex-wrap gap-2">
 			{#each input.options as option (option.key)}
 				{@const checked = picked.includes(option.key)}
+				{@const unavailable = !isSelectable(option)}
+				<!-- An unavailable choice stays listed (it is only temporarily out) but can't be picked.
+				     One still checked from older answers stays enabled so it can be unchecked. -->
 				<ChoiceChip
 					type={single ? 'radio' : 'checkbox'}
 					name={field.key}
 					value={option.key}
 					{checked}
-					disabled={!checked && atMax && !single}
+					{unavailable}
+					disabled={!checked && (unavailable || (atMax && !single))}
 					label={option.displayName}
-					meta={option.price ? formatOfferingPrice(option.price) : undefined}
+					meta={unavailable
+						? UNAVAILABLE_NOTE
+						: option.price
+							? formatOfferingPrice(option.price)
+							: undefined}
 					title={option.description ?? undefined}
 					onchange={(e) => toggle(option, e.currentTarget.checked, single)}
 				/>

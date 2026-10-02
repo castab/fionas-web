@@ -29,4 +29,19 @@ describe('ChoiceChip', () => {
 		render(ChoiceChip, { name: 'flavor', value: 'vanilla', label: 'Vanilla', disabled: true });
 		await expect.element(page.getByRole('checkbox', { name: 'Vanilla' })).toBeDisabled();
 	});
+
+	it('marks an unavailable choice, keeping the reason in its accessible name', async () => {
+		render(ChoiceChip, {
+			name: 'flavor',
+			value: 'ube',
+			label: 'Ube',
+			meta: 'Unavailable — check back later',
+			unavailable: true,
+			disabled: true
+		});
+		const box = page.getByRole('checkbox', { name: 'Ube · Unavailable — check back later' });
+		await expect.element(box).toBeDisabled();
+		const chip = box.element().closest('label') as HTMLElement;
+		expect(chip.dataset.unavailable).toBe('');
+	});
 });

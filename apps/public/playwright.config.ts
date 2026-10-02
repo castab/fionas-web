@@ -1,12 +1,17 @@
 import { defineConfig, devices } from '@playwright/test';
+import { E2E_SERVICE_CREDENTIAL, E2E_SERVICE_ID } from './e2e/test-service.js';
 
 // Two previews of one build: "gated" (BOOKING_ENABLED off, the default) and "booking" (on).
 const gatedPort = process.env.PUBLIC_PLAYWRIGHT_PORT ?? '4173';
 const bookingPort = process.env.PUBLIC_PLAYWRIGHT_BOOKING_PORT ?? '4175';
 // Stand-in for the fionas-commerce API (see e2e/stub-commerce.mjs); the app reaches it server-side.
 const stubPort = process.env.COMMERCE_STUB_PORT ?? '4174';
-// The stub only answers the UI endpoints to this Bearer key, so the app must be sending it.
-const stubKey = 'e2e-ui-key';
+// The stub only issues access tokens to this test-only SERVICE credential, and only answers the
+// three public endpoints to those tokens, so the booking app must authenticate as a SERVICE.
+const service = {
+	COMMERCE_SERVICE_ID: E2E_SERVICE_ID,
+	COMMERCE_SERVICE_CREDENTIAL: E2E_SERVICE_CREDENTIAL
+};
 
 const gatedUrl = `http://127.0.0.1:${gatedPort}`;
 const bookingUrl = `http://127.0.0.1:${bookingPort}`;
@@ -42,15 +47,19 @@ export default defineConfig({
 		{
 			command: 'node e2e/stub-commerce.mjs',
 			url: `http://127.0.0.1:${stubPort}/ready`,
-			env: { COMMERCE_STUB_PORT: stubPort, COMMERCE_STUB_KEY: stubKey },
+			env: {
+				COMMERCE_STUB_PORT: stubPort,
+				COMMERCE_STUB_SERVICE_ID: E2E_SERVICE_ID,
+				COMMERCE_STUB_SERVICE_CREDENTIAL: E2E_SERVICE_CREDENTIAL
+			},
 			reuseExistingServer: !process.env.CI
 		},
 		{
 			command: `npm run build && npm run preview -- --port ${gatedPort} --host 127.0.0.1`,
 			url: gatedUrl,
+			// No service credentials: the marketing site must run without them while booking is off.
 			env: {
 				COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`,
-				COMMERCE_UI_API_KEY: stubKey,
 				BOOKING_ENABLED: 'false'
 			},
 			reuseExistingServer: !process.env.CI,
@@ -59,7 +68,7 @@ export default defineConfig({
 		{
 			command: `node e2e/start-booking-preview.mjs ${gatedUrl} ${bookingPort}`,
 			url: bookingUrl,
-			env: { COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`, COMMERCE_UI_API_KEY: stubKey },
+			env: { COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`, ...service },
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		}

@@ -15,6 +15,9 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Site details, coming-soon copy           | `packages/shared/src/`                                                              |
 | Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                    |
 | Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
+| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`            |
+| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"    |
+| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`   |
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
 | Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                  |
@@ -41,10 +44,45 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   `ComingSoonButton` (`aria-disabled`, raises the toast, never navigates); when enabled they link to `/book`. Playwright needs
   `click({ force: true })` on the gated CTAs.
 - The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
-  calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), adding the secret UI key
-  (`COMMERCE_UI_API_KEY`, `Authorization: Bearer`) that `/inquiry-form`, `/estimate-preview` and
-  `POST /inquiries` require. Never log it or put it in client code or `.env.example`. E2E runs against the stub in
-  `apps/public/e2e/stub-commerce.mjs`.
+  calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), authenticated as **`SERVICE:fionas-web`**:
+  `$lib/server/service-auth.ts` exchanges `COMMERCE_SERVICE_ID` + `COMMERCE_SERVICE_CREDENTIAL` at
+  `POST /auth/service/token` for a short-lived access token (in memory only, refreshed early, one exchange at a time,
+  a 5 → 60 s cooldown after a failed exchange that still serves an unexpired, unrefused token),
+  sent as `Authorization: Bearer`. A `401` drops that token (only if still current) and repeats the identical request
+  once; a `403` is never retried. Both, and any token failure, are `service_auth` errors: logged for the operator,
+  "unavailable" (503) to visitors, never a form or selection error. There is no static key. Never log or expose the
+  credential or a token (not in page data, cookies, client code or `.env.example`), never decode tokens, and never give
+  the app the backend's signing key. The credentials are checked lazily, so the site runs without them while booking is
+  off. `apps/admin` uses USER sessions and never this SERVICE. `npm run provision:service` (`scripts/lib/provision.mjs`)
+  provisions or validates a dedicated service holding exactly `fionas.web` (exactly the three inquiry permissions); it
+  refuses duplicate, disabled or broader existing state and never rewrites the global role, removes roles or revokes
+  credentials, and it mints a credential only after re-checking that state. It writes `.env` owner-only (`0600`). E2E runs against the stub in
+  `apps/public/e2e/stub-commerce.mjs` (test-only service credential in `e2e/test-service.ts`).
+- **One `Idempotency-Key` names one immutable `CreateInquiryRequest`.** After an ambiguous delivery, preserve and
+  replay the exact canonical command (the failure's `replay`, posted back as `replayRequest` and checked by
+  `isCreateInquiryRequest`); never rebuild that key's request from a newer inquiry-form definition, and never send a
+  replay that fails the check. Only a definite answer (receipt, stale, refusal) ends it. Every `5xx` from
+  `POST /inquiries` (`500` included) leaves the outcome unknown (`isOutcomeUnknown`): same-key retry, then replay;
+  never an editable state under the same key.
+- **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
+  back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
+  generate a key per backend attempt. Retries keep it; only a reviewed catalog refresh
+  (`CATALOG_REVISION_STALE`, or a 422 naming unknown/disabled/unavailable offerings) or the customer's
+  explicit "Send as a new request" / "Change my answers" changes it. After an unknown outcome the
+  answers freeze (`inert`) so the retry is identical. Never auto-resubmit, and never send totals or
+  prices: the backend prices and creates the Estimate. See `docs/public-inquiry-submission.md`.
+- **No inquiry without configured service (definition version 7).** Every inquiry carries complete
+  `pricingInputs` (revision, guest count, duration, required selections); there is no plain/contact-only
+  path and no "just send a message" mode. Build the request only with `prepareInquiry`
+  (`@fionas/shared`), the submit gate used by both the page and the action. Section `optional` is
+  applied as sent; a definition incompatible with `POST /inquiries` (`pricingContractProblem`, e.g. an
+  optional section with `/pricingInputs/` questions) is rejected, never coerced: no form is offered and
+  nothing is sent. Success copy says "Request received", never booked, confirmed or reserved.
+- **Offering availability.** Disabled/retired offerings are absent from `/inquiry-form`; `ENABLED` +
+  `UNAVAILABLE` options stay visible but unselectable ("Unavailable — check back later"), never hidden
+  or described as removed. Never hardcode offering keys, names, prices or limits in UI code
+  (`src/catalog-hardcoding.test.ts`). Browser estimates are advisory (from `pricingPreview`, exact
+  decimals); the backend prices.
 - **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
   to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`

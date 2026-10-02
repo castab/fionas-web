@@ -1,5 +1,5 @@
 {
-	"definitionVersion": 5,
+	"definitionVersion": 7,
 	"catalogId": "0cde8e0b-aa9c-4129-9853-8db2cbbb909b",
 	"catalogRevision": 15,
 	"sections": [
@@ -118,8 +118,8 @@
 		{
 			"key": "service",
 			"title": "Build your ice cream service",
-			"description": "Choose your guest count, service duration, and ice cream options, or send us a message to discuss your event.",
-			"optional": true,
+			"description": "Choose your guest count, service duration, and ice cream options.",
+			"optional": false,
 			"fields": [
 				{
 					"key": "guestCount",
@@ -180,12 +180,16 @@
 							{
 								"key": "vanilla",
 								"category": "soft-serve-flavor",
-								"displayName": "Vanilla"
+								"displayName": "Vanilla",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "chocolate",
 								"category": "soft-serve-flavor",
-								"displayName": "Chocolate"
+								"displayName": "Chocolate",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "horchata",
@@ -197,7 +201,9 @@
 									"amount": "0.50",
 									"currency": "USD",
 									"dimension": "guest"
-								}
+								},
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							}
 						]
 					},
@@ -219,32 +225,44 @@
 							{
 								"key": "sprinkles",
 								"category": "topping",
-								"displayName": "sprinkles"
+								"displayName": "sprinkles",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "oreos",
 								"category": "topping",
-								"displayName": "oreos"
+								"displayName": "oreos",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "strawberries",
 								"category": "topping",
-								"displayName": "strawberries"
+								"displayName": "strawberries",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "brownies",
 								"category": "topping",
-								"displayName": "brownies"
+								"displayName": "brownies",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "gummy-bears",
 								"category": "topping",
-								"displayName": "gummy-bears"
+								"displayName": "gummy-bears",
+								"selectionState": "ENABLED",
+								"availability": "UNAVAILABLE"
 							},
 							{
 								"key": "cookie-dough",
 								"category": "topping",
-								"displayName": "cookie-dough"
+								"displayName": "cookie-dough",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							}
 						]
 					},
@@ -266,7 +284,9 @@
 							{
 								"key": "cup",
 								"category": "cone-option",
-								"displayName": "Cups"
+								"displayName": "Cups",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							},
 							{
 								"key": "waffle-cone",
@@ -277,7 +297,9 @@
 									"amount": "0.75",
 									"currency": "USD",
 									"dimension": "guest"
-								}
+								},
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
 							}
 						]
 					},

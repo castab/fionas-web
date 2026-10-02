@@ -8,11 +8,13 @@
 	},
 	"workspaces": [
 		"packages/*",
-		"apps/*"
+		"apps/*",
+		"scripts"
 	],
 	"scripts": {
 		"dev": "npm run dev --workspace=@fionas/public",
 		"dev:admin": "npm run dev --workspace=@fionas/admin",
+		"provision:service": "node scripts/provision-web-service.mjs",
 		"build": "npm run build --workspaces --if-present",
 		"check": "npm run check --workspaces --if-present",
 		"lint": "prettier --check . && eslint .",

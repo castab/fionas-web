@@ -13,7 +13,7 @@
 
 	/**
 	 * Small-caps label, the control, then a hint and any error beneath it. Single controls get a
-	 * `<label for>`; choice groups (`group`) use `role="group"` and can show a live `meta` note
+	 * `<label for>`; choice groups (`group`) are a `<fieldset>` named by the label and can show a live `meta` note
 	 * beside the label (e.g. "1 of 2 picked"). The control receives the ids it needs as snippet
 	 * arguments so `aria-describedby` and `aria-invalid` stay wired up.
 	 */
@@ -70,11 +70,10 @@
 {/snippet}
 
 {#if group}
-	<div
-		role="group"
+	<fieldset
 		data-slot="field"
 		data-invalid={error ? '' : undefined}
-		class={cn('flex min-w-0 flex-col gap-2.5', className)}
+		class={cn('m-0 flex min-w-0 flex-col gap-2.5 border-0 p-0', className)}
 		aria-labelledby={labelId}
 		aria-describedby={describedby}
 	>
@@ -86,7 +85,7 @@
 		</div>
 		{@render children({ id: controlId, describedby, invalid: !!error })}
 		{@render details()}
-	</div>
+	</fieldset>
 {:else}
 	<div
 		data-slot="field"

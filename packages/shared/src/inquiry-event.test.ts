@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-	buildInquiryRequest,
 	emptyAnswers,
 	isDigitsOnly,
+	prepareInquiry,
 	validateAnswers,
 	type InquiryForm,
 	type InquiryFormField
@@ -22,9 +22,10 @@ const field = (
 	presentation: { control }
 });
 
-// The contact + event questions the API added in definition version 5.
+// The contact + event questions the API added in definition version 5, with the service section
+// every inquiry has needed since version 7.
 const form: InquiryForm = {
-	definitionVersion: 5,
+	definitionVersion: 7,
 	catalogId: 'c',
 	catalogRevision: 1,
 	sections: [
@@ -60,8 +61,38 @@ const form: InquiryForm = {
 					'SELECT'
 				)
 			]
+		},
+		{
+			key: 'service',
+			title: 'Service',
+			optional: false,
+			fields: [
+				{
+					...field('guestCount', { type: 'INTEGER', minimum: 1 }, 'NUMBER'),
+					submissionPointer: '/pricingInputs/guestCount'
+				},
+				{
+					...field(
+						'durationMinutes',
+						{ type: 'INTEGER_CHOICE', options: [{ value: 90, label: '90 minutes' }] },
+						'SELECT'
+					),
+					submissionPointer: '/pricingInputs/durationMinutes'
+				}
+			]
 		}
-	]
+	],
+	pricingPreview: {
+		currency: 'USD',
+		guestQuantityDimension: 'guest',
+		durationOptions: [],
+		perGuestAmount: '0.00',
+		toppingAdjustment: {
+			category: 'topping',
+			includedSelections: 0,
+			additionalSelectionPerGuestAmount: '0.00'
+		}
+	}
 };
 
 function answered() {
@@ -71,6 +102,8 @@ function answered() {
 	answers.values.zipCode = '02134';
 	answers.values.eventDate = '2026-12-05';
 	answers.values.eventType = 'BIRTHDAY';
+	answers.values.guestCount = '40';
+	answers.values.durationMinutes = '90';
 	return answers;
 }
 
@@ -81,7 +114,15 @@ describe('event questions', () => {
 
 	it('requires the ZIP code, date and type', () => {
 		const errors = validateAnswers(form, emptyAnswers(form));
-		expect(Object.keys(errors)).toEqual(['name', 'email', 'zipCode', 'eventDate', 'eventType']);
+		expect(Object.keys(errors)).toEqual([
+			'name',
+			'email',
+			'zipCode',
+			'eventDate',
+			'eventType',
+			'guestCount',
+			'durationMinutes'
+		]);
 	});
 
 	it('checks a ZIP code against the pattern with a plain message', () => {
@@ -113,12 +154,22 @@ describe('event questions', () => {
 	});
 
 	it('submits ZIP, date and type as plain strings at their pointers', () => {
-		expect(buildInquiryRequest(form, answered())).toEqual({
-			name: 'Jane Doe',
-			email: 'jane@example.com',
-			zipCode: '02134',
-			eventDate: '2026-12-05',
-			eventType: 'BIRTHDAY'
+		expect(prepareInquiry(form, answered())).toEqual({
+			ok: true,
+			request: {
+				name: 'Jane Doe',
+				email: 'jane@example.com',
+				zipCode: '02134',
+				eventDate: '2026-12-05',
+				eventType: 'BIRTHDAY',
+				pricingInputs: {
+					catalogRevision: 1,
+					guestCount: 40,
+					guestCountIsMinimum: false,
+					durationMinutes: 90,
+					selections: []
+				}
+			}
 		});
 	});
 
