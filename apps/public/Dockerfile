@@ -20,7 +20,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/ui/package.json packages/ui/
 COPY apps/public/package.json apps/public/
 COPY apps/admin/package.json apps/admin/
-RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
+RUN npm ci --ignore-scripts
 
 COPY packages packages
 COPY apps/public apps/public
@@ -32,7 +32,7 @@ WORKDIR /repo
 COPY package.json package-lock.json .npmrc ./
 COPY packages packages
 COPY apps/public/package.json apps/public/
-RUN --mount=type=cache,target=/root/.npm     npm ci --omit=dev --ignore-scripts --workspace=@fionas/public --include-workspace-root=false
+RUN npm ci --omit=dev --ignore-scripts --workspace=@fionas/public --include-workspace-root=false
 
 # ---- runtime ------------------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
