@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Card, capsSm, cn } from '@fionas/ui';
+	import { Badge, Card, capsSm, cn } from '@fionas/ui';
 	import {
 		completePricingInputs,
 		computeAdvisoryEstimate,
@@ -69,80 +69,74 @@
 	});
 </script>
 
-<Card class="flex flex-col gap-4 p-5" aria-labelledby="estimate-heading">
+<Card class="flex flex-col gap-3 px-6 py-[22px]" aria-labelledby="estimate-heading">
 	<div class="flex items-center justify-between gap-3">
 		<h2 id="estimate-heading" class={cn(capsSm, 'm-0 text-(--text-heading)')}>
 			{complete ? 'Your estimate' : 'Your estimate so far'}
 		</h2>
-		<span
-			class={cn(
-				capsSm,
-				'rounded-full border border-olive-300 px-2.5 py-1 text-[10px] text-olive-700'
-			)}
-		>
-			Estimate only
-		</span>
+		<Badge tone="outline" size="sm">Estimate only</Badge>
 	</div>
 
-	<div aria-live="polite" class="flex flex-col gap-4">
+	<div aria-live="polite" class="flex flex-col gap-3">
 		{#if estimate}
 			<ul
 				class={cn(
-					'm-0 flex list-none flex-col gap-3 p-0 transition-opacity duration-(--dur-med) ease-(--ease-out)',
+					'm-0 flex list-none flex-col gap-2.5 p-0 transition-opacity duration-(--dur-med) ease-(--ease-out)',
 					stale && 'opacity-60'
 				)}
 			>
 				{#each estimate.lines as line, i (i)}
 					<li class="flex flex-col gap-0.5">
-						<div class="flex items-baseline gap-2">
-							<span class="font-semibold text-(--text-heading) [font:var(--type-body)]">
+						<div class="flex items-baseline">
+							<span class="text-[13px] leading-snug font-semibold text-(--text-body)">
 								{line.description}
 							</span>
 							<span
 								aria-hidden="true"
-								class="min-w-4 flex-1 -translate-y-0.5 border-b-2 border-dotted border-olive-300"
+								class="mx-2 min-w-4 flex-1 border-b-2 border-dotted border-olive-300"
 							></span>
-							<span class="font-semibold text-(--text-heading) [font:var(--type-body)]">
+							<span class="text-[13px] leading-snug font-semibold text-olive-900">
 								{formatMoney(line.subtotal, line.currency)}
 							</span>
 						</div>
 						{#if line.subDescription}
-							<span class="text-(--text-muted) [font:var(--type-body-sm)]"
-								>{line.subDescription}</span
-							>
+							<span class="text-[11.5px] leading-snug text-(--text-muted)">
+								{line.subDescription}
+							</span>
 						{/if}
 					</li>
 				{/each}
 			</ul>
-			<div
-				class="flex items-baseline justify-between gap-4 border-t-2 border-olive-700 pt-3 text-(--text-heading)"
-			>
-				<span class={capsSm}
+			<div class="flex items-baseline justify-between gap-4 border-t-2 border-olive-700 pt-2.5">
+				<span class={cn(capsSm, 'text-(--text-heading)')}
 					>{estimate.guestCountIsMinimum ? 'Starting at' : 'Estimated total'}</span
 				>
-				<span class="[font:var(--type-h2)]">{formatMoney(estimate.total, estimate.currency)}</span>
+				<span class="text-xl leading-tight font-bold text-olive-900">
+					{formatMoney(estimate.total, estimate.currency)}
+				</span>
 			</div>
 		{:else if status === 'loading'}
-			<p class="m-0 text-(--text-muted) [font:var(--type-body-sm)]">Working out your estimate…</p>
+			<p class="m-0 text-[12.5px] leading-snug text-(--text-muted)">Working out your estimate…</p>
 		{:else}
-			<p class="m-0 text-(--text-muted) [font:var(--type-body-sm)]">
+			<p class="m-0 text-[12.5px] leading-snug text-(--text-muted)">
 				Add your guest count and service length to start your estimate.
 			</p>
 		{/if}
 
 		{#if status === 'rejected'}
-			<p class="m-0 font-medium text-rust-600 [font:var(--type-body-sm)]">
+			<p class="m-0 text-[12.5px] leading-snug font-medium text-rust-600">
 				We couldn't price that combination. Please check your choices.
 			</p>
 		{:else if status === 'error' && !local}
-			<p class="m-0 font-medium text-rust-600 [font:var(--type-body-sm)]">
+			<p class="m-0 text-[12.5px] leading-snug font-medium text-rust-600">
 				We couldn't update the estimate just now. You can still send your request.
 			</p>
 		{/if}
 	</div>
 
-	<p class="m-0 text-(--text-muted) [font:var(--type-body-sm)]">
-		This is an early estimate, not a final quote. Fiona's team reviews every request and follows up
-		with a firm quote.
+	<p class="m-0 text-[11.5px] leading-[1.55] text-(--text-muted)">
+		This is an early estimate, not a final quote. Travel within greater Fresno and Madera Ranchos is
+		included in the base service — bookings farther out may carry an added travel fee, confirmed
+		once we chat. No street address needed yet.
 	</p>
 </Card>

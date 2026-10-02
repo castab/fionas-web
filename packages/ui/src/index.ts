@@ -1,4 +1,4 @@
-export { Badge, badgeVariants, type BadgeTone } from './components/badge/index.js';
+export { Badge, badgeVariants, type BadgeSize, type BadgeTone } from './components/badge/index.js';
 export { LogoBadge, Wordmark } from './components/brand/index.js';
 export {
 	Button,

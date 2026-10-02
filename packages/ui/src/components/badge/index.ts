@@ -1,3 +1,3 @@
-import Root, { type BadgeTone, badgeVariants } from './badge.svelte';
+import Root, { type BadgeSize, type BadgeTone, badgeVariants } from './badge.svelte';
 
-export { Root, Root as Badge, badgeVariants, type BadgeTone };
+export { Root, Root as Badge, badgeVariants, type BadgeSize, type BadgeTone };

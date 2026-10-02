@@ -113,7 +113,7 @@ test('builds the estimate up as choices are made', async ({ page }) => {
 	// Complete answers switch to the server's figures for the same choices.
 	await fillService(page);
 	await expect(page.getByRole('heading', { name: 'Your estimate', exact: true })).toBeVisible();
-	await expect(panel.getByText('Base service')).toBeVisible();
+	await expect(panel.getByText('Base service', { exact: true })).toBeVisible();
 	await expect(panel.getByText('Estimated total')).toBeVisible();
 	await expect(panel.getByText('$643.75', { exact: true })).toBeVisible();
 	await expect(panel.getByText('This is an early estimate, not a final quote.')).toBeVisible();
