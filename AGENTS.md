@@ -17,6 +17,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
+| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                  |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                           |
 
 ## Commands (run from the repo root)

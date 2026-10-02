@@ -1,0 +1,27 @@
+# Keep the build context small and make sure host artifacts never leak into the image.
+**/node_modules
+**/.svelte-kit
+**/build
+**/dist
+**/test-results
+**/playwright-report
+**/blob-report
+**/__screenshots__
+.git
+.github
+.claude
+.vscode
+.idea
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Not needed to build
+**/Dockerfile
+.dockerignore
+**/*.md
+docs
+**/e2e
+**/playwright.config.ts
