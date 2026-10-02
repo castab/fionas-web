@@ -184,24 +184,11 @@
 <main
 	class="mx-auto w-full max-w-[640px] flex-1 px-6 pt-11 pb-[72px] max-[600px]:px-4 max-[600px]:pt-7"
 >
-	<div class="mb-8 flex flex-col gap-3">
-		<h1
-			class="m-0 font-sans text-[34px] leading-[1.15] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]"
-		>
-			Request the trailer
-		</h1>
-		<p class="m-0 text-(--text-body) [font:var(--type-body)]">
-			Tell us about your event, build your ice cream service, and check your estimate at the bottom
-			— we'll review your request and follow up with a firm quote. Sending a request doesn't book
-			anything or charge you.
-		</p>
-	</div>
-
 	{#if !inquiryForm || !answers}
 		<Card class="flex flex-col items-start gap-4">
-			<h2 class="m-0 text-(--text-heading) [font:var(--type-h2)]">
+			<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">
 				The request form isn't available right now
-			</h2>
+			</h1>
 			<p class="m-0 text-(--text-body)">
 				Please try again in a little while, or reach us directly and we'll get you sorted.
 			</p>
@@ -213,6 +200,19 @@
 			</div>
 		</Card>
 	{:else}
+		<div class="mb-8 flex flex-col gap-3">
+			<h1
+				class="m-0 font-sans text-[34px] leading-[1.15] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]"
+			>
+				Request the trailer
+			</h1>
+			<p class="m-0 text-(--text-body) [font:var(--type-body)]">
+				Tell us about your event, build your ice cream service, and check your estimate at the
+				bottom — we'll review your request and follow up with a firm quote. Sending a request
+				doesn't book anything or charge you.
+			</p>
+		</div>
+
 		{@const currentForm = inquiryForm}
 		{@const currentAnswers = answers}
 		<form
@@ -328,7 +328,10 @@
 					<section class="flex flex-col gap-3.5" aria-labelledby="section-{section.key}">
 						<div class="flex flex-col gap-1">
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-								<h2 id="section-{section.key}" class={cn(capsXs, 'm-0 text-olive-700')}>
+								<h2
+									id="section-{section.key}"
+									class={cn(capsXs, 'm-0 text-[14px] font-bold text-(--text-heading)')}
+								>
 									{section.title}
 								</h2>
 								{#if isSkippable(section)}

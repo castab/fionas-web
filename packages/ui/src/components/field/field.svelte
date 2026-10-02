@@ -49,7 +49,7 @@
 			undefined
 	);
 
-	const labelClass = cn(capsXs, 'text-(--text-heading)');
+	const labelClass = cn(capsXs, 'text-olive-600');
 </script>
 
 {#snippet requiredMark()}
