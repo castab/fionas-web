@@ -75,6 +75,13 @@ for every call. One client (and so one token) per server process, created from e
 - **One exchange at a time.** The backend verifies credentials with memory-hard Argon2, so requests
   that find no usable token share a single in-flight exchange, which is released on success and
   failure alike.
+- **Cooldown after a failure.** A failed exchange (refused, unreachable, `429`/`5xx`, unusable body)
+  blocks the next one for 5 s, then 10, 20, 40 and at most 60 s while failures continue; a `429` or
+  `503` with a `Retry-After` in seconds is honored instead (bounded to 5 minutes). Requests during
+  the cooldown fail fast as `service_auth` without calling the backend (and without a log line
+  each); a still-unexpired token keeps serving, but a token the backend refused never comes back.
+  When the cooldown ends, one exchange goes (shared by concurrent callers), and a success resets the
+  backoff. Missing or invalid configuration makes no request, so it needs no cooldown.
 - **401: one retry.** The token that was refused is dropped only if it is still the cached one (a
   newer token another request installed survives), a current token is obtained, and the identical
   request (same body bytes, same `Idempotency-Key`) is sent once more. A second `401` is final.
@@ -96,7 +103,7 @@ for every call. One client (and so one token) per server process, created from e
 | -------------------------------------------------------- | ------------------------------------------------------ |
 | HTTP to fionas-commerce (URL, auth, timeout, errors)     | `apps/public/src/lib/server/commerce.ts`               |
 | SERVICE credential → access token (cache, refresh)       | `apps/public/src/lib/server/service-auth.ts`           |
-| Response shape checks (fail closed)                      | `apps/public/src/lib/server/commerce-shapes.ts`        |
+| Response and replay shape checks (fail closed)           | `apps/public/src/lib/server/commerce-shapes.ts`        |
 | Submission flow (token, revision, outcomes, receipt)     | `apps/public/src/lib/server/inquiry-submission.ts`     |
 | Failure payload type + customer copy (client-safe)       | `apps/public/src/lib/inquiry-submission.ts`            |
 | Form load + action                                       | `apps/public/src/routes/book/+page.server.ts`          |
@@ -171,6 +178,10 @@ instead of a request, so there is no state equivalent to `pricingInputs: undefin
 | `ENABLED` + `UNAVAILABLE`       | listed      | visible and readable (dashed, muted), native `disabled`, "Unavailable — check back later" in its accessible name |
 | `DISABLED` (either), or retired | **absent**  | nothing to show; absence is never presented as "temporarily unavailable"                                         |
 
+A `DISABLED` option in `GET /inquiry-form` breaks the endpoint's contract: the shape check refuses the
+whole form (logged as "outside the contract"), so `/book` shows "isn't available right now" rather than
+filtering it out or rendering it as temporarily unavailable.
+
 Unavailable is temporary: the copy never says sold out, removed or disabled, and label, description,
 price and position are kept. An unavailable option contributes nothing to the advisory estimate, and
 local validation names it if it somehow ends up in the answers ("Horchata is unavailable right now —
@@ -201,7 +212,9 @@ estimate identity, and never compares its figures with the backend's.
 
 ## One token per logical submission
 
-`Idempotency-Key` names one visible submission, not one HTTP attempt.
+`Idempotency-Key` names one visible submission, not one HTTP attempt, and **one key names one
+immutable `CreateInquiryRequest`**: once a request has been delivered under a key, that key is only
+ever sent with that same request.
 
 1. `load` mints a UUID (`newSubmissionToken`) for the rendered form. The page is `private, no-store`
    so no cache can hand one visitor's token to another.
@@ -218,17 +231,17 @@ before sending so an empty token is refused locally).
 
 A token changes only when the customer starts a new logical submission:
 
-| Event                                               | Token                                          |
-| --------------------------------------------------- | ---------------------------------------------- |
-| Page view                                           | new                                            |
-| Local or backend validation failure (`422`)         | kept (failures don't consume keys)             |
-| Outcome unknown (timeout, lost response, 502–504)   | kept; answers frozen until it resolves         |
-| ...then the customer chooses "Change my answers"    | new (a deliberate new submission)              |
-| Nothing sent (backend unreachable), `5xx`           | kept                                           |
-| `CATALOG_REVISION_STALE` → refreshed form to review | new (the reviewed form is a new submission)    |
-| `422` naming unknown/disabled/unavailable offerings | new, with a refreshed form to review           |
-| `IDEMPOTENCY_KEY_REUSED`                            | kept; "Send as a new request" uses a new one   |
-| Success                                             | redirect to `/book/received`; form is finished |
+| Event                                               | Token                                           |
+| --------------------------------------------------- | ----------------------------------------------- |
+| Page view                                           | new                                             |
+| Local or backend validation failure (`422`)         | kept (failures don't consume keys)              |
+| Outcome unknown (timeout, lost response, 502–504)   | kept, with its delivered request, until settled |
+| ...then the customer chooses "Change my answers"    | new (a deliberate new submission)               |
+| Nothing sent (backend unreachable), `5xx`           | kept                                            |
+| `CATALOG_REVISION_STALE` → refreshed form to review | new (the reviewed form is a new submission)     |
+| `422` naming unknown/disabled/unavailable offerings | new, with a refreshed form to review            |
+| `IDEMPOTENCY_KEY_REUSED`                            | kept; "Send as a new request" uses a new one    |
+| Success                                             | redirect to `/book/received`; form is finished  |
 
 ## What is sent
 
@@ -307,17 +320,45 @@ is unknown or transient: a timeout or network failure, a `2xx` body that could n
 creation). It never retries `400`, `404`, `422`, `CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`
 or `500`. If the retry fails too, the action reports `ambiguous` with the same token.
 
-The page then **freezes the answers**: the field area is `inert` (server-rendered, so this also
-holds without JavaScript; inert controls still submit), the primary button becomes "Try sending
-again", and the form posts `outcomeUnknown=true`. That retry is the same request under the same key,
-so if the first one committed the backend replays its receipt. While unresolved, a retry that can't
-get through (backend unreachable, `5xx`) stays `ambiguous` rather than unfreezing. Only a definite
-answer ends it: a receipt, a stale/validation refusal (which commits nothing) or a reused-key
-conflict.
+The page then **freezes the submission**, at two levels:
+
+- **The visible answers.** The field area is `inert` (server-rendered, so this also holds without
+  JavaScript; inert controls still submit) and the primary button becomes "Try sending again".
+- **The command.** The `ambiguous` failure carries `replay`: the exact `CreateInquiryRequest` the
+  action delivered (built by `prepareInquiry` just before `createInquiry`). The page posts it back
+  in the hidden `replayRequest` field with `outcomeUnknown=true`, in the server-rendered form, so it
+  works without JavaScript too. It is the visitor's own intent (no credential, token or amount).
+
+"Try sending again" therefore **resends that request, not a reconstruction**. The action checks the
+snapshot's exact transport shape (`isCreateInquiryRequest`: only the documented properties, a known
+`eventType`, positive whole-number revision, guest count and duration, string selections) and sends
+it under the same key, without reading `GET /inquiry-form` or mapping answers first. A later change
+to the form or the catalog cannot alter the command: if revision 16 has replaced revision 15, or no
+longer offers the 120-minute service the visitor chose, request A still goes as it was, revision 15
+included. The backend settles it:
+
+- **it had committed**: its idempotency lookup replays the original `201` receipt, even though the
+  catalog has moved on since;
+- **it hadn't**: the old revision is now stale (`409 CATALOG_REVISION_STALE`), and the usual review
+  follows: fresh form, reconciled answers, and a **new** key for the reviewed request;
+- otherwise its answer is handled as for any delivery (validation refusal, reused key).
+
+While unresolved, a retry that can't get through (backend unreachable, `5xx`, service auth down)
+stays `ambiguous`, with the same `replay`. A snapshot that is missing, unreadable or not exactly a
+request is never sent and never replaced by a rebuilt one: the visitor is told the earlier request
+can't safely be resent from this page and offered "Change my answers" or email; no "Try sending
+again" is shown. After a replay the server reads the current form only to show the answers again
+(the no-JavaScript page needs them), never to build anything.
 
 If the customer would rather change their answers, "Change my answers" (JavaScript only) unfreezes
-the form and swaps in the server-minted `restartToken`, with a note that the changes go as a new
-request. That is the one way an ambiguous submission's answers can change, and it is explicit.
+the form, drops the replay and swaps in the server-minted `restartToken`, with a note that the
+changes go as a new request: a new key, a new command built from the edited answers. A posted
+`restartToken` always means a new submission, whatever else came with it. That is the one way an
+ambiguous submission's answers can change, and it is explicit.
+
+The two retry layers stay separate: business retries (the adapter's own retry, "Try sending again")
+repeat the same command under the same key; authentication recovery below them (a `401`) repeats
+the same HTTP request with a new service token. Neither regenerates the body.
 
 **Double clicks.** The submit button is disabled and the enhance handler ignores submits while one is
 in flight, purely for UX. Correctness doesn't depend on it: any duplicate delivery (a double click
@@ -342,7 +383,9 @@ server keeps no cache of it: every page view and every submit reads it from the 
 - `apps/public/src/lib/server/service-auth.test.ts`: the token lifecycle with an injected clock:
   lazy exchange, reuse, one exchange for concurrent callers (released on failure), early refresh
   (15-minute and short tokens), fallback to an unexpired token, race-safe invalidation, refused /
-  unreachable / malformed exchanges and missing config, never leaking the credential.
+  unreachable / malformed exchanges and missing config, never leaking the credential; the failure
+  cooldown (sequential exchanges suppressed, one shared exchange when it ends, 5 → 60 s backoff,
+  reset on success, `Retry-After`, an unexpired token still served, a refused one never).
 - `apps/public/src/lib/server/commerce.test.ts`: service token and `Idempotency-Key` headers,
   same-key same-body retry on timeouts and lost/garbled responses and the retryable `conflict`, no
   retry on semantic failures, error kinds and stable codes, fail-closed shapes and redirects, cache
@@ -353,9 +396,13 @@ server keeps no cache of it: every page view and every submit reads it from the 
 - `apps/public/src/routes/book/page.server.test.ts`: integration through the real `load` and action
   with only `fetch` replaced by a contract-faithful fake (`src/lib/server/testing/`): version 7
   rendering, contact-only refusal, an optional-service definition rejected (on load, on submit and on
-  stale refresh), an incompatible form, priced body, double delivery, lost response, ambiguous then
-  identical same-key retry, unreachable backend, 5xx, 422, catalog-state refresh, stale review with a
-  fresh key, replay after a catalog change, key reuse.
+  stale refresh), an incompatible form, a leaked `DISABLED` offering refused, priced body, double
+  delivery, lost response, ambiguous then identical same-key retry, unreachable backend, 5xx, 422,
+  catalog-state refresh, stale review with a fresh key, replay after a catalog change, key reuse; the
+  exact replay: request A resent unchanged under key K (no form read first) when nothing changed,
+  after revision 16 changed the form (original receipt if it committed, stale review under a new key
+  if not), with tampered visible answers, through a `401`, and when lost again; tampered or missing
+  snapshots sending nothing; a deliberate restart dropping the old command.
 - `apps/public/src/routes/book/estimate/server.test.ts`: the preview proxy forwards pricing facts
   only, with the service token, never leaks it, survives an expired token, and reports a refused
   credential or a `403` as `503 unavailable`, never as a rejected selection.
@@ -368,7 +415,7 @@ server keeps no cache of it: every page view and every submit reads it from the 
   `e2e/test-service.ts` and implements the idempotency contract, offering availability and the
   required `pricingInputs`): rendering order, unavailable chips, no contact-only path (with and
   without JavaScript), estimate (kept on a `503` or a service `403`), submit, lost response, frozen
-  retry, deliberate restart, stale review, reused key, double delivery recorded once, an expired
+  retry resending the delivered request, a tampered replay never sent, deliberate restart, stale review, reused key, double delivery recorded once, an expired
   token replaced under the same key, a `403` shown as an outage, same-origin-only traffic, no
   credential or token in HTML, `__data.json`, `/book/estimate`, cookies or the client build. The
   gated preview runs without service credentials.

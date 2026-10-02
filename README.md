@@ -78,7 +78,7 @@ browser
 apps/public SvelteKit server (src/lib/server/)
   │  COMMERCE_SERVICE_ID + COMMERCE_SERVICE_CREDENTIAL (private deployment env)
   ▼
-POST /auth/service/token  →  short-lived access token (15 min), kept in server memory
+POST /auth/service/token  →  short-lived access token (15 min by default), kept in server memory
   │  Authorization: Bearer <access token>
   ▼
 fionas-commerce  →  SERVICE:fionas-web  →  role fionas.web  →  fionas.inquiry-form.read
@@ -96,7 +96,9 @@ Three different secrets are involved, and they are never interchangeable:
 
 The browser receives none of them. The server obtains a token lazily, reuses it until shortly
 before it expires, shares one exchange between concurrent requests, and after a `401` gets a new
-one and repeats the request once. A `403` (the service lacks a permission) is never retried. Both are
+one and repeats the request once. A `403` (the service lacks a permission) is never retried. After a
+failed exchange the next one waits (5 s, doubling to at most 60 s, or the token endpoint's
+`Retry-After`), so a wrong or revoked credential can't drive repeated expensive verifications. Both are
 logged for the operator (`[commerce] POST /inquiries → 403; check fionas-web service permissions`)
 and shown to visitors only as the generic "unavailable" message. Details:
 [docs/public-inquiry-submission.md](docs/public-inquiry-submission.md#service-authentication).
@@ -122,7 +124,7 @@ permission needed):
 **Rotation (no downtime, no backend restart).** With credential A active: create credential B
 (step 5), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
 revoke A (`DELETE /admin/access/services/{serviceId}/credentials/{credentialId}`). Tokens A already
-bought stay valid until they expire (at most 15 minutes); that is expected. After a suspected
+bought stay valid until their configured expiry (15 minutes by default); that is expected. After a suspected
 compromise, also disable the service (`PUT /admin/access/services/{serviceId}/status`) until that
 lifetime has passed.
 

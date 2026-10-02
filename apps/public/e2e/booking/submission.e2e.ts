@@ -152,12 +152,38 @@ test('an unknown outcome freezes the answers and resends them under the same key
 	await expect(page.getByLabel('Your name')).toHaveValue('Jane Doe');
 	await expect(page.locator('input[name="submissionToken"]')).toHaveValue(token);
 	expect((await attemptsFor(page, email)).map((a) => a.key)).toEqual([token, token]);
+	// ...and the command itself travels with the page: what was delivered is what goes again.
+	const replay = JSON.parse(await page.locator('input[name="replayRequest"]').inputValue());
+	expect(replay).toMatchObject({ email, pricingInputs: { catalogRevision: 15 } });
 
 	await retryButton(page).click();
 	await expect(page).toHaveURL(/\/book\/received$/);
 	const attempts = await attemptsFor(page, email);
 	expect(attempts.map((a) => a.key)).toEqual([token, token, token]);
-	expect(await submissionsFor(page, email)).toHaveLength(1);
+	expect(await submissionsFor(page, email)).toEqual([replay]);
+});
+
+test('a tampered replay is never sent, and the page offers no retry under that key', async ({
+	page
+}) => {
+	const email = emailFor('down');
+	await fillAll(page, email);
+	await sendButton(page).click();
+	await expect(retryButton(page)).toBeVisible();
+
+	await page
+		.locator('input[name="replayRequest"]')
+		.evaluate((input: HTMLInputElement) => (input.value = '{"name":"x","total":"1.00"}'));
+	await retryButton(page).click();
+
+	await expect(page.getByRole('alert')).toContainText(
+		"couldn't safely resend your earlier request"
+	);
+	await expect(retryButton(page)).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Change my answers' })).toBeVisible();
+	await expect(page.getByText(/JSON|SyntaxError/)).toHaveCount(0);
+	expect(await attemptsFor(page, email)).toHaveLength(2);
+	expect(await submissionsFor(page, email)).toEqual([]);
 });
 
 test('changing answers after an unknown outcome sends a new request deliberately', async ({

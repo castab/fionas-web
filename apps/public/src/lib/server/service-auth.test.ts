@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createServiceTokenSource, refreshSkew, type ServiceTokenSource } from './service-auth.js';
+import {
+	createServiceTokenSource,
+	failureDelay,
+	refreshSkew,
+	type ServiceTokenSource
+} from './service-auth.js';
 
 /*
  * The SERVICE token lifecycle on its own: lazy exchange, in-memory reuse, early refresh, one
@@ -106,7 +111,7 @@ describe('one exchange at a time', () => {
 		expect(new Set(results.map((r) => r.ok && r.accessToken))).toEqual(new Set(['opaque-token-1']));
 	});
 
-	it('releases a failed exchange so the next caller tries again', async () => {
+	it('releases a failed exchange, so a caller after the cooldown tries again', async () => {
 		answer = (n) =>
 			n === 1
 				? Response.json({ code: 'unauthenticated', message: 'm' }, { status: 401 })
@@ -117,6 +122,7 @@ describe('one exchange at a time', () => {
 		expect(first).toEqual([{ ok: false }, { ok: false }, { ok: false }]);
 		expect(exchanges).toHaveLength(1);
 
+		clock += failureDelay(1);
 		expect(await tokens.token()).toEqual({ ok: true, accessToken: 'opaque-token-2' });
 		expect(exchanges).toHaveLength(2);
 	});
@@ -128,7 +134,141 @@ describe('one exchange at a time', () => {
 		};
 		const tokens = source();
 		expect(await tokens.token()).toEqual({ ok: false });
+		clock += failureDelay(1);
 		expect(await tokens.token()).toEqual({ ok: true, accessToken: 'opaque-token-2' });
+	});
+});
+
+describe('cooldown after a failed exchange', () => {
+	const refused = () => Response.json({ code: 'unauthenticated', message: 'm' }, { status: 401 });
+
+	it('suppresses sequential exchanges until the cooldown is over', async () => {
+		answer = refused;
+		const tokens = source();
+		for (let i = 0; i < 4; i++) expect(await tokens.token()).toEqual({ ok: false });
+		expect(exchanges).toHaveLength(1);
+
+		clock += failureDelay(1) - 1;
+		expect(await tokens.token()).toEqual({ ok: false });
+		expect(exchanges).toHaveLength(1);
+		clock += 1;
+		expect(await tokens.token()).toEqual({ ok: false });
+		expect(exchanges).toHaveLength(2);
+	});
+
+	it('lets exactly one exchange through when the cooldown ends, shared by concurrent callers', async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		answer = async (n) => {
+			if (n === 1) return refused();
+			await gate;
+			return Response.json(tokenBody(n));
+		};
+		const tokens = source();
+		await tokens.token();
+
+		clock += failureDelay(1);
+		const waiting = Promise.all(Array.from({ length: 5 }, () => tokens.token()));
+		release();
+		const results = await waiting;
+		expect(exchanges).toHaveLength(2);
+		expect(results.every((r) => r.ok && r.accessToken === 'opaque-token-2')).toBe(true);
+	});
+
+	it('backs off 5, 10, 20, 40 and then at most 60 seconds between attempts', async () => {
+		expect([1, 2, 3, 4, 5, 6, 20].map(failureDelay)).toEqual([
+			5000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000
+		]);
+
+		answer = () => new Response(null, { status: 503 });
+		const tokens = source();
+		await tokens.token();
+		for (const delay of [5000, 10_000, 20_000, 40_000, 60_000, 60_000]) {
+			const before = exchanges.length;
+			clock += delay - 1;
+			await tokens.token();
+			expect(exchanges).toHaveLength(before);
+			clock += 1;
+			await tokens.token();
+			expect(exchanges).toHaveLength(before + 1);
+		}
+	});
+
+	it('starts from the base delay again after a success', async () => {
+		answer = (n) => (n === 3 ? Response.json(tokenBody(n)) : refused());
+		const tokens = source();
+		await tokens.token(); // exchange 1 fails
+		clock += failureDelay(1);
+		await tokens.token(); // exchange 2 fails: the next delay doubles
+		clock += failureDelay(2);
+		expect(await tokens.token()).toEqual({ ok: true, accessToken: 'opaque-token-3' });
+
+		tokens.invalidate('opaque-token-3');
+		expect(await tokens.token()).toEqual({ ok: false }); // exchange 4 fails: base delay again
+		clock += failureDelay(1);
+		await tokens.token();
+		expect(exchanges).toHaveLength(5);
+	});
+
+	it.each([
+		['seconds', '30', 30_000],
+		['seconds beyond the cap', '99999', 300_000]
+	])('honors a 429 Retry-After in %s', async (_, header, wait) => {
+		answer = () => new Response(null, { status: 429, headers: { 'retry-after': header } });
+		const tokens = source();
+		await tokens.token();
+		clock += wait - 1;
+		await tokens.token();
+		expect(exchanges).toHaveLength(1);
+		clock += 1;
+		await tokens.token();
+		expect(exchanges).toHaveLength(2);
+	});
+
+	it('uses the normal cooldown when Retry-After is unusable', async () => {
+		answer = () =>
+			new Response(null, {
+				status: 429,
+				headers: { 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }
+			});
+		const tokens = source();
+		await tokens.token();
+		clock += failureDelay(1);
+		await tokens.token();
+		expect(exchanges).toHaveLength(2);
+	});
+
+	it('keeps serving an unexpired token while refreshes fail and cool down', async () => {
+		answer = (n) => (n === 1 ? Response.json(tokenBody(n)) : new Response(null, { status: 503 }));
+		const tokens = source();
+		await tokens.token();
+
+		clock += 14.5 * MINUTE; // inside the refresh window
+		expect(await tokens.token()).toEqual({ ok: true, accessToken: 'opaque-token-1' });
+		expect(await tokens.token()).toEqual({ ok: true, accessToken: 'opaque-token-1' });
+		expect(exchanges).toHaveLength(2); // the second call fell inside the cooldown
+
+		clock += MINUTE; // expired: the next exchange fails too, and the one after is cooling down
+		expect(await tokens.token()).toEqual({ ok: false });
+		expect(await tokens.token()).toEqual({ ok: false });
+		expect(exchanges).toHaveLength(3);
+	});
+
+	it('never brings back a refused token during a cooldown', async () => {
+		answer = (n) => (n === 1 ? Response.json(tokenBody(n)) : new Response(null, { status: 503 }));
+		const tokens = source();
+		await tokens.token();
+		tokens.invalidate('opaque-token-1');
+		expect(await tokens.token()).toEqual({ ok: false });
+		expect(await tokens.token()).toEqual({ ok: false });
+		expect(exchanges).toHaveLength(2);
+	});
+
+	it('logs once per failed attempt, never per suppressed request', async () => {
+		answer = refused;
+		const tokens = source();
+		for (let i = 0; i < 5; i++) await tokens.token();
+		expect(logs).toHaveLength(1);
 	});
 });
 
@@ -251,8 +391,9 @@ describe('failures', () => {
 		expect(await tokens.token()).toEqual({ ok: false });
 		expect(allLogs()).toMatch(/outside the contract/);
 		expect(allLogs()).not.toContain('opaque-token');
-		// Nothing was cached: the next caller exchanges again.
+		// Nothing was cached: the next caller after the cooldown exchanges again.
 		answer = (n) => Response.json(tokenBody(n));
+		clock += failureDelay(1);
 		expect(await tokens.token()).toEqual({ ok: true, accessToken: 'opaque-token-2' });
 	});
 

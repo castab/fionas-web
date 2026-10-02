@@ -6,6 +6,7 @@ import {
 	TEST_SERVICE_ID,
 	estimateFixture,
 	fakeCommerce,
+	formFixture,
 	type FakeCommerce
 } from './testing/fake-commerce.js';
 
@@ -267,6 +268,22 @@ describe('getInquiryForm', () => {
 			error: { kind: 'unexpected', code: 'bad_response' }
 		});
 		expect(logs.join(' ')).toMatch(/outside the contract/);
+	});
+
+	it('fails closed on an offering marked DISABLED: the public form must omit those', async () => {
+		const leaked = formFixture();
+		const option = leaked.sections
+			.flatMap((s) => s.fields)
+			.flatMap((f) => (f.input.type === 'OFFERING_CHOICE' ? f.input.options : []))[0]!;
+		option.selectionState = 'DISABLED';
+		backend.publish(leaked);
+
+		const result = await getInquiryForm();
+		expect(result).toMatchObject({
+			ok: false,
+			error: { kind: 'unexpected', code: 'bad_response' }
+		});
+		expect(logs.join(' ')).toMatch(/GET \/inquiry-form returned a body outside the contract/);
 	});
 
 	it('calls nothing when the service credential is not configured', async () => {

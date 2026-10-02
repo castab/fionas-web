@@ -1,4 +1,9 @@
-import type { FieldErrors, InquiryAnswers, InquiryForm } from '@fionas/shared';
+import type {
+	CreateInquiryRequest,
+	FieldErrors,
+	InquiryAnswers,
+	InquiryForm
+} from '@fionas/shared';
 
 /**
  * How a /book submission that did not produce an inquiry is reported back to the page (the form
@@ -15,9 +20,11 @@ import type { FieldErrors, InquiryAnswers, InquiryForm } from '@fionas/shared';
  * - `unavailable`: nothing was sent (the backend couldn't be reached, or refused the site's own
  *   service identity: an operator problem the visitor is never told about).
  * - `ambiguous`: the request was sent but its outcome is unknown (timeout, lost or garbled response,
- *   gateway error), even after the server's own same-key retry. It may have been recorded. The page
- *   freezes the answers so a retry sends the identical request under the same `submissionToken`;
- *   `restartToken` is only for a customer who deliberately changes their answers instead.
+ *   gateway error), even after the server's own same-key retry. It may have been recorded. `replay`
+ *   carries the exact request that was delivered; the page freezes the answers and posts `replay`
+ *   back, so "Try sending again" resends that same command under the same `submissionToken`.
+ *   Without a usable `replay` nothing can safely be resent under that key. `restartToken` is only
+ *   for a customer who deliberately changes their answers instead (a new submission).
  * - `server_error`: the backend failed unexpectedly (5xx). Safe to send again under the same token.
  */
 export type SubmissionOutcome =
@@ -30,6 +37,15 @@ export type SubmissionOutcome =
 	| 'ambiguous'
 	| 'server_error';
 
+/**
+ * The immutable command an unresolved submission already delivered to POST /inquiries: exactly the
+ * body sent under its `Idempotency-Key`. Customer intent only (the answers the visitor gave, mapped
+ * to the backend's fields), never credentials, tokens or amounts. Distinct from `answers`, which are
+ * what the visitor sees and edits: a retry of an unknown outcome resends this, never a request
+ * rebuilt from a newer form.
+ */
+export type InquiryReplay = { request: CreateInquiryRequest };
+
 export type SubmissionFailure = {
 	outcome: SubmissionOutcome;
 	answers?: InquiryAnswers;
@@ -39,6 +55,8 @@ export type SubmissionFailure = {
 	submissionToken?: string;
 	/** The catalog revision the answers belong to, sent back with the next submission. */
 	catalogRevision?: number;
+	/** `ambiguous`: the command to resend, unchanged, with the same `submissionToken`. */
+	replay?: InquiryReplay;
 	/** `key_reused` / `ambiguous`: a fresh key for a deliberate new submission. */
 	restartToken?: string;
 	/** The current form after a catalog change, which the page must render from now on. */
@@ -63,5 +81,7 @@ export const submissionCopy = {
 	staleWithoutForm:
 		'Our menu changed while you were filling this in. Please reload the page to see the current options.',
 	malformed: 'This page is out of date. Please reload it and try again.',
+	replayUnusable:
+		"We couldn't safely resend your earlier request from this page, so nothing was sent. Email us to check whether it reached us, or change your answers to send a new request.",
 	revisionMissing: 'Our menu just changed. Please reload the page and choose again.'
 } as const;

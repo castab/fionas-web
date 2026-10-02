@@ -44,7 +44,8 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 - The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
   calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), authenticated as **`SERVICE:fionas-web`**:
   `$lib/server/service-auth.ts` exchanges `COMMERCE_SERVICE_ID` + `COMMERCE_SERVICE_CREDENTIAL` at
-  `POST /auth/service/token` for a short-lived access token (in memory only, refreshed early, one exchange at a time),
+  `POST /auth/service/token` for a short-lived access token (in memory only, refreshed early, one exchange at a time,
+  a 5 → 60 s cooldown after a failed exchange that still serves an unexpired, unrefused token),
   sent as `Authorization: Bearer`. A `401` drops that token (only if still current) and repeats the identical request
   once; a `403` is never retried. Both, and any token failure, are `service_auth` errors: logged for the operator,
   "unavailable" (503) to visitors, never a form or selection error. There is no static key. Never log or expose the
@@ -52,6 +53,10 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   the app the backend's signing key. The credentials are checked lazily, so the site runs without them while booking is
   off. `apps/admin` uses USER sessions and never this SERVICE. E2E runs against the stub in
   `apps/public/e2e/stub-commerce.mjs` (test-only service credential in `e2e/test-service.ts`).
+- **One `Idempotency-Key` names one immutable `CreateInquiryRequest`.** After an ambiguous delivery, preserve and
+  replay the exact canonical command (the failure's `replay`, posted back as `replayRequest` and checked by
+  `isCreateInquiryRequest`); never rebuild that key's request from a newer inquiry-form definition, and never send a
+  replay that fails the check. Only a definite answer (receipt, stale, refusal) ends it.
 - **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
   back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
   generate a key per backend attempt. Retries keep it; only a reviewed catalog refresh

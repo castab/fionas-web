@@ -7,6 +7,7 @@ import {
 	pricingContractProblem,
 	reconcileAnswers,
 	type ApiError,
+	type CreateInquiryRequest,
 	type InquiryAnswers,
 	type InquiryForm
 } from '@fionas/shared';
@@ -16,19 +17,26 @@ import {
 	getInquiryForm,
 	isOutcomeUnknown,
 	isSubmissionKey,
+	type CommerceError,
 	type InquiryReceipt
 } from './commerce.js';
+import { isCreateInquiryRequest } from './commerce-shapes.js';
 
 /*
  * The /book submission flow between the browser and fionas-commerce. The browser posts the
  * customer's answers plus two non-secret hidden values: the logical submission token (sent to the
  * backend as `Idempotency-Key`) and the catalog revision the answers were given against. This
  * module never mints a key for an attempt: the token arrives with the form and is reused for every
- * delivery and retry of that submission. See docs/public-inquiry-submission.md.
+ * delivery and retry of that submission, and one key always carries one command: after an unknown
+ * outcome the delivered request travels with the page (`replay`) and is resent unchanged. See
+ * docs/public-inquiry-submission.md.
  */
 
 /** A new opaque token naming one logical submission. Not a credential. */
 export const newSubmissionToken = (): string => crypto.randomUUID();
+
+/** A replayed request is a few hundred bytes; anything far larger isn't one. */
+const MAX_REPLAY_LENGTH = 32_768;
 
 export type SubmitResult =
 	{ ok: true; receipt: InquiryReceipt } | { ok: false; status: number; failure: SubmissionFailure };
@@ -84,81 +92,42 @@ async function refreshForReview(
 	};
 }
 
-/** Runs one delivery of a /book submission. */
-export async function submitInquiry(data: FormData): Promise<SubmitResult> {
-	// "Send as a new request" (after IDEMPOTENCY_KEY_REUSED) deliberately supplies a new key.
-	const restart = data.get('restartToken');
-	const token =
-		typeof restart === 'string' && restart !== '' ? restart : data.get('submissionToken');
-	const revision = Number(data.get('catalogRevision'));
-	if (!isSubmissionKey(token) || !Number.isInteger(revision) || revision < 1) {
-		console.warn(
-			'[inquiry] /book submission without a usable submission token or catalog revision'
-		);
-		return {
-			ok: false,
-			status: 400,
-			failure: { outcome: 'malformed', formError: submissionCopy.malformed }
-		};
+/** Parses the posted replay snapshot: the exact request shape, or nothing. Never trusted unchecked. */
+export function parseReplay(raw: unknown): CreateInquiryRequest | null {
+	if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_REPLAY_LENGTH) return null;
+	try {
+		const value: unknown = JSON.parse(raw);
+		return isCreateInquiryRequest(value) ? value : null;
+	} catch {
+		return null;
 	}
+}
 
-	// Every failure below keeps this submission's token and revision unless it says otherwise.
-	const failed = (
-		status: number,
-		outcome: SubmissionFailure['outcome'],
-		extra: Partial<SubmissionFailure> = {}
-	): SubmitResult => ({
-		ok: false,
-		status,
-		failure: { outcome, submissionToken: token, catalogRevision: revision, ...extra }
+type Failed = (
+	status: number,
+	outcome: SubmissionFailure['outcome'],
+	extra?: Partial<SubmissionFailure>
+) => SubmitResult;
+
+/** Delivered, outcome unknown: the next try must be this very command under the same key. */
+const stillUnknown = (failed: Failed, request: CreateInquiryRequest, answers?: InquiryAnswers) =>
+	failed(503, 'ambiguous', {
+		answers,
+		replay: { request },
+		formError: submissionCopy.ambiguous,
+		restartToken: newSubmissionToken()
 	});
 
-	// Retrying a submission whose outcome was already unknown: until something settles it (a receipt
-	// or a definite refusal), it stays unknown, whatever stops this attempt.
-	const unresolved = data.get('outcomeUnknown') === 'true';
-	const stillUnknown = (answers?: InquiryAnswers): SubmitResult =>
-		failed(503, 'ambiguous', {
-			answers,
-			formError: submissionCopy.ambiguous,
-			restartToken: newSubmissionToken()
-		});
-
-	// The current form maps answers to the request (field keys → submission pointers). If it can't
-	// be read, or can't produce pricingInputs, nothing has been sent yet.
-	const current = await getInquiryForm();
-	if (!current.ok || pricingContractProblem(current.data) !== null) {
-		return unresolved
-			? stillUnknown()
-			: failed(503, 'unavailable', { formError: submissionCopy.unavailable });
-	}
-	const form = current.data;
-	const answers = answersFromFormData(form, data);
-
-	// The submit gate: complete answers, including the whole service configuration, or nothing is
-	// sent. The request is pinned to the customer's revision, never silently to the current one, and
-	// carries intent only (no prices or totals). When the catalog has moved on, option membership is
-	// left to the backend: an earlier commit of this key replays, anything else is stale.
-	const command = prepareInquiry(form, answers, { catalogRevision: revision });
-	if (!command.ok) {
-		if (command.reason === 'incompatible') {
-			console.error(`[inquiry] cannot build POST /inquiries (${command.problem}); nothing sent`);
-			return unresolved
-				? stillUnknown(answers)
-				: failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
-		}
-		// Answers that no longer fit the current form's service questions: review, never a resubmit.
-		// Unless an earlier delivery may have committed: then "not sent" would be untrue, so it stays
-		// unknown (same key, frozen answers) until the customer deliberately changes them.
-		if (revision !== form.catalogRevision) {
-			return unresolved ? stillUnknown(answers) : refreshForReview(data, 'stale', 409);
-		}
-		return failed(422, 'invalid', { answers, errors: command.errors });
-	}
-
-	const result = await createInquiry(command.request, token);
-	if (result.ok) return { ok: true, receipt: result.data };
-
-	const { error } = result;
+/**
+ * What a refused or failed delivery of `request` under `token` means for the visitor. Shared by the
+ * first delivery and replays: only a receipt or a definite refusal settles a submission; anything
+ * else keeps it unknown, with the same command to resend. `answers` are for display only.
+ */
+async function settle(
+	error: CommerceError,
+	{ data, token, request, failed, replaying }: Delivery,
+	answers: () => Promise<InquiryAnswers | undefined>
+): Promise<SubmitResult> {
 	if (error.kind === 'conflict' && error.code === 'CATALOG_REVISION_STALE') {
 		return refreshForReview(data, 'stale', 409);
 	}
@@ -168,7 +137,7 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 			`[inquiry] Idempotency-Key ${token} was already used for a different request; not retrying. Check the submission-token lifecycle.`
 		);
 		return failed(409, 'key_reused', {
-			answers,
+			answers: await answers(),
 			formError: submissionCopy.keyReused,
 			restartToken: newSubmissionToken()
 		});
@@ -182,18 +151,154 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	}
 	if (error.status === 400 || error.status === 404 || error.status === 422) {
 		if (error.status === 400) console.warn('[inquiry] POST /inquiries rejected as malformed');
-		return failed(422, 'rejected', { answers, formError: rejectionMessage(error) });
+		return failed(422, 'rejected', {
+			answers: await answers(),
+			formError: rejectionMessage(error)
+		});
 	}
-	// Sent, but we can't tell whether it was recorded. Only the identical request under the same key
-	// may follow; a deliberate change of answers is a new submission (`restartToken`).
-	if (isOutcomeUnknown(error) || unresolved) return stillUnknown(answers);
+	// Sent, but we can't tell whether it was recorded; or a replay that nothing settled. Only this
+	// same command under the same key may follow. A deliberate change of answers is a new submission
+	// (`restartToken`).
+	if (isOutcomeUnknown(error) || replaying) return stillUnknown(failed, request, await answers());
 	if (error.kind === 'service_auth') {
 		// Our SERVICE identity was refused before anything was processed; the adapter has logged why
 		// for the operator. The visitor sees the generic outage, never the auth failure.
-		return failed(503, 'unavailable', { answers, formError: submissionCopy.unavailable });
+		return failed(503, 'unavailable', {
+			answers: await answers(),
+			formError: submissionCopy.unavailable
+		});
 	}
 	console.error(`[inquiry] POST /inquiries failed unexpectedly (${error.status} ${error.code})`);
-	return failed(502, 'server_error', { answers, formError: submissionCopy.serverError });
+	return failed(502, 'server_error', {
+		answers: await answers(),
+		formError: submissionCopy.serverError
+	});
+}
+
+type Delivery = {
+	data: FormData;
+	token: string;
+	request: CreateInquiryRequest;
+	failed: Failed;
+	/** Resending the snapshot of a submission whose outcome was unknown. */
+	replaying: boolean;
+};
+
+/**
+ * Answers to show again after a replay (the no-JavaScript page has nothing else to render). Read
+ * against the current form only for display, after sending: never used to build a request.
+ */
+async function displayAnswers(data: FormData): Promise<InquiryAnswers | undefined> {
+	const current = await getInquiryForm();
+	return current.ok ? answersFromFormData(current.data, data) : undefined;
+}
+
+/** Runs one delivery of a /book submission. */
+export async function submitInquiry(data: FormData): Promise<SubmitResult> {
+	// "Send as a new request" (after IDEMPOTENCY_KEY_REUSED) deliberately supplies a new key: a new
+	// submission, whatever else was posted with it.
+	const restart = data.get('restartToken');
+	const restarting = typeof restart === 'string' && restart !== '';
+	const token = restarting ? restart : data.get('submissionToken');
+	const revision = Number(data.get('catalogRevision'));
+	if (!isSubmissionKey(token) || !Number.isInteger(revision) || revision < 1) {
+		console.warn(
+			'[inquiry] /book submission without a usable submission token or catalog revision'
+		);
+		return {
+			ok: false,
+			status: 400,
+			failure: { outcome: 'malformed', formError: submissionCopy.malformed }
+		};
+	}
+
+	// Every failure below keeps this submission's token and revision unless it says otherwise.
+	const failed =
+		(catalogRevision: number): Failed =>
+		(status, outcome, extra = {}) => ({
+			ok: false,
+			status,
+			failure: { outcome, submissionToken: token, catalogRevision, ...extra }
+		});
+
+	// Retrying a submission whose outcome is unknown: resend the command it delivered, exactly.
+	if (!restarting && data.get('outcomeUnknown') === 'true') {
+		return replaySubmission(data, token, failed);
+	}
+
+	// The current form maps answers to the request (field keys → submission pointers). If it can't
+	// be read, or can't produce pricingInputs, nothing has been sent yet.
+	const current = await getInquiryForm();
+	if (!current.ok || pricingContractProblem(current.data) !== null) {
+		return failed(revision)(503, 'unavailable', { formError: submissionCopy.unavailable });
+	}
+	const form = current.data;
+	const answers = answersFromFormData(form, data);
+
+	// The submit gate: complete answers, including the whole service configuration, or nothing is
+	// sent. The request is pinned to the customer's revision, never silently to the current one, and
+	// carries intent only (no prices or totals). When the catalog has moved on, option membership is
+	// left to the backend: an earlier commit of this key replays, anything else is stale.
+	const command = prepareInquiry(form, answers, { catalogRevision: revision });
+	if (!command.ok) {
+		if (command.reason === 'incompatible') {
+			console.error(`[inquiry] cannot build POST /inquiries (${command.problem}); nothing sent`);
+			return failed(revision)(503, 'unavailable', {
+				answers,
+				formError: submissionCopy.unavailable
+			});
+		}
+		// Answers that no longer fit the current form's service questions: review, never a resubmit.
+		if (revision !== form.catalogRevision) return refreshForReview(data, 'stale', 409);
+		return failed(revision)(422, 'invalid', { answers, errors: command.errors });
+	}
+
+	// This request is the submission's one command from here on: if its outcome becomes unknown, it
+	// is what goes back to the page (`replay`) and what a retry resends.
+	const request = command.request;
+	const result = await createInquiry(request, token);
+	if (result.ok) return { ok: true, receipt: result.data };
+	return settle(
+		result.error,
+		{ data, token, request, failed: failed(revision), replaying: false },
+		async () => answers
+	);
+}
+
+/**
+ * "Try sending again" after an unknown outcome. The posted snapshot is the request that was
+ * delivered under this key; it is checked for its exact transport shape and sent unchanged, never
+ * rebuilt from today's form (which may have changed since). The backend then settles it: the
+ * original receipt if it had committed, `CATALOG_REVISION_STALE` (review, new key) if it hadn't and
+ * the catalog moved on, or a normal answer. Without a usable snapshot nothing is sent.
+ */
+async function replaySubmission(
+	data: FormData,
+	token: string,
+	failed: (catalogRevision: number) => Failed
+): Promise<SubmitResult> {
+	const request = parseReplay(data.get('replayRequest'));
+	if (!request) {
+		console.warn('[inquiry] unresolved /book retry without a usable replay request; nothing sent');
+		return failed(Number(data.get('catalogRevision')))(400, 'ambiguous', {
+			answers: await displayAnswers(data),
+			formError: submissionCopy.replayUnusable,
+			restartToken: newSubmissionToken()
+		});
+	}
+	const result = await createInquiry(request, token);
+	if (result.ok) return { ok: true, receipt: result.data };
+	return settle(
+		result.error,
+		{
+			data,
+			token,
+			request,
+			failed: failed(request.pricingInputs.catalogRevision),
+			replaying: true
+		},
+		() => displayAnswers(data)
+	);
 }
 
 // --- Receipt --------------------------------------------------------------------------------

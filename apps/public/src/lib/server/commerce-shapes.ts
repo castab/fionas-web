@@ -1,9 +1,16 @@
-import type { EstimatePreview, InquiryForm } from '@fionas/shared';
+import {
+	INQUIRY_EVENT_TYPES,
+	type CreateInquiryRequest,
+	type EstimatePreview,
+	type InquiryEventType,
+	type InquiryForm
+} from '@fionas/shared';
 
 /*
- * Structural checks for what fionas-commerce returns, so the adapter fails closed: a 2xx whose body
- * isn't the documented shape is treated as an unexpected response, never rendered or trusted. These
- * check structure only (types, enums, exact decimals); meaning stays with the backend.
+ * Structural checks at the server's edges, so it fails closed: a 2xx from fionas-commerce whose body
+ * isn't the documented shape is treated as an unexpected response, never rendered or trusted, and a
+ * replayed inquiry from the browser is sent only in the exact request shape. These check structure
+ * only (types, enums, exact decimals); meaning stays with the backend.
  */
 
 type Json = Record<string, unknown>;
@@ -41,7 +48,9 @@ function isOffering(v: unknown, category: string): boolean {
 		isString(v.displayName) &&
 		isNullableString(v.description) &&
 		isOptional(v.price, isOfferingPrice) &&
-		(v.selectionState === 'ENABLED' || v.selectionState === 'DISABLED') &&
+		// The public form omits disabled (and retired) offerings: a DISABLED one here is off-contract,
+		// and must never reach the page dressed up as "temporarily unavailable".
+		v.selectionState === 'ENABLED' &&
 		(v.availability === 'AVAILABLE' || v.availability === 'UNAVAILABLE')
 	);
 }
@@ -143,6 +152,50 @@ export function isInquiryForm(v: unknown): v is InquiryForm {
 		s.fields.map((f) => f.key)
 	);
 	return new Set(keys).size === keys.length;
+}
+
+const INT32_MAX = 2_147_483_647;
+const isCount = (v: unknown) => isInt(v, 1) && v <= INT32_MAX;
+/** No property beyond `keys`: nothing unexpected (such as an amount) can ride along. */
+const hasOnly = (v: Json, keys: readonly string[]) => Object.keys(v).every((k) => keys.includes(k));
+
+/**
+ * A POST /inquiries body in exactly its transport shape, with no other properties: what a replayed
+ * request must be before it is sent again. Structure only; the backend validates the meaning.
+ */
+export function isCreateInquiryRequest(v: unknown): v is CreateInquiryRequest {
+	if (
+		!isObject(v) ||
+		!hasOnly(v, ['name', 'email', 'message', 'pricingInputs', 'zipCode', 'eventDate', 'eventType'])
+	) {
+		return false;
+	}
+	if (![v.name, v.email, v.zipCode, v.eventDate].every(isString)) return false;
+	if (!isOptional(v.message, isString)) return false;
+	if (!INQUIRY_EVENT_TYPES.includes(v.eventType as InquiryEventType)) return false;
+	const pricing = v.pricingInputs;
+	return (
+		isObject(pricing) &&
+		hasOnly(pricing, [
+			'catalogRevision',
+			'guestCount',
+			'guestCountIsMinimum',
+			'durationMinutes',
+			'selections'
+		]) &&
+		isCount(pricing.catalogRevision) &&
+		isCount(pricing.guestCount) &&
+		typeof pricing.guestCountIsMinimum === 'boolean' &&
+		isCount(pricing.durationMinutes) &&
+		every(
+			pricing.selections,
+			(s) =>
+				isObject(s) &&
+				hasOnly(s, ['category', 'offerings']) &&
+				isString(s.category) &&
+				every(s.offerings, isString)
+		)
+	);
 }
 
 /** POST /estimate-preview's documented shape. */

@@ -10,6 +10,7 @@
 		prepareInquiry,
 		site,
 		validateAnswers,
+		type CreateInquiryRequest,
 		type FieldErrors,
 		type InquiryForm,
 		type InquiryFormField,
@@ -62,6 +63,7 @@
 			submissionToken: failed?.submissionToken ?? data.submissionToken,
 			catalogRevision: failed?.catalogRevision ?? inquiryForm?.catalogRevision ?? 0,
 			restartToken: failed?.restartToken ?? null,
+			replay: failed?.replay?.request ?? null,
 			outcome: failed?.outcome ?? null,
 			review: reviewOf(failed),
 			phase: phaseOf(failed)
@@ -88,6 +90,12 @@
 	let restartToken = $state<string | null>(initial.restartToken);
 	/** After a catalog change: what the customer must look at again. */
 	let review = $state<Review | null>(initial.review);
+	/**
+	 * After an unknown outcome: the exact request that was delivered under `submissionToken`. "Try
+	 * sending again" posts it back and the server resends it unchanged, never a request rebuilt from
+	 * the answers. Dropped the moment the customer starts a new submission.
+	 */
+	let replay = $state.raw<CreateInquiryRequest | null>(initial.replay);
 	/** The customer chose to change answers after an unknown outcome: this is a new submission. */
 	let restarted = $state(false);
 	/** The last delivery's outcome is unknown: answers stay frozen until a retry settles it. */
@@ -98,8 +106,9 @@
 
 	const submitting = $derived(phase === 'submitting');
 	/**
-	 * After an unknown outcome the answers are frozen (inert, but still submitted), so "Try sending
-	 * again" repeats exactly the request that may already have been recorded, under the same key.
+	 * After an unknown outcome the answers are frozen (inert, but still submitted) and the delivered
+	 * request rides along as `replayRequest`, so "Try sending again" repeats exactly the command that
+	 * may already have been recorded, under the same key.
 	 */
 	const frozen = $derived(outcomeUnknown);
 
@@ -116,6 +125,7 @@
 		if (failed?.submissionToken) submissionToken = failed.submissionToken;
 		if (failed?.catalogRevision) catalogRevision = failed.catalogRevision;
 		restartToken = failed?.restartToken ?? null;
+		replay = failed?.replay?.request ?? null;
 		outcome = failed?.outcome ?? null;
 		review = reviewOf(failed);
 		phase = phaseOf(failed);
@@ -131,6 +141,7 @@
 		if (!restartToken) return;
 		submissionToken = restartToken;
 		restartToken = null;
+		replay = null;
 		outcomeUnknown = false;
 		restarted = true;
 		phase = 'editing';
@@ -216,10 +227,14 @@
 					return;
 				}
 				// Runs for every submit with the latest state (the form may have been refreshed since).
-				// The gate: no complete service configuration, no request. The server checks again.
+				// The gate: no complete service configuration, no request. The server checks again. A
+				// retry after an unknown outcome is no new command: it resends `replay` as it is.
 				attempted = true;
 				formError = null;
-				const command = prepareInquiry(inquiryForm!, answers!, { catalogRevision });
+				const command =
+					outcomeUnknown && replay
+						? ({ ok: true } as const)
+						: prepareInquiry(inquiryForm!, answers!, { catalogRevision });
 				if (!command.ok) {
 					cancel();
 					if (command.reason === 'invalid') {
@@ -255,6 +270,9 @@
 			<input type="hidden" name="catalogRevision" value={catalogRevision} />
 			{#if frozen}
 				<input type="hidden" name="outcomeUnknown" value="true" />
+				{#if replay}
+					<input type="hidden" name="replayRequest" value={JSON.stringify(replay)} />
+				{/if}
 			{/if}
 
 			<p role="status" class="sr-only">
@@ -357,7 +375,7 @@
 					)}
 				>
 					<p class="m-0 font-medium text-rust-600 [font:var(--type-body)]">{formError}</p>
-					{#if frozen}
+					{#if frozen && replay}
 						<p class={cn(hintText, 'm-0')}>
 							Your answers are locked so we resend exactly what you sent before.
 						</p>
@@ -402,9 +420,12 @@
 				<p class={cn(hintText, 'm-0 max-w-[340px]')}>
 					We'll only use your details to reply to this request.
 				</p>
-				<Button type="submit" size="lg" disabled={submitting}>
-					{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send request'}
-				</Button>
+				<!-- Frozen without the delivered request, nothing can safely be resent under this key. -->
+				{#if !frozen || replay}
+					<Button type="submit" size="lg" disabled={submitting}>
+						{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send request'}
+					</Button>
+				{/if}
 			</div>
 		</form>
 	{/if}

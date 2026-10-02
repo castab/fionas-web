@@ -130,6 +130,13 @@ function receiptPage() {
 	return received.load({ cookies, setHeaders: () => {} } as never) as { receipt: unknown };
 }
 
+/** "Try sending again" after an unknown outcome: the frozen answers plus the delivered request. */
+const retryOf = (failure: SubmissionFailure, fields: Fields = priced) =>
+	formData(failure.submissionToken!, failure.catalogRevision!, fields, {
+		outcomeUnknown: 'true',
+		replayRequest: JSON.stringify(failure.replay!.request)
+	});
+
 const failureOf = (outcome: Outcome) => {
 	if (!('failure' in outcome))
 		throw new Error(`expected a failure, got ${JSON.stringify(outcome)}`);
@@ -189,6 +196,29 @@ describe('/book load', () => {
 		const { data } = await loadPage();
 		expect(data.form).toBeNull();
 	});
+
+	it.each(['AVAILABLE', 'UNAVAILABLE'] as const)(
+		'fails closed on a DISABLED (%s) offering, which the public form never lists',
+		async (availability) => {
+			const leaked = formFixture();
+			const flavors = leaked.sections
+				.flatMap((s) => s.fields)
+				.find((f) => f.key === 'offering:soft-serve-flavor')!;
+			if (flavors.input.type !== 'OFFERING_CHOICE') throw new Error('fixture changed');
+			flavors.input.options[0] = {
+				...flavors.input.options[0]!,
+				selectionState: 'DISABLED',
+				availability
+			};
+			backend.publish(leaked);
+
+			// Not shown as "temporarily unavailable", not filtered out: the whole form is refused.
+			const { data } = await loadPage();
+			expect(data.form).toBeNull();
+			const errors = vi.mocked(console.error).mock.calls.map((args) => args.join(' '));
+			expect(errors.join('\n')).toMatch(/GET \/inquiry-form returned a body outside the contract/);
+		}
+	);
 
 	it('gives every page view its own logical submission', async () => {
 		const first = await loadPage();
@@ -400,12 +430,12 @@ describe('/book submission', () => {
 		// A deliberate "change my answers" would be a new submission; it never replaces the retry key.
 		expect(failure.restartToken).toMatch(/^[0-9a-f-]{36}$/);
 		expect(failure.restartToken).not.toBe(data.submissionToken);
+		// The page gets back the exact command it delivered, to resend as it is.
+		expect(failure.replay?.request).toEqual(backend.posts()[0]?.body);
 		expectNoSecrets(failure);
 
-		// "Try sending again" posts the frozen answers: same token, same body, the original receipt.
-		const retry = await post(
-			formData(failure.submissionToken!, 15, priced, { outcomeUnknown: 'true' })
-		);
+		// "Try sending again" posts that command back: same token, same body, the original receipt.
+		const retry = await post(retryOf(failure));
 		expect(retry).toMatchObject({ redirect: '/book/received' });
 		const posts = backend.posts();
 		expect(new Set(posts.map((c) => c.headers['idempotency-key']))).toEqual(
@@ -418,15 +448,17 @@ describe('/book submission', () => {
 		});
 	});
 
-	it('keeps an unresolved submission ambiguous when the retry cannot even start', async () => {
+	it('keeps an unresolved submission ambiguous, with the same command, when the retry cannot even start', async () => {
 		const { data } = await loadPage();
+		backend.script('network', 'network');
+		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
 		env.COMMERCE_SERVICE_CREDENTIAL = 'revoked-elsewhere';
 
-		const retry = failureOf(
-			await post(formData(data.submissionToken, 15, priced, { outcomeUnknown: 'true' }))
-		);
+		const retry = failureOf(await post(retryOf(failure)));
 		expect(retry).toMatchObject({ outcome: 'ambiguous', submissionToken: data.submissionToken });
-		expect(backend.posts()).toHaveLength(0);
+		expect(retry.replay).toEqual(failure.replay);
+		expect(backend.posts()).toHaveLength(2);
+		expectNoSecrets(retry);
 	});
 
 	it('reports a refused service credential as unavailable, with nothing sent', async () => {
@@ -640,17 +672,27 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 		expect(backend.posts()).toHaveLength(0);
 	});
 
-	it('keeps an unresolved submission unknown, never "not sent", when its answers no longer fit', async () => {
+	it("replays an unresolved submission even when today's form no longer offers its answers", async () => {
 		const { data } = await loadPage();
+		backend.script('network', 'network'); // never reached the backend: nothing committed
+		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
 		republishWithout120();
 
-		const failure = failureOf(
-			await post(formData(data.submissionToken, 15, priced, { outcomeUnknown: 'true' }))
-		);
+		const outcome = failureOf(await post(retryOf(failure)));
 
-		expect(failure).toMatchObject({ outcome: 'ambiguous', submissionToken: data.submissionToken });
-		expect(failure.refreshedForm).toBeUndefined();
-		expect(backend.posts()).toHaveLength(0);
+		// The delivered command went again as it was (120 minutes, revision 15), and the backend
+		// settled it: stale, so the customer reviews today's form under a new key.
+		const retried = backend.posts().at(-1);
+		expect(retried?.headers['idempotency-key']).toBe(data.submissionToken);
+		expect(retried?.body).toEqual(failure.replay?.request);
+		expect(retried?.body).toMatchObject({
+			pricingInputs: { catalogRevision: 15, durationMinutes: 120 }
+		});
+		expect(outcome.outcome).toBe('stale');
+		expect(outcome.refreshedForm?.catalogRevision).toBe(16);
+		expect(outcome.reviewFields).toEqual(['How long would you like service?']);
+		expect(outcome.submissionToken).not.toBe(data.submissionToken);
+		expect(outcome.replay).toBeUndefined();
 	});
 
 	it('keeps a newly unavailable choice listed but unselects it and says so', async () => {
@@ -703,6 +745,181 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 			redirect: '/book/received'
 		});
 		expect(backend.committed.size).toBe(1);
+	});
+});
+
+/*
+ * One Idempotency-Key names one immutable CreateInquiryRequest. After an unknown outcome the page
+ * resends the command that was delivered, never one rebuilt from a newer form, and the backend's
+ * idempotency and stale-catalog rules settle it.
+ */
+describe('/book exact replay after an unknown outcome', () => {
+	/** Revision 16: a new revision whose form also changed (no more 120-minute service). */
+	function publishRevision16() {
+		const next = formFixture();
+		next.catalogRevision = 16;
+		const duration = next.sections
+			.flatMap((s) => s.fields)
+			.find((f) => f.key === 'durationMinutes');
+		if (duration?.input.type === 'INTEGER_CHOICE') {
+			duration.input.options = duration.input.options.filter((o) => o.value !== 120);
+		}
+		backend.publish(next);
+	}
+
+	/** Loads revision 15, delivers request A under key K, and ends with an unknown outcome. */
+	async function ambiguous(committed: boolean) {
+		const { data } = await loadPage();
+		backend.script(committed ? 'commit-then-drop' : 'network', 'network');
+		const failure = failureOf(await post(formData(data.submissionToken, 15, priced)));
+		expect(failure.outcome).toBe('ambiguous');
+		const delivered = backend.posts()[0]!;
+		return { key: data.submissionToken, failure, delivered };
+	}
+
+	/** Backend calls made by the retry, in order. */
+	async function retry(failure: SubmissionFailure, fields: Fields = priced) {
+		const before = backend.calls.length;
+		const outcome = await post(retryOf(failure, fields));
+		return { outcome, calls: backend.calls.slice(before) };
+	}
+
+	it('resends exactly request A under key K and gets the original receipt', async () => {
+		const { key, failure, delivered } = await ambiguous(true);
+		const { outcome, calls } = await retry(failure);
+
+		expect(outcome).toMatchObject({ redirect: '/book/received' });
+		expect(calls[0]).toMatchObject({ method: 'POST', path: '/inquiries' });
+		expect(calls[0]?.headers['idempotency-key']).toBe(key);
+		expect(calls[0]?.body).toEqual(delivered.body);
+		expect(JSON.stringify(calls[0]?.body)).toBe(JSON.stringify(delivered.body));
+		expect(backend.committed.size).toBe(1);
+	});
+
+	// The main regression this replay exists for: steps 1-7, then both backend outcomes.
+	it.each([
+		['committed earlier: the original receipt', true],
+		['never committed: stale, review under a new key', false]
+	])('replays A/K unchanged after revision 16 changed the form (%s)', async (_, committed) => {
+		const { key, failure, delivered } = await ambiguous(committed);
+		publishRevision16();
+
+		const { outcome, calls } = await retry(failure);
+
+		// No current-form rewriting before the replay: the first backend call is the POST itself.
+		expect(calls[0]).toMatchObject({ method: 'POST', path: '/inquiries' });
+		expect(calls[0]?.headers['idempotency-key']).toBe(key);
+		expect(calls[0]?.body).toEqual(delivered.body);
+		expect(calls[0]?.body).toMatchObject({ pricingInputs: { catalogRevision: 15 } });
+		expect(calls.filter((c) => c.path === '/inquiries')).toHaveLength(1);
+
+		if (committed) {
+			expect(outcome).toMatchObject({ redirect: '/book/received' });
+			expect(receiptPage()).toEqual({ receipt: backend.committed.get(key)?.receipt });
+			expect(backend.committed.size).toBe(1);
+		} else {
+			const review = failureOf(outcome);
+			expect(review.outcome).toBe('stale');
+			expect(review.refreshedForm?.catalogRevision).toBe(16);
+			expect(review.catalogRevision).toBe(16);
+			expect(review.submissionToken).not.toBe(key);
+			expect(review.replay).toBeUndefined();
+			expect(backend.committed.size).toBe(0);
+		}
+	});
+
+	it('resends A even if the visible answers were tampered with', async () => {
+		const { key, failure, delivered } = await ambiguous(false);
+		const { calls } = await retry(failure, { ...priced, guestCount: '500', name: 'Someone Else' });
+		expect(calls[0]?.headers['idempotency-key']).toBe(key);
+		expect(calls[0]?.body).toEqual(delivered.body);
+	});
+
+	it('keeps the same A/K, with only a new service token, when the replay meets a 401', async () => {
+		const { key, failure, delivered } = await ambiguous(true);
+		backend.expireTokens();
+
+		const { outcome, calls } = await retry(failure);
+
+		expect(outcome).toMatchObject({ redirect: '/book/received' });
+		const posts = calls.filter((c) => c.path === '/inquiries');
+		expect(posts).toHaveLength(2);
+		expect(posts.map((c) => c.headers['idempotency-key'])).toEqual([key, key]);
+		expect(posts.map((c) => c.body)).toEqual([delivered.body, delivered.body]);
+		expect(posts[0]?.headers.authorization).not.toBe(posts[1]?.headers.authorization);
+	});
+
+	it('stays unknown with the same command when the replay is lost again', async () => {
+		const { key, failure } = await ambiguous(false);
+		backend.script('network', 'network');
+		const again = failureOf((await retry(failure)).outcome);
+		expect(again).toMatchObject({ outcome: 'ambiguous', submissionToken: key });
+		expect(again.replay).toEqual(failure.replay);
+	});
+
+	it.each([
+		['not JSON', '{"name":'],
+		['an empty value', ''],
+		['an amount riding along', { total: '1.00' }],
+		['a property inside pricingInputs', { pricingInputs: { subtotal: '1.00' } }],
+		['an unknown event type', { eventType: 'PARADE' }],
+		['a zero guest count', { pricingInputs: { guestCount: 0 } }],
+		['a fractional duration', { pricingInputs: { durationMinutes: 120.5 } }],
+		['selections that are not lists', { pricingInputs: { selections: 'vanilla' } }],
+		['no email', { email: undefined }]
+	])('sends nothing for a replay with %s', async (_, tamper) => {
+		const { key, failure } = await ambiguous(false);
+		const request = failure.replay!.request as unknown as Record<string, unknown>;
+		const replayRequest =
+			typeof tamper === 'string'
+				? tamper
+				: JSON.stringify({
+						...request,
+						...tamper,
+						pricingInputs: {
+							...(request.pricingInputs as object),
+							...((tamper as { pricingInputs?: object }).pricingInputs ?? {})
+						}
+					});
+		const before = backend.posts().length;
+
+		const outcome = await post(
+			formData(key, 15, priced, { outcomeUnknown: 'true', replayRequest })
+		);
+
+		expect(backend.posts()).toHaveLength(before);
+		const refused = failureOf(outcome);
+		expect(refused.outcome).toBe('ambiguous');
+		expect(refused.submissionToken).toBe(key);
+		expect(refused.replay).toBeUndefined();
+		expect(refused.formError).toMatch(/couldn't safely resend your earlier request/);
+		expect(refused.restartToken).toMatch(/^[0-9a-f-]{36}$/);
+		expect(JSON.stringify(refused)).not.toMatch(/JSON|SyntaxError|Unexpected|position/);
+	});
+
+	it('sends nothing for an unresolved retry without a replay at all', async () => {
+		const { key } = await ambiguous(false);
+		const outcome = await post(formData(key, 15, priced, { outcomeUnknown: 'true' }));
+		expect(backend.posts()).toHaveLength(2);
+		expect(failureOf(outcome).formError).toMatch(/couldn't safely resend/);
+	});
+
+	it('drops the old command when the customer deliberately sends a new request', async () => {
+		const { key, failure } = await ambiguous(false);
+		const changed = { ...priced, guestCount: '90' };
+
+		const outcome = await post(
+			formData(key, 15, changed, {
+				restartToken: failure.restartToken!,
+				outcomeUnknown: 'true',
+				replayRequest: JSON.stringify(failure.replay!.request)
+			})
+		);
+
+		expect(outcome).toMatchObject({ redirect: '/book/received' });
+		const last = backend.posts().at(-1);
+		expect(last?.headers['idempotency-key']).toBe(failure.restartToken);
+		expect(last?.body).toMatchObject({ pricingInputs: { guestCount: 90 } });
 	});
 });
 
