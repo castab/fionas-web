@@ -53,7 +53,12 @@ test('submits through the server with one key and shows the receipt', async ({ p
 
 	await expect(page).toHaveURL(/\/book\/received$/);
 	await expect(receivedCard(page)).toContainText('Request received');
-	await expect(receivedCard(page)).toContainText('not a booking');
+	await expect(receivedCard(page)).toContainText("Your date isn't held");
+	await expect(receivedCard(page)).toContainText('Thanks, Jane —');
+	await expect(page.getByRole('link', { name: 'Send another inquiry' })).toHaveAttribute(
+		'href',
+		'/book'
+	);
 	expect(await attemptsFor(page, email)).toEqual([
 		{ email, key: token, token: expect.stringMatching(/^e2e-access-token-/), authorized: true }
 	]);

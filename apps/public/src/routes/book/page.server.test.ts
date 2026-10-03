@@ -133,7 +133,10 @@ async function post(data: FormData): Promise<Outcome> {
 }
 
 function receiptPage() {
-	return received.load({ cookies, setHeaders: () => {} } as never) as { receipt: unknown };
+	return received.load({ cookies, setHeaders: () => {} } as never) as {
+		receipt: unknown;
+		firstName: string | null;
+	};
 }
 
 /** "Try sending again" after an unknown outcome: the frozen answers plus the delivered request. */
@@ -303,7 +306,7 @@ describe('/book submission', () => {
 		});
 
 		const receipt = backend.committed.get(data.submissionToken)?.receipt;
-		expect(receiptPage()).toEqual({ receipt });
+		expect(receiptPage()).toEqual({ receipt, firstName: 'Jane' });
 	});
 
 	// Critical regression: definition version 11 has no plain/contact-only inquiry.
@@ -452,7 +455,8 @@ describe('/book submission', () => {
 		]);
 		expect(backend.committed.size).toBe(1);
 		expect(receiptPage()).toEqual({
-			receipt: backend.committed.get(data.submissionToken)?.receipt
+			receipt: backend.committed.get(data.submissionToken)?.receipt,
+			firstName: 'Jane'
 		});
 	});
 
@@ -488,7 +492,8 @@ describe('/book submission', () => {
 		expect(new Set(posts.map((c) => JSON.stringify(c.body))).size).toBe(1);
 		expect(backend.committed.size).toBe(1);
 		expect(receiptPage()).toEqual({
-			receipt: backend.committed.get(data.submissionToken)?.receipt
+			receipt: backend.committed.get(data.submissionToken)?.receipt,
+			firstName: 'Jane'
 		});
 	});
 
@@ -626,7 +631,8 @@ describe('/book submission', () => {
 			expect(await post(retryOf(failure))).toMatchObject({ redirect: '/book/received' });
 			expect(backend.committed.size).toBe(1);
 			expect(receiptPage()).toEqual({
-				receipt: backend.committed.get(data.submissionToken)?.receipt
+				receipt: backend.committed.get(data.submissionToken)?.receipt,
+				firstName: 'Jane'
 			});
 		});
 
@@ -935,7 +941,10 @@ describe('/book exact replay after an unknown outcome', () => {
 
 		if (committed) {
 			expect(outcome).toMatchObject({ redirect: '/book/received' });
-			expect(receiptPage()).toEqual({ receipt: backend.committed.get(key)?.receipt });
+			expect(receiptPage()).toEqual({
+				receipt: backend.committed.get(key)?.receipt,
+				firstName: 'Jane'
+			});
 			expect(backend.committed.size).toBe(1);
 		} else {
 			const review = failureOf(outcome);
@@ -1108,6 +1117,22 @@ describe('/book with a reused key (IDEMPOTENCY_KEY_REUSED)', () => {
 });
 
 describe('/book/received', () => {
+	it('reads a receipt stored without a first name', () => {
+		const receipt = { id: 'inq-1', createdAt: '2026-10-03T21:14:00Z' };
+		cookies.set('fionas_inquiry_receipt', JSON.stringify(receipt), { path: '/book' });
+		expect(receiptPage()).toEqual({ receipt, firstName: null });
+	});
+
+	it('keeps only a short first name from the stored one', () => {
+		const receipt = { id: 'inq-1', createdAt: '2026-10-03T21:14:00Z' };
+		cookies.set(
+			'fionas_inquiry_receipt',
+			JSON.stringify({ ...receipt, firstName: `  ${'a'.repeat(60)} b` }),
+			{ path: '/book' }
+		);
+		expect(receiptPage()).toEqual({ receipt, firstName: 'a'.repeat(40) });
+	});
+
 	it('sends a visitor without a receipt back to the form', () => {
 		try {
 			receiptPage();
