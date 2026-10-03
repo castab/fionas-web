@@ -37,7 +37,7 @@ npm run dev:admin    # admin on http://localhost:5174
 ## Booking form & backend
 
 `/book` is an inquiry form driven by the `fionas-commerce` API (`GET /inquiry-form`,
-`POST /estimate-preview`, `POST /inquiries`). The backend sends no CORS headers, so the public app
+`POST /inquiries`). The backend sends no CORS headers, so the public app
 calls it server-side only. Copy `apps/public/.env.example` to `apps/public/.env` (git-ignored; restart the dev server after editing) to configure:
 
 | Variable                      | Default                 | Purpose                                                                                                            |
@@ -54,11 +54,12 @@ shows its "unavailable" page and the server log says why). Keep them only in the
 read through SvelteKit's private env in `src/lib/server/`, so they cannot be bundled into the
 browser.
 
-While `BOOKING_ENABLED` is off, `/book` (page, form action and estimate endpoint) returns 404. E2E tests use a stub API, so they need no running backend.
+While `BOOKING_ENABLED` is off, `/book` (page and form action) returns 404. E2E tests use a stub API, so they need no running backend.
 
 Every inquiry is a request for configured ice cream service: the form won't send until guest
 count, duration and the required flavor/topping/cone choices are complete, and the backend prices
-each accepted inquiry into its initial Estimate. The estimate shown while filling in is advisory.
+each accepted inquiry into its initial Estimate. The estimate shown while filling in is computed in the browser from the form and is display
+only; the backend prices the submitted selections itself.
 
 Each rendered form carries one non-secret submission token, which the server sends as
 `POST /inquiries`' `Idempotency-Key` for every delivery and retry of that submission, so double
@@ -73,7 +74,7 @@ never with a static key:
 
 ```
 browser
-  │  same-origin requests only (/book, /book/estimate); receives no credential or token
+  │  same-origin requests only (/book); receives no credential or token
   ▼
 apps/public SvelteKit server (src/lib/server/)
   │  COMMERCE_SERVICE_ID + COMMERCE_SERVICE_CREDENTIAL (private deployment env)
@@ -82,9 +83,12 @@ POST /auth/service/token  →  short-lived access token (15 min by default), kep
   │  Authorization: Bearer <access token>
   ▼
 fionas-commerce  →  SERVICE:fionas-web  →  role fionas.web  →  fionas.inquiry-form.read
-                                                               fionas.estimate-preview.create
+                                                               fionas.estimate-preview.create*
                                                                fionas.inquiries.create
 ```
+
+\* The role still grants it, but the site no longer calls `POST /estimate-preview`: the estimate is
+computed in the browser.
 
 Three different secrets are involved, and they are never interchangeable:
 
@@ -159,7 +163,7 @@ The login is sent with an `Origin` header, which must be a trusted origin on the
 the backend URL's own origin, and `--origin` overrides it.
 
 **Rotation (no downtime, no backend restart).** With credential A active: create credential B
-(run the script again; it adds B and leaves A working), deploy B to apps/public, verify that `/book` loads, previews an estimate and submits, then
+(run the script again; it adds B and leaves A working), deploy B to apps/public, verify that `/book` loads and submits, then
 revoke A (`DELETE /admin/access/services/{serviceId}/credentials/{credentialId}`). Tokens A already
 bought stay valid until their configured expiry (15 minutes by default); that is expected. After a suspected
 compromise, also disable the service (`PUT /admin/access/services/{serviceId}/status`) until that
@@ -182,7 +186,7 @@ lifetime has passed.
    `COMMERCE_*` variables there) and run `npm run dev`. Never copy an access token anywhere: the
    app obtains its own.
 4. Visit `http://localhost:5173/book`: the form loads, choosing guests, duration and flavors shows
-   the estimate (the authoritative preview replaces the instant one), and sending shows
+   the estimate (computed in the browser), and sending shows
    "Request received" with a reference.
 5. Confirm in the backend, as the bootstrap administrator (sign in at `POST /auth/login`, then send
    the session cookie and an `Origin` header), that the inquiry and its Estimate v1 exist:

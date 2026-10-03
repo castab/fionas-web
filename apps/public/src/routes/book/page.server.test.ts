@@ -37,6 +37,12 @@ const priced: Fields = {
 	guestCount: '75',
 	durationMinutes: '120',
 	'offering:soft-serve-flavor': ['vanilla', 'horchata'],
+	'offering:hand-scooped-flavor': [
+		'hand-scooped-chocolate-chip',
+		'hand-scooped-chocolate',
+		'hand-scooped-vanilla-bean',
+		'hand-scooped-strawberry'
+	],
 	'offering:topping': ['sprinkles', 'oreos', 'strawberries', 'brownies'],
 	'offering:cone-option': 'waffle-cone',
 	message: '  Backyard birthday  '
@@ -127,7 +133,10 @@ async function post(data: FormData): Promise<Outcome> {
 }
 
 function receiptPage() {
-	return received.load({ cookies, setHeaders: () => {} } as never) as { receipt: unknown };
+	return received.load({ cookies, setHeaders: () => {} } as never) as {
+		receipt: unknown;
+		firstName: string | null;
+	};
 }
 
 /** "Try sending again" after an unknown outcome: the frozen answers plus the delivered request. */
@@ -176,9 +185,9 @@ describe('/book load', () => {
 		expectNoSecrets(data);
 	});
 
-	it('renders the version 7 definition as sent, service section required', async () => {
+	it('renders the version 11 definition as sent, service section required', async () => {
 		const { data } = await loadPage();
-		expect(data.form?.definitionVersion).toBe(7);
+		expect(data.form?.definitionVersion).toBe(11);
 		expect(data.form?.sections.map((s) => [s.key, s.optional])).toEqual([
 			['contact', false],
 			['event', false],
@@ -228,6 +237,32 @@ describe('/book load', () => {
 });
 
 describe('/book submission', () => {
+	it.each([
+		{ picks: [] },
+		{ picks: ['hand-scooped-chocolate'] },
+		{
+			picks: [
+				'hand-scooped-chocolate-chip',
+				'hand-scooped-chocolate',
+				'hand-scooped-vanilla-bean',
+				'hand-scooped-strawberry',
+				'hand-scooped-mint-chip'
+			]
+		}
+	])('rejects incomplete or excessive hand-scooped selections ($picks)', async ({ picks }) => {
+		const { data } = await loadPage();
+		const failure = failureOf(
+			await post(
+				formData(data.submissionToken, 15, {
+					...priced,
+					'offering:hand-scooped-flavor': picks
+				})
+			)
+		);
+		expect(failure.outcome).toBe('invalid');
+		expect(failure.errors?.['offering:hand-scooped-flavor']).toMatch(/Choose (?:no more than )?4/);
+		expect(backend.posts()).toHaveLength(0);
+	});
 	it('sends the priced intent with the service token and the page token, then shows the receipt', async () => {
 		const { data } = await loadPage();
 		const outcome = await post(formData(data.submissionToken, 15, priced));
@@ -254,6 +289,16 @@ describe('/book submission', () => {
 				durationMinutes: 120,
 				selections: [
 					{ category: 'soft-serve-flavor', offerings: ['vanilla', 'horchata'] },
+
+					{
+						category: 'hand-scooped-flavor',
+						offerings: [
+							'hand-scooped-chocolate-chip',
+							'hand-scooped-chocolate',
+							'hand-scooped-vanilla-bean',
+							'hand-scooped-strawberry'
+						]
+					},
 					{ category: 'topping', offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies'] },
 					{ category: 'cone-option', offerings: ['waffle-cone'] }
 				]
@@ -261,10 +306,10 @@ describe('/book submission', () => {
 		});
 
 		const receipt = backend.committed.get(data.submissionToken)?.receipt;
-		expect(receiptPage()).toEqual({ receipt });
+		expect(receiptPage()).toEqual({ receipt, firstName: 'Jane' });
 	});
 
-	// Critical regression: definition version 7 has no plain/contact-only inquiry.
+	// Critical regression: definition version 11 has no plain/contact-only inquiry.
 	it('refuses a contact-only submission and sends nothing', async () => {
 		const { data } = await loadPage();
 		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
@@ -279,6 +324,7 @@ describe('/book submission', () => {
 			'durationMinutes',
 			'guestCount',
 			'offering:cone-option',
+			'offering:hand-scooped-flavor',
 			'offering:soft-serve-flavor',
 			'offering:topping'
 		]);
@@ -360,6 +406,7 @@ describe('/book submission', () => {
 		expect(Object.keys(failure.errors ?? {}).sort()).toEqual([
 			'durationMinutes',
 			'offering:cone-option',
+			'offering:hand-scooped-flavor',
 			'offering:soft-serve-flavor',
 			'offering:topping'
 		]);
@@ -408,7 +455,8 @@ describe('/book submission', () => {
 		]);
 		expect(backend.committed.size).toBe(1);
 		expect(receiptPage()).toEqual({
-			receipt: backend.committed.get(data.submissionToken)?.receipt
+			receipt: backend.committed.get(data.submissionToken)?.receipt,
+			firstName: 'Jane'
 		});
 	});
 
@@ -444,7 +492,8 @@ describe('/book submission', () => {
 		expect(new Set(posts.map((c) => JSON.stringify(c.body))).size).toBe(1);
 		expect(backend.committed.size).toBe(1);
 		expect(receiptPage()).toEqual({
-			receipt: backend.committed.get(data.submissionToken)?.receipt
+			receipt: backend.committed.get(data.submissionToken)?.receipt,
+			firstName: 'Jane'
 		});
 	});
 
@@ -582,7 +631,8 @@ describe('/book submission', () => {
 			expect(await post(retryOf(failure))).toMatchObject({ redirect: '/book/received' });
 			expect(backend.committed.size).toBe(1);
 			expect(receiptPage()).toEqual({
-				receipt: backend.committed.get(data.submissionToken)?.receipt
+				receipt: backend.committed.get(data.submissionToken)?.receipt,
+				firstName: 'Jane'
 			});
 		});
 
@@ -743,7 +793,7 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 
 		expect(failure.outcome).toBe('stale');
 		expect(failure.answers?.values.durationMinutes).toBe('');
-		expect(failure.reviewFields).toEqual(['How long would you like service?']);
+		expect(failure.reviewFields).toEqual(["How long are we scoopin'?"]);
 		expect(failure.submissionToken).not.toBe(data.submissionToken);
 		expect(backend.posts()).toHaveLength(0);
 	});
@@ -766,7 +816,7 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 		});
 		expect(outcome.outcome).toBe('stale');
 		expect(outcome.refreshedForm?.catalogRevision).toBe(16);
-		expect(outcome.reviewFields).toEqual(['How long would you like service?']);
+		expect(outcome.reviewFields).toEqual(["How long are we scoopin'?"]);
 		expect(outcome.submissionToken).not.toBe(data.submissionToken);
 		expect(outcome.replay).toBeUndefined();
 	});
@@ -891,7 +941,10 @@ describe('/book exact replay after an unknown outcome', () => {
 
 		if (committed) {
 			expect(outcome).toMatchObject({ redirect: '/book/received' });
-			expect(receiptPage()).toEqual({ receipt: backend.committed.get(key)?.receipt });
+			expect(receiptPage()).toEqual({
+				receipt: backend.committed.get(key)?.receipt,
+				firstName: 'Jane'
+			});
 			expect(backend.committed.size).toBe(1);
 		} else {
 			const review = failureOf(outcome);
@@ -1064,6 +1117,22 @@ describe('/book with a reused key (IDEMPOTENCY_KEY_REUSED)', () => {
 });
 
 describe('/book/received', () => {
+	it('reads a receipt stored without a first name', () => {
+		const receipt = { id: 'inq-1', createdAt: '2026-10-03T21:14:00Z' };
+		cookies.set('fionas_inquiry_receipt', JSON.stringify(receipt), { path: '/book' });
+		expect(receiptPage()).toEqual({ receipt, firstName: null });
+	});
+
+	it('keeps only a short first name from the stored one', () => {
+		const receipt = { id: 'inq-1', createdAt: '2026-10-03T21:14:00Z' };
+		cookies.set(
+			'fionas_inquiry_receipt',
+			JSON.stringify({ ...receipt, firstName: `  ${'a'.repeat(60)} b` }),
+			{ path: '/book' }
+		);
+		expect(receiptPage()).toEqual({ receipt, firstName: 'a'.repeat(40) });
+	});
+
 	it('sends a visitor without a receipt back to the form', () => {
 		try {
 			receiptPage();

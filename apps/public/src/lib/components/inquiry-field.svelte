@@ -83,8 +83,6 @@
 		return [field.description, extra, short].filter(Boolean).join(' ') || undefined;
 	});
 
-	const UNAVAILABLE_NOTE = 'Unavailable — check back later';
-
 	/** Browser autofill hints for the common contact questions. */
 	function autocompleteFor(key: string, type: string) {
 		if (type === 'EMAIL') return 'email';
@@ -134,18 +132,17 @@
 					{unavailable}
 					disabled={!checked && (unavailable || (atMax && !single))}
 					label={option.displayName}
-					meta={unavailable
-						? UNAVAILABLE_NOTE
-						: option.price
-							? formatOfferingPrice(option.price)
-							: undefined}
+					meta={option.price ? formatOfferingPrice(option.price) : undefined}
+					badge={option.badge ?? undefined}
+					statusNote={option.statusNote ?? undefined}
+					infoNote={option.infoNote ?? undefined}
 					title={option.description ?? undefined}
 					onchange={(e) => toggle(option, e.currentTarget.checked, single)}
 				/>
 			{/each}
 		</div>
 	</Field>
-{:else if input.type === 'INTEGER_CHOICE' && input.options.length <= MAX_CHIP_OPTIONS}
+{:else if (input.type === 'INTEGER_CHOICE' || input.type === 'STRING_CHOICE') && (control === 'CHIPS' || (input.type === 'INTEGER_CHOICE' && input.options.length <= MAX_CHIP_OPTIONS))}
 	<Field
 		class={className}
 		label={field.label}
@@ -162,6 +159,9 @@
 					value={String(option.value)}
 					checked={text === String(option.value)}
 					label={option.label}
+					badge={option.badge}
+					statusNote={option.statusNote}
+					infoNote={option.infoNote}
 					onchange={() => setText(String(option.value))}
 				/>
 			{/each}

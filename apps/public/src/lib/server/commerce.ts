@@ -4,10 +4,9 @@ import {
 	pricingContractProblem,
 	type ApiError,
 	type CreateInquiryRequest,
-	type InquiryForm,
-	type PricingInputs
+	type InquiryForm
 } from '@fionas/shared';
-import { isEstimatePreview, isInquiryForm } from './commerce-shapes.js';
+import { isInquiryForm } from './commerce-shapes.js';
 import { createServiceTokenSource } from './service-auth.js';
 
 /*
@@ -15,7 +14,7 @@ import { createServiceTokenSource } from './service-auth.js';
  * browser never talks to it directly: pages, form actions and endpoints call these helpers instead.
  * See docs/public-inquiry-submission.md.
  *
- * The public endpoints (/inquiry-form, /estimate-preview, POST /inquiries) are called as
+ * The public endpoints (/inquiry-form, POST /inquiries) are called as
  * SERVICE:fionas-web, with a short-lived access token from `service-auth.ts` sent as
  * `Authorization: Bearer`. The service credential it is bought with comes from private env
  * (COMMERCE_SERVICE_ID, COMMERCE_SERVICE_CREDENTIAL); neither it nor the token is ever logged,
@@ -309,19 +308,6 @@ export function createCommerceClient(config: CommerceClientConfig) {
 		return result;
 	}
 
-	/** POST /estimate-preview: authoritative pricing that writes nothing. */
-	async function previewEstimate(pricingInputs: PricingInputs) {
-		return shaped(
-			await request('/estimate-preview', {
-				method: 'POST',
-				json: pricingInputs,
-				permission: 'fionas.estimate-preview.create'
-			}),
-			isEstimatePreview,
-			'POST /estimate-preview'
-		);
-	}
-
 	/**
 	 * POST /inquiries with the logical submission's `Idempotency-Key`. The caller owns the key: it
 	 * names one visible submission and must be the same for every delivery of it. A failure that
@@ -368,7 +354,7 @@ export function createCommerceClient(config: CommerceClientConfig) {
 		return result;
 	}
 
-	return { getInquiryForm, previewEstimate, createInquiry };
+	return { getInquiryForm, createInquiry };
 }
 
 export type CommerceClient = ReturnType<typeof createCommerceClient>;
@@ -406,9 +392,6 @@ export function resetCommerceClient(): void {
 
 export const getInquiryForm: CommerceClient['getInquiryForm'] = (options) =>
 	commerce().getInquiryForm(options);
-
-export const previewEstimate: CommerceClient['previewEstimate'] = (pricingInputs) =>
-	commerce().previewEstimate(pricingInputs);
 
 export const createInquiry: CommerceClient['createInquiry'] = (inquiry, idempotencyKey) =>
 	commerce().createInquiry(inquiry, idempotencyKey);

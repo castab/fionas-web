@@ -26,7 +26,7 @@ export const actions: Actions = {
 		const result = await submitInquiry(await request.formData());
 		if (!result.ok) return fail(result.status, result.failure);
 
-		storeReceipt(cookies, url, result.receipt);
+		storeReceipt(cookies, url, result.receipt, result.firstName);
 		redirect(303, '/book/received');
 	}
 };

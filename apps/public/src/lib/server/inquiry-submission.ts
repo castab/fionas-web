@@ -38,7 +38,8 @@ export const newSubmissionToken = (): string => crypto.randomUUID();
 const MAX_REPLAY_LENGTH = 32_768;
 
 export type SubmitResult =
-	{ ok: true; receipt: InquiryReceipt } | { ok: false; status: number; failure: SubmissionFailure };
+	| { ok: true; receipt: InquiryReceipt; firstName: string | null }
+	| { ok: false; status: number; failure: SubmissionFailure };
 
 /** Visitor-facing copy for a refused POST /inquiries. Never echoes the server's diagnostic text. */
 function rejectionMessage(error: ApiError): string {
@@ -255,7 +256,7 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 	// is what goes back to the page (`replay`) and what a retry resends.
 	const request = command.request;
 	const result = await createInquiry(request, token);
-	if (result.ok) return { ok: true, receipt: result.data };
+	if (result.ok) return { ok: true, receipt: result.data, firstName: firstNameOf(request.name) };
 	return settle(
 		result.error,
 		{ data, token, request, failed: failed(revision), replaying: false },
@@ -285,7 +286,7 @@ async function replaySubmission(
 		});
 	}
 	const result = await createInquiry(request, token);
-	if (result.ok) return { ok: true, receipt: result.data };
+	if (result.ok) return { ok: true, receipt: result.data, firstName: firstNameOf(request.name) };
 	return settle(
 		result.error,
 		{
@@ -303,13 +304,28 @@ async function replaySubmission(
 
 /**
  * After a 201 the receipt rides in a short-lived, HttpOnly cookie to /book/received (post/redirect/
- * get), so reloading or navigating never re-posts the form.
+ * get), so reloading or navigating never re-posts the form. It also carries the customer's first
+ * name for the greeting; nothing else from the request.
  */
 const RECEIPT_COOKIE = 'fionas_inquiry_receipt';
 const RECEIPT_MAX_AGE = 60 * 60;
+const MAX_FIRST_NAME_LENGTH = 40;
 
-export function storeReceipt(cookies: Cookies, url: URL, receipt: InquiryReceipt): void {
-	cookies.set(RECEIPT_COOKIE, JSON.stringify(receipt), {
+/** The first word of the name the customer gave, for "Thanks, Maria". */
+export function firstNameOf(name: string): string | null {
+	const first = name.trim().split(/\s+/)[0]?.slice(0, MAX_FIRST_NAME_LENGTH);
+	return first || null;
+}
+
+export type StoredReceipt = { receipt: InquiryReceipt; firstName: string | null };
+
+export function storeReceipt(
+	cookies: Cookies,
+	url: URL,
+	receipt: InquiryReceipt,
+	firstName: string | null
+): void {
+	cookies.set(RECEIPT_COOKIE, JSON.stringify({ ...receipt, firstName }), {
 		path: '/book',
 		httpOnly: true,
 		sameSite: 'lax',
@@ -318,14 +334,16 @@ export function storeReceipt(cookies: Cookies, url: URL, receipt: InquiryReceipt
 	});
 }
 
-export function readReceipt(cookies: Cookies): InquiryReceipt | null {
+export function readReceipt(cookies: Cookies): StoredReceipt | null {
 	const raw = cookies.get(RECEIPT_COOKIE);
 	if (!raw) return null;
 	try {
-		const value = JSON.parse(raw) as Partial<InquiryReceipt>;
-		return typeof value.id === 'string' && typeof value.createdAt === 'string'
-			? { id: value.id, createdAt: value.createdAt }
-			: null;
+		const value = JSON.parse(raw) as Partial<InquiryReceipt> & { firstName?: unknown };
+		if (typeof value.id !== 'string' || typeof value.createdAt !== 'string') return null;
+		return {
+			receipt: { id: value.id, createdAt: value.createdAt },
+			firstName: typeof value.firstName === 'string' ? firstNameOf(value.firstName) : null
+		};
 	} catch {
 		return null;
 	}

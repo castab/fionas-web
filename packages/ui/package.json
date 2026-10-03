@@ -22,6 +22,7 @@
 		"svelte": "^5.56.1"
 	},
 	"dependencies": {
+		"bits-ui": "^2.19.5",
 		"cn": "^0.3.2",
 		"tailwind-variants": "^3.3.1"
 	},

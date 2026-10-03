@@ -4,7 +4,6 @@ import {
 	TEST_BASE_URL,
 	TEST_SERVICE_CREDENTIAL,
 	TEST_SERVICE_ID,
-	estimateFixture,
 	fakeCommerce,
 	formFixture,
 	type FakeCommerce
@@ -18,7 +17,6 @@ const {
 	createInquiry,
 	getInquiryForm,
 	isOutcomeUnknown,
-	previewEstimate,
 	resetCommerceClient
 } = await import('./commerce.js');
 
@@ -352,49 +350,6 @@ describe('getInquiryForm', () => {
 	});
 });
 
-describe('previewEstimate', () => {
-	const pricing = inquiry.pricingInputs;
-
-	it('posts the pricing inputs with the service token and returns the backend figures', async () => {
-		const result = await previewEstimate(pricing);
-		expect(result).toEqual({ ok: true, data: estimateFixture() });
-		expect(backend.calls[0]).toMatchObject({
-			method: 'POST',
-			path: '/estimate-preview',
-			headers: {
-				authorization: `Bearer ${backend.tokens()[0]}`,
-				'content-type': 'application/json'
-			},
-			body: pricing
-		});
-		// Previews write nothing and need no Idempotency-Key.
-		expect(backend.calls[0]?.headers['idempotency-key']).toBeUndefined();
-	});
-
-	it('fails closed on figures outside the documented shape', async () => {
-		answerEvery(() => Response.json({ total: 12.5 }));
-		expect(await previewEstimate(pricing)).toMatchObject({
-			ok: false,
-			error: { kind: 'unexpected' }
-		});
-	});
-
-	it('keeps validation violation codes', async () => {
-		backend.script({
-			status: 422,
-			body: {
-				code: 'validation_failed',
-				message: 'diagnostic',
-				violations: [{ code: 'TOO_MANY_SELECTIONS' }]
-			}
-		});
-		expect(await previewEstimate(pricing)).toMatchObject({
-			ok: false,
-			error: { kind: 'validation', violations: ['TOO_MANY_SELECTIONS'] }
-		});
-	});
-});
-
 describe('service authentication', () => {
 	let clock: number;
 
@@ -411,7 +366,6 @@ describe('service authentication', () => {
 		});
 	}
 
-	const pricing = inquiry.pricingInputs;
 	const bearers = () => backend.calls.map((c) => c.headers.authorization);
 
 	it('acquires a token lazily, on the first protected call', async () => {
@@ -426,7 +380,7 @@ describe('service authentication', () => {
 	it('reuses the token across sequential calls', async () => {
 		const commerce = client();
 		await commerce.getInquiryForm();
-		await commerce.previewEstimate(pricing);
+		await commerce.getInquiryForm();
 		await commerce.createInquiry(inquiry, KEY);
 		expect(backend.exchanges).toHaveLength(1);
 		expect(new Set(bearers())).toEqual(new Set(['Bearer test-access-token-1']));
@@ -437,8 +391,7 @@ describe('service authentication', () => {
 		const results = await Promise.all([
 			commerce.getInquiryForm(),
 			commerce.getInquiryForm(),
-			commerce.previewEstimate(pricing),
-			commerce.previewEstimate(pricing),
+			commerce.getInquiryForm(),
 			commerce.createInquiry(inquiry, KEY)
 		]);
 		expect(results.every((r) => r.ok)).toBe(true);
@@ -498,7 +451,7 @@ describe('service authentication', () => {
 
 	it('does not let a slow 401 discard a newer token another request installed', async () => {
 		let release!: () => void;
-		let hold: Promise<void> | null = new Promise((resolve) => (release = resolve));
+		let hold: Promise<void> | null = null;
 		const commerce = client(async (input, init) => {
 			const response = await backend.fetch(input, init);
 			// Request A's first answer (a 401 for the expired token) arrives late.
@@ -509,22 +462,27 @@ describe('service authentication', () => {
 			}
 			return response;
 		});
-		await commerce.previewEstimate(pricing);
+		await commerce.getInquiryForm();
 		backend.expireTokens();
+		hold = new Promise((resolve) => (release = resolve));
 
 		const a = commerce.getInquiryForm();
 		// Request B also gets a 401, refreshes, and installs token 2.
-		expect((await commerce.previewEstimate(pricing)).ok).toBe(true);
+		expect((await commerce.createInquiry(inquiry, KEY)).ok).toBe(true);
 		expect(backend.tokens()).toEqual(['test-access-token-1', 'test-access-token-2']);
 		release();
 		expect((await a).ok).toBe(true);
 
 		// A's late 401 named token 1, so token 2 survived: A retried with it, and so does C.
-		await commerce.previewEstimate(pricing);
+		await commerce.createInquiry(inquiry, KEY);
 		expect(backend.exchanges).toHaveLength(2);
 		expect(
 			backend.calls.filter((c) => c.path === '/inquiry-form').map((c) => c.headers.authorization)
-		).toEqual(['Bearer test-access-token-1', 'Bearer test-access-token-2']);
+		).toEqual([
+			'Bearer test-access-token-1',
+			'Bearer test-access-token-1',
+			'Bearer test-access-token-2'
+		]);
 		expect(bearers().at(-1)).toBe('Bearer test-access-token-2');
 	});
 
@@ -533,11 +491,6 @@ describe('service authentication', () => {
 			'GET /inquiry-form',
 			'fionas.inquiry-form.read',
 			(c: ReturnType<typeof client>) => c.getInquiryForm()
-		],
-		[
-			'POST /estimate-preview',
-			'fionas.estimate-preview.create',
-			(c: ReturnType<typeof client>) => c.previewEstimate(pricing)
 		],
 		[
 			'POST /inquiries',

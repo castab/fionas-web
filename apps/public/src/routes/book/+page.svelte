@@ -152,7 +152,7 @@
 	const isCompact = (field: InquiryFormField) =>
 		field.presentation.control === 'TEXT' ||
 		field.presentation.control === 'DATE' ||
-		field.input.type === 'STRING_CHOICE';
+		(field.input.type === 'STRING_CHOICE' && field.presentation.control !== 'CHIPS');
 
 	const listOf = (names: string[]) =>
 		names.length < 2

@@ -27,7 +27,13 @@ export type OfferingOption = {
 	price?: OfferingPrice;
 	selectionState: 'ENABLED' | 'DISABLED';
 	availability: 'AVAILABLE' | 'UNAVAILABLE';
+	badge?: string | null;
+	statusNote?: string | null;
+	infoNote?: string | null;
 };
+
+/** Optional presentation text for code-owned integer and string choices. */
+export type ChoiceMetadata = { badge?: string; statusNote?: string; infoNote?: string };
 
 /** Whether a customer may pick this option right now (enabled and available). */
 export const isSelectable = (option: OfferingOption): boolean =>
@@ -36,11 +42,11 @@ export const isSelectable = (option: OfferingOption): boolean =>
 export type InquiryInput =
 	| { type: 'TEXT'; minLength: number; maxLength: number; pattern?: string }
 	| { type: 'DATE'; format: string }
-	| { type: 'STRING_CHOICE'; options: { value: string; label: string }[] }
+	| { type: 'STRING_CHOICE'; options: ({ value: string; label: string } & ChoiceMetadata)[] }
 	| { type: 'EMAIL'; maxLength: number }
 	| { type: 'INTEGER'; minimum: number }
 	| { type: 'BOOLEAN'; defaultValue: boolean }
-	| { type: 'INTEGER_CHOICE'; options: { value: number; label: string }[] }
+	| { type: 'INTEGER_CHOICE'; options: ({ value: number; label: string } & ChoiceMetadata)[] }
 	| {
 			type: 'OFFERING_CHOICE';
 			category: string;
@@ -50,7 +56,15 @@ export type InquiryInput =
 	  };
 
 export type InquiryControl =
-	'TEXT' | 'TEXTAREA' | 'NUMBER' | 'CHECKBOX' | 'SELECT' | 'CARDS' | 'CHECKBOXES' | 'DATE';
+	| 'TEXT'
+	| 'TEXTAREA'
+	| 'NUMBER'
+	| 'CHECKBOX'
+	| 'SELECT'
+	| 'CARDS'
+	| 'CHECKBOXES'
+	| 'DATE'
+	| 'CHIPS';
 
 export type InquiryFormField = {
 	key: string;
@@ -77,6 +91,8 @@ export type DurationPricing = {
 	baseServiceAmount: string;
 	/** Flat amounts for PER_DURATION offerings at this duration; add only the selected ones. */
 	offeringContributions: { offeringKey: string; amount: string }[];
+	/** Presentation only: the base-service line's subtext at this duration. */
+	baseServiceSubDescription?: string | null;
 };
 
 /** Facts for instant, advisory browser arithmetic. Never submitted; the server prices for real. */
@@ -91,7 +107,15 @@ export type InquiryPricingPreview = {
 		category: string;
 		includedSelections: number;
 		additionalSelectionPerGuestAmount: string;
+		/** Presentation only: the extra-toppings line's name (the UI appends the count). */
+		description?: string | null;
+		/** Presentation only: the extra-toppings line's subtext. */
+		subDescription?: string | null;
 	};
+	/** Presentation only: the base-service line's name. */
+	baseServiceDescription?: string | null;
+	/** Presentation only: the per-guest ice cream service line's name. */
+	perGuestDescription?: string | null;
 };
 
 export type InquiryForm = {
@@ -107,7 +131,7 @@ export type InquiryForm = {
  * The question-definition version this UI was built against (GET /inquiry-form). From version 7 the
  * service section is required: every inquiry is a request for configured ice cream service.
  */
-export const EXPECTED_DEFINITION_VERSION = 7;
+export const EXPECTED_DEFINITION_VERSION = 11;
 
 export type PricingSelection = { category: string; offerings: string[] };
 
@@ -576,8 +600,8 @@ export function draftPricingInputs(
 }
 
 /**
- * Complete `pricingInputs` for POST /estimate-preview: null until every pricing question has a
- * valid answer.
+ * Complete `pricingInputs` (the service is fully configured): null until every pricing question has
+ * a valid answer.
  */
 export function completePricingInputs(
 	form: InquiryForm,

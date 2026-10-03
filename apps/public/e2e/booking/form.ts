@@ -53,13 +53,25 @@ export async function fillContact(page: Page, email: string) {
 /** Guest count and service length: enough for an "estimate so far". */
 export async function fillBasics(page: Page, guests = '75') {
 	await page.getByLabel('How many guests?').fill(guests);
-	await page.getByRole('radio', { name: '120 minutes' }).check();
+	await page.getByRole('radio', { name: '2 hours' }).check();
+}
+
+export async function fillHandScooped(page: Page) {
+	const group = page.getByRole('group', { name: /Choose your hand-scooped flavors/ });
+	for (const name of ['Chocolate Chip', 'Chocolate', 'Vanilla Bean', 'Strawberry']) {
+		await group
+			.getByRole('checkbox', {
+				name: new RegExp('^Hand-scooped ' + name + '(?: Crowd favorite| ·|$)')
+			})
+			.check();
+	}
 }
 
 export async function fillService(page: Page, guests = '75') {
 	await fillBasics(page, guests);
-	await page.getByRole('checkbox', { name: 'Vanilla' }).check();
+	await page.getByRole('checkbox', { name: 'Vanilla', exact: true }).check();
 	await page.getByRole('checkbox', { name: 'Horchata' }).check();
+	await fillHandScooped(page);
 	for (const topping of ['sprinkles', 'oreos', 'strawberries', 'brownies']) {
 		await page.getByRole('checkbox', { name: topping }).check();
 	}

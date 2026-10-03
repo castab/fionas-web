@@ -1,5 +1,5 @@
 // Minimal stand-in for the fionas-commerce API so e2e needs no real backend. Serves fixtures
-// captured from the real service, models SERVICE authentication and the POST /inquiries
+// aligned with the current contract, models SERVICE authentication and the POST /inquiries
 // idempotency contract, and records what the app sent for assertions. A behavioral stub: tokens
 // are opaque random strings, not JWTs, and nothing here is a real credential.
 import { createServer } from 'node:http';
@@ -196,23 +196,6 @@ createServer(async (req, res) => {
 		return send(res, 200, fresh ? nextForm : currentForm, {
 			'cache-control': 'private, max-age=60, must-revalidate'
 		});
-	}
-	if (req.method === 'POST' && pathname === '/estimate-preview') {
-		if (!bearerOf(req)) return unauthenticated(res);
-		// Test hooks: these guest counts simulate an outage / a missing permission / a rejection.
-		const body = await readJson(req);
-		if (body?.guestCount === 503) {
-			return send(res, 503, {
-				code: 'internal_failure',
-				message: 'The request could not be completed'
-			});
-		}
-		if (body?.guestCount === 403) return forbidden(res);
-		if (body?.guestCount === 422) {
-			return send(res, 422, { code: 'validation_failed', message: 'Cannot be estimated' });
-		}
-		if (offeringViolation(body)) return unavailableOffering(res);
-		return send(res, 200, fixture('estimate-preview.json'));
 	}
 	if (req.method === 'POST' && pathname === '/inquiries') {
 		const body = await readJson(req);

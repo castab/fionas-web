@@ -5,8 +5,8 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ cookies, setHeaders }) => {
 	assertBookingEnabled();
-	const receipt = readReceipt(cookies);
-	if (!receipt) redirect(303, '/book');
+	const stored = readReceipt(cookies);
+	if (!stored) redirect(303, '/book');
 	setHeaders({ 'cache-control': 'private, no-store' });
-	return { receipt };
+	return stored;
 };

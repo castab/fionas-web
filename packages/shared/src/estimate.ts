@@ -9,9 +9,10 @@ import {
 } from './inquiry.ts';
 
 /*
- * Instant, advisory estimate computed in the browser from GET /inquiry-form's `pricingPreview`.
- * It follows the server's documented arithmetic but is never submitted: POST /estimate-preview
- * and POST /inquiries price independently, and their figures win whenever they are available.
+ * Advisory estimate computed in the browser from GET /inquiry-form's `pricingPreview`: the only
+ * estimate the page shows. It follows the server's documented arithmetic but is display only, never
+ * submitted or compared: POST /inquiries prices the submitted selections independently. Line
+ * wording comes from `pricingPreview` when the backend supplies it, otherwise from the defaults here.
  */
 
 // Amounts are exact decimals in strings; do the sums in scaled integers so nothing drifts.
@@ -72,6 +73,24 @@ function findOffering(
 	return undefined;
 }
 
+/** Backend-supplied wording, or undefined when it is absent, null or blank. */
+const text = (value: string | null | undefined): string | undefined => value?.trim() || undefined;
+
+/** The duration question's own label for this choice (e.g. "1½ hours"), as the chips show it. */
+function durationLabel(form: InquiryForm, minutes: number): string | undefined {
+	for (const section of form.sections) {
+		for (const field of section.fields) {
+			if (
+				field.submissionPointer === '/pricingInputs/durationMinutes' &&
+				field.input.type === 'INTEGER_CHOICE'
+			) {
+				return text(field.input.options.find((o) => o.value === minutes)?.label);
+			}
+		}
+	}
+	return undefined;
+}
+
 /**
  * The advisory estimate for the current answers, or null until guest count and service length are
  * known. Offerings not yet chosen simply contribute nothing, giving an "estimate so far".
@@ -95,14 +114,16 @@ export function computeAdvisoryEstimate(
 	const lines: { line: EstimateLine; subtotal: bigint }[] = [
 		line(
 			currency,
-			'Base service',
+			text(preview.baseServiceDescription) ?? 'Base service',
 			toUnits(duration.baseServiceAmount),
 			null,
-			`${duration.durationMinutes} minutes`
+			text(duration.baseServiceSubDescription) ??
+				durationLabel(form, duration.durationMinutes) ??
+				`${duration.durationMinutes} minutes`
 		),
 		line(
 			currency,
-			'Ice cream service',
+			text(preview.perGuestDescription) ?? 'Ice cream service',
 			toUnits(preview.perGuestAmount),
 			guests,
 			`${guests} ${guests === 1 ? 'guest' : 'guests'}`
@@ -144,10 +165,11 @@ export function computeAdvisoryEstimate(
 		lines.push(
 			line(
 				currency,
-				`Extra toppings (${extra})`,
+				`${text(toppings.description) ?? 'Extra toppings'} (${extra})`,
 				toUnits(toppings.additionalSelectionPerGuestAmount),
 				guests * extra,
-				`${toppings.includedSelections} toppings included; each extra is charged per guest`
+				text(toppings.subDescription) ??
+					`${toppings.includedSelections} toppings included; each extra is charged per guest`
 			)
 		);
 	}

@@ -5,7 +5,7 @@ promises along the way. Read this before changing the inquiry form, its action o
 adapter.
 
 **The invariant.** Every inquiry is a request for configured ice cream service. There is no
-plain/contact-only inquiry (definition version 7):
+plain/contact-only inquiry (definition version 11):
 
 ```
 No configured ice cream service   →  no inquiry submission
@@ -24,7 +24,6 @@ Complete configured service       →  POST /inquiries
                                 ◀── access token (memory)                   { serviceId, secret }
  GET /book  ─────────────────▶  load: getInquiryForm() ─────────────────▶  GET /inquiry-form
  ◀── form + submissionToken
- POST /book/estimate (JSON) ──▶  previewEstimate()  ────────────────────▶  POST /estimate-preview
  POST /book (form action) ────▶  submitInquiry() → createInquiry() ─────▶  POST /inquiries
    submissionToken,                                Authorization: Bearer <access token>
    catalogRevision, answers                        Idempotency-Key: <submissionToken>
@@ -39,7 +38,7 @@ Complete configured service       →  POST /inquiries
   `$lib/server` or private env into client code, and `src/server-boundary.test.ts` fails if any
   client-reachable source (routes, components, `@fionas/ui`, `@fionas/shared`) imports them. Neither
   the credential nor a token is ever logged, returned in page data, set in a cookie or echoed in
-  errors; the e2e suite checks `/book`, `__data.json`, `/book/estimate`, cookies and every file in
+  errors; the e2e suite checks `/book`, `__data.json`, cookies and every file in
   `build/client`.
 - **The browser only talks to the SvelteKit origin.** The backend sends no CORS headers and none
   are needed; CORS is not the security mechanism. The browser never learns the backend's address
@@ -97,8 +96,7 @@ for every call. One client (and so one token) per server process, created from e
   or `[commerce] POST /inquiries → 403; check fionas-web service permissions (needs fionas.inquiries.create)`
   (method, path, status, hint; never a credential, token, header or body). Visitors see only the
   generic "unavailable" copy: `/book` shows no form, the action reports `unavailable` ("hasn't been
-  sent"), and `/book/estimate` answers `503 {"code":"unavailable"}`, so the page keeps its advisory
-  estimate rather than treating the choices as rejected.
+  sent"). The estimate never depends on the backend, so it is unaffected.
 
 ## Code map
 
@@ -110,7 +108,6 @@ for every call. One client (and so one token) per server process, created from e
 | Submission flow (token, revision, outcomes, receipt)     | `apps/public/src/lib/server/inquiry-submission.ts`     |
 | Failure payload type + customer copy (client-safe)       | `apps/public/src/lib/inquiry-submission.ts`            |
 | Form load + action                                       | `apps/public/src/routes/book/+page.server.ts`          |
-| Estimate preview proxy                                   | `apps/public/src/routes/book/estimate/+server.ts`      |
 | Form UI: sections, hidden token/revision, review, errors | `apps/public/src/routes/book/+page.svelte`             |
 | One question: controls, offering chips, availability     | `apps/public/src/lib/components/inquiry-field.svelte`  |
 | Estimate card                                            | `apps/public/src/lib/components/estimate-panel.svelte` |
@@ -122,7 +119,7 @@ for every call. One client (and so one token) per server process, created from e
 
 `commerce.ts` owns the base URL, service authentication (above), request construction, JSON
 decoding, an 8 s timeout and error decoding. Route files never call `fetch` on the backend. Operations:
-`getInquiryForm({ fresh })`, `previewEstimate(pricingInputs)` and
+`getInquiryForm({ fresh })` and
 `createInquiry(request, idempotencyKey)`. Every result is `{ ok: true, data }` or
 `{ ok: false, error }`, where `error` keeps the backend's stable `code` and violation codes and adds
 a `kind`:
@@ -144,7 +141,7 @@ this UI can't render, or a receipt or estimate without its fields, fails closed 
 
 ## The form comes from the backend
 
-`GET /inquiry-form` (definition version 7, `EXPECTED_DEFINITION_VERSION`) is the source of truth for
+`GET /inquiry-form` (definition version 11, `EXPECTED_DEFINITION_VERSION`) is the source of truth for
 which questions and options exist. `/book` renders its sections and fields in the order sent, with
 the backend's titles, labels and descriptions, choosing controls from `input` semantics (`TEXT`,
 `EMAIL`, `INTEGER`, `BOOLEAN`, `INTEGER_CHOICE`, `STRING_CHOICE`, `OFFERING_CHOICE`, `DATE`) and the
@@ -154,8 +151,23 @@ offering keys, names, prices, category limits or durations live in UI code
 the form doesn't ask for one. A different `definitionVersion` is logged once on the server; the
 self-describing form still renders.
 
+Definition 11 requests `CHIPS` for duration and offering choices, including the required
+hand-scooped flavor group. The form's category limits determine how many options may be chosen;
+the frontend never hardcodes the category or its four-selection limit. Explicit `CHIPS` also
+supports integer and string option lists of any length. Existing presentation fallbacks remain.
+Options may supply `badge`, `statusNote`, and `infoNote` (offering metadata may also be null).
+Badges render inside the chip. A badge with a status note opens it in a dark popover above the chip
+(on an unavailable chip, tapping anywhere on the chip opens it). A status note without a badge is
+not shown. Info notes open from an “i” button (“More about …”) in a light popover below, outside the
+selection label, even for disabled choices. The popovers (shadcn-svelte `Popover`) need JavaScript.
+Without it, badges still render and the form still submits. Status notes describe the input for
+assistive technology and never override availability.
+Unavailable choices keep their price but carry no in-chip notice: the faded, disabled chip says it,
+and by convention the backend supplies a badge and status note so tapping the chip explains why
+(the UI does not require one). Presentation metadata is never submitted with selections.
+
 **Service configuration is mandatory.** The section `optional` flag means "may be omitted entirely";
-in version 7 only "Additional information" is optional, and it alone shows an "Optional" badge. The
+in version 11 only "Additional information" is optional, and it alone shows an "Optional" badge. The
 UI applies the flag exactly as sent (`isSkippable`) and never reinterprets it. A definition that is
 incompatible with `POST /inquiries` is rejected as a whole (`pricingContractProblem`): a section with
 pricing questions (pointers under `/pricingInputs/`) marked optional, no guest-count or duration
@@ -175,11 +187,11 @@ instead of a request, so there is no state equivalent to `pricingInputs: undefin
 
 **Offering availability.** Every option carries `selectionState` and `availability`:
 
-| Backend state                   | Public form | UI                                                                                                               |
-| ------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------- |
-| `ENABLED` + `AVAILABLE`         | listed      | normal chip, selectable                                                                                          |
-| `ENABLED` + `UNAVAILABLE`       | listed      | visible and readable (dashed, muted), native `disabled`, "Unavailable — check back later" in its accessible name |
-| `DISABLED` (either), or retired | **absent**  | nothing to show; absence is never presented as "temporarily unavailable"                                         |
+| Backend state                   | Public form | UI                                                                                           |
+| ------------------------------- | ----------- | -------------------------------------------------------------------------------------------- |
+| `ENABLED` + `AVAILABLE`         | listed      | normal chip, selectable                                                                      |
+| `ENABLED` + `UNAVAILABLE`       | listed      | visible but faded, native `disabled`; tapping it opens its status note (when it has a badge) |
+| `DISABLED` (either), or retired | **absent**  | nothing to show; absence is never presented as "temporarily unavailable"                     |
 
 A `DISABLED` option in `GET /inquiry-form` breaks the endpoint's contract: the shape check refuses the
 whole form (logged as "outside the contract"), so `/book` shows "isn't available right now" rather than
@@ -205,9 +217,12 @@ and duration are valid it computes instantly in the browser from `pricingPreview
 `toppingAdjustment` per extra pick beyond `includedSelections`. Amounts are exact decimal strings,
 summed as scaled `BigInt`s, never floats. No pricing rule lives in a frontend constant.
 
-Once the whole service is configured, the card asks `POST /estimate-preview` (through
-`/book/estimate`, debounced, once per distinct configuration) and shows the backend's figures. The
-proxy forwards only the pricing facts, rebuilt field by field. A preview writes and reserves nothing.
+That is the only estimate shown: the site never calls `POST /estimate-preview`, so the figures
+never change after a round trip. Line wording comes from `pricingPreview` when the backend supplies
+it (`baseServiceDescription`, `perGuestDescription`, each duration's `baseServiceSubDescription`,
+`toppingAdjustment.description` / `subDescription`); otherwise the UI uses "Base service" (with the
+duration question's own label, e.g. "1½ hours", as its subtext), "Ice cream service" and "Extra
+toppings".
 
 **Backend pricing is authoritative.** `POST /inquiries` validates the current catalog, prices once
 and atomically creates the Inquiry and Estimate v1. The browser never submits totals, line amounts or
@@ -401,7 +416,7 @@ server keeps no cache of it: every page view and every submit reads it from the 
   discarding a newer token, `403` on each endpoint never refreshed, unusable token responses, and an
   unknown outcome staying unknown when the retry can't authenticate; nothing secret in results or logs.
 - `apps/public/src/routes/book/page.server.test.ts`: integration through the real `load` and action
-  with only `fetch` replaced by a contract-faithful fake (`src/lib/server/testing/`): version 7
+  with only `fetch` replaced by a contract-faithful fake (`src/lib/server/testing/`): version 11
   rendering, contact-only refusal, an optional-service definition rejected (on load, on submit and on
   stale refresh), an incompatible form, a leaked `DISABLED` offering refused, priced body, double
   delivery, lost response, ambiguous then identical same-key retry, unreachable backend, persistent
@@ -412,9 +427,6 @@ server keeps no cache of it: every page view and every submit reads it from the 
   after revision 16 changed the form (original receipt if it committed, stale review under a new key
   if not), with tampered visible answers, through a `401`, and when lost again; tampered or missing
   snapshots sending nothing; a deliberate restart dropping the old command.
-- `apps/public/src/routes/book/estimate/server.test.ts`: the preview proxy forwards pricing facts
-  only, with the service token, never leaks it, survives an expired token, and reports a refused
-  credential or a `403` as `503 unavailable`, never as a rejected selection.
 - `apps/public/src/lib/components/inquiry-field.svelte.test.ts` (browser): backend order, labels and
   descriptions, min/max, AVAILABLE selectable, UNAVAILABLE visible/disabled/named, error association.
 - `apps/public/src/catalog-hardcoding.test.ts` and `src/server-boundary.test.ts`: no catalog literals
@@ -423,8 +435,8 @@ server keeps no cache of it: every page view and every submit reads it from the 
   (`e2e/stub-commerce.mjs`, which issues opaque tokens for the test-only service credential in
   `e2e/test-service.ts` and implements the idempotency contract, offering availability and the
   required `pricingInputs`): rendering order, unavailable chips, no contact-only path (with and
-  without JavaScript), estimate (kept on a `503` or a service `403`), submit, lost response, frozen
+  without JavaScript), estimate (computed in the browser, no preview request), submit, lost response, frozen
   retry resending the delivered request, a tampered replay never sent, deliberate restart, stale review, reused key, double delivery recorded once, an expired
   token replaced under the same key, a `403` shown as an outage, same-origin-only traffic, no
-  credential or token in HTML, `__data.json`, `/book/estimate`, cookies or the client build. The
+  credential or token in HTML, `__data.json`, cookies or the client build. The
   gated preview runs without service credentials.
