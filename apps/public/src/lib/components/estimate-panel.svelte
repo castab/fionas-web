@@ -4,69 +4,19 @@
 		completePricingInputs,
 		computeAdvisoryEstimate,
 		formatMoney,
-		type EstimatePreview,
 		type InquiryAnswers,
 		type InquiryForm
 	} from '@fionas/shared';
 
 	/**
-	 * Price estimate. Figures appear instantly from the form's `pricingPreview` (advisory browser
-	 * arithmetic) as soon as guests and service length are known, growing as choices are made. Once
-	 * every question is answered, the server's POST /estimate-preview result replaces them as the
-	 * authoritative answer. If the server can't be reached the instant figures stay.
+	 * Price estimate, computed in the browser from the form's `pricingPreview` as soon as guests and
+	 * service length are known, growing as choices are made. It is display only: nothing here is
+	 * sent, and POST /inquiries prices the submitted selections on its own.
 	 */
 	let { form, answers }: { form: InquiryForm; answers: InquiryAnswers } = $props();
 
-	const DEBOUNCE_MS = 300;
-
-	let server = $state<{ key: string; estimate: EstimatePreview } | null>(null);
-	let status = $state<'idle' | 'loading' | 'error' | 'rejected'>('idle');
-
-	const inputs = $derived(completePricingInputs(form, answers));
-	const complete = $derived(inputs !== null);
-	// One server preview per distinct complete configuration (debounced), never per keystroke.
-	const key = $derived(inputs ? JSON.stringify(inputs) : null);
-	const local = $derived(computeAdvisoryEstimate(form, answers));
-
-	const serverCurrent = $derived(server && server.key === key ? server.estimate : null);
-	const estimate = $derived(
-		status === 'rejected' ? null : (serverCurrent ?? local ?? server?.estimate ?? null)
-	);
-	// Only older figures (no instant estimate available) are worth dimming while we wait.
-	const stale = $derived(estimate !== null && !serverCurrent && !local);
-
-	$effect(() => {
-		if (key === null) {
-			server = null;
-			status = 'idle';
-			return;
-		}
-
-		status = 'loading';
-		const controller = new AbortController();
-		const timer = setTimeout(async () => {
-			try {
-				const response = await fetch('/book/estimate', {
-					method: 'POST',
-					headers: { 'content-type': 'application/json' },
-					body: key,
-					signal: controller.signal
-				});
-				if (!response.ok) throw new Error(String(response.status));
-				server = { key, estimate: (await response.json()) as EstimatePreview };
-				status = 'idle';
-			} catch (e) {
-				if (controller.signal.aborted) return;
-				// The server refused this selection (4xx): never show figures for it. Outages are not refusals.
-				status = e instanceof Error && /^4\d\d$/.test(e.message) ? 'rejected' : 'error';
-			}
-		}, DEBOUNCE_MS);
-
-		return () => {
-			clearTimeout(timer);
-			controller.abort();
-		};
-	});
+	const complete = $derived(completePricingInputs(form, answers) !== null);
+	const estimate = $derived(computeAdvisoryEstimate(form, answers));
 </script>
 
 <Card class="flex flex-col gap-3 px-6 py-[22px]" aria-labelledby="estimate-heading">
@@ -79,12 +29,7 @@
 
 	<div aria-live="polite" class="flex flex-col gap-3">
 		{#if estimate}
-			<ul
-				class={cn(
-					'm-0 flex list-none flex-col gap-2.5 p-0 transition-opacity duration-(--dur-med) ease-(--ease-out)',
-					stale && 'opacity-60'
-				)}
-			>
+			<ul class="m-0 flex list-none flex-col gap-2.5 p-0">
 				{#each estimate.lines as line, i (i)}
 					<li class="flex flex-col gap-0.5">
 						<div class="flex items-baseline">
@@ -115,21 +60,9 @@
 					{formatMoney(estimate.total, estimate.currency)}
 				</span>
 			</div>
-		{:else if status === 'loading'}
-			<p class="m-0 text-[12.5px] leading-snug text-(--text-muted)">Working out your estimate…</p>
 		{:else}
 			<p class="m-0 text-[12.5px] leading-snug text-(--text-muted)">
 				Add your guest count and service length to start your estimate.
-			</p>
-		{/if}
-
-		{#if status === 'rejected'}
-			<p class="m-0 text-[12.5px] leading-snug font-medium text-rust-600">
-				We couldn't price that combination. Please check your choices.
-			</p>
-		{:else if status === 'error' && !local}
-			<p class="m-0 text-[12.5px] leading-snug font-medium text-rust-600">
-				We couldn't update the estimate just now. You can still send your request.
 			</p>
 		{/if}
 	</div>

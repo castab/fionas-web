@@ -1,7 +1,6 @@
 import {
 	INQUIRY_EVENT_TYPES,
 	type CreateInquiryRequest,
-	type EstimatePreview,
 	type InquiryEventType,
 	type InquiryForm
 } from '@fionas/shared';
@@ -26,6 +25,12 @@ const isNullableString = (v: unknown) => v === undefined || v === null || isStri
 const every = (v: unknown, check: (item: unknown) => boolean): v is unknown[] =>
 	Array.isArray(v) && v.every(check);
 
+function isChoiceMetadata(v: Json, nullable = false): boolean {
+	return ['badge', 'statusNote', 'infoNote'].every((key) =>
+		nullable ? isNullableString(v[key]) : isOptional(v[key], isString)
+	);
+}
+
 function isOfferingPrice(v: unknown): boolean {
 	if (!isObject(v) || !isDecimal(v.amount) || !isString(v.currency)) return false;
 	switch (v.kind) {
@@ -47,6 +52,7 @@ function isOffering(v: unknown, category: string): boolean {
 		v.category === category &&
 		isString(v.displayName) &&
 		isNullableString(v.description) &&
+		isChoiceMetadata(v, true) &&
 		isOptional(v.price, isOfferingPrice) &&
 		// The public form omits disabled (and retired) offerings: a DISABLED one here is off-contract,
 		// and must never reach the page dressed up as "temporarily unavailable".
@@ -70,9 +76,15 @@ function isInput(v: unknown): boolean {
 		case 'BOOLEAN':
 			return typeof v.defaultValue === 'boolean';
 		case 'INTEGER_CHOICE':
-			return every(v.options, (o) => isObject(o) && isInt(o.value) && isString(o.label));
+			return every(
+				v.options,
+				(o) => isObject(o) && isInt(o.value) && isString(o.label) && isChoiceMetadata(o)
+			);
 		case 'STRING_CHOICE':
-			return every(v.options, (o) => isObject(o) && isString(o.value) && isString(o.label));
+			return every(
+				v.options,
+				(o) => isObject(o) && isString(o.value) && isString(o.label) && isChoiceMetadata(o)
+			);
 		case 'OFFERING_CHOICE':
 			return (
 				isString(v.category) &&
@@ -118,12 +130,15 @@ function isPricingPreview(v: unknown): boolean {
 		isString(v.currency) &&
 		isString(v.guestQuantityDimension) &&
 		isDecimal(v.perGuestAmount) &&
+		isNullableString(v.baseServiceDescription) &&
+		isNullableString(v.perGuestDescription) &&
 		every(
 			v.durationOptions,
 			(d) =>
 				isObject(d) &&
 				isInt(d.durationMinutes, 1) &&
 				isDecimal(d.baseServiceAmount) &&
+				isNullableString(d.baseServiceSubDescription) &&
 				every(
 					d.offeringContributions,
 					(c) => isObject(c) && isString(c.offeringKey) && isDecimal(c.amount)
@@ -132,7 +147,9 @@ function isPricingPreview(v: unknown): boolean {
 		isObject(v.toppingAdjustment) &&
 		isString(v.toppingAdjustment.category) &&
 		isInt(v.toppingAdjustment.includedSelections, 0) &&
-		isDecimal(v.toppingAdjustment.additionalSelectionPerGuestAmount)
+		isDecimal(v.toppingAdjustment.additionalSelectionPerGuestAmount) &&
+		isNullableString(v.toppingAdjustment.description) &&
+		isNullableString(v.toppingAdjustment.subDescription)
 	);
 }
 
@@ -194,32 +211,6 @@ export function isCreateInquiryRequest(v: unknown): v is CreateInquiryRequest {
 				hasOnly(s, ['category', 'offerings']) &&
 				isString(s.category) &&
 				every(s.offerings, isString)
-		)
-	);
-}
-
-/** POST /estimate-preview's documented shape. */
-export function isEstimatePreview(v: unknown): v is EstimatePreview {
-	return (
-		isObject(v) &&
-		isInt(v.catalogRevision, 1) &&
-		typeof v.guestCountIsMinimum === 'boolean' &&
-		isDecimal(v.subtotal) &&
-		isDecimal(v.taxAmount) &&
-		isDecimal(v.total) &&
-		isString(v.currency) &&
-		every(
-			v.lines,
-			(l) =>
-				isObject(l) &&
-				isString(l.description) &&
-				isOptional(l.subDescription, isString) &&
-				isOptional(l.quantity, isString) &&
-				isDecimal(l.unitPrice) &&
-				isDecimal(l.subtotal) &&
-				isDecimal(l.taxAmount) &&
-				isDecimal(l.total) &&
-				isString(l.currency)
 		)
 	);
 }

@@ -39,8 +39,8 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 - Components in `packages/ui` use relative imports (no `$lib`) because apps consume the raw source.
   New classes there are picked up via the `@source` line in each app's `layout.css`.
 - Booking is gated. `/book` is an inquiry form rendered from the commerce API's `GET /inquiry-form`
-  (answers mapped back via each field's `submissionPointer`), with a live `POST /estimate-preview`
-  and submit to `POST /inquiries`. It 404s unless `BOOKING_ENABLED=true` (`$lib/server/booking.ts`). While gated the Book CTAs use
+  (answers mapped back via each field's `submissionPointer`), with a browser-only estimate and
+  submit to `POST /inquiries`. It 404s unless `BOOKING_ENABLED=true` (`$lib/server/booking.ts`). While gated the Book CTAs use
   `ComingSoonButton` (`aria-disabled`, raises the toast, never navigates); when enabled they link to `/book`. Playwright needs
   `click({ force: true })` on the gated CTAs.
 - The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
@@ -71,7 +71,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   explicit "Send as a new request" / "Change my answers" changes it. After an unknown outcome the
   answers freeze (`inert`) so the retry is identical. Never auto-resubmit, and never send totals or
   prices: the backend prices and creates the Estimate. See `docs/public-inquiry-submission.md`.
-- **No inquiry without configured service (definition version 7).** Every inquiry carries complete
+- **No inquiry without configured service (definition version 11).** Every inquiry carries complete
   `pricingInputs` (revision, guest count, duration, required selections); there is no plain/contact-only
   path and no "just send a message" mode. Build the request only with `prepareInquiry`
   (`@fionas/shared`), the submit gate used by both the page and the action. Section `optional` is
@@ -79,10 +79,19 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   optional section with `/pricingInputs/` questions) is rejected, never coerced: no form is offered and
   nothing is sent. Success copy says "Request received", never booked, confirmed or reserved.
 - **Offering availability.** Disabled/retired offerings are absent from `/inquiry-form`; `ENABLED` +
-  `UNAVAILABLE` options stay visible but unselectable ("Unavailable — check back later"), never hidden
-  or described as removed. Never hardcode offering keys, names, prices or limits in UI code
-  (`src/catalog-hardcoding.test.ts`). Browser estimates are advisory (from `pricingPreview`, exact
-  decimals); the backend prices.
+  `UNAVAILABLE` options stay visible but unselectable (faded, native `disabled`; no in-chip notice),
+  never hidden or described as removed. By convention the backend gives them a `badge` + `statusNote`
+  so tapping the chip explains why (not enforced in code). Never hardcode offering keys, names, prices or limits in UI code
+  (`src/catalog-hardcoding.test.ts`). The estimate is browser-only and display only (from `pricingPreview`,
+  exact decimals; line wording from `pricingPreview` when supplied): the site never calls
+  `POST /estimate-preview`, and `POST /inquiries` prices the submitted selections itself.
+- **Choice presentation (definition 11).** Honor explicit `CHIPS` for integer and string choices.
+  Offering limits, including hand-scooped selection counts, come from the form. `ChoiceChip`
+  shows `badge` inside the pill; with a `statusNote` the badge opens it in a dark popover above (a
+  status note without a badge is not shown). `infoNote` opens from an "i" button in a light popover
+  below. Both use `Popover` (`@fionas/ui`, shadcn-svelte/bits-ui; needs JavaScript) and sit outside
+  the input label. Offering metadata may be null. Notes never override availability or enter
+  submitted payloads.
 - **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
   to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`

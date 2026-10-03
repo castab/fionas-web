@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { EstimatePreview, InquiryForm, PricingInputs } from '@fionas/shared';
+import type { InquiryForm, PricingInputs } from '@fionas/shared';
 
 /*
  * Test double for the fionas-commerce HTTP API, installed as `fetch`. It keeps the contract the
@@ -16,17 +16,11 @@ export const TEST_SERVICE_ID = '00000000-0000-4000-8000-0000000000aa';
 export const TEST_SERVICE_CREDENTIAL = 'test-only-service-credential-not-a-secret';
 export const TEST_BASE_URL = 'http://commerce.internal.test';
 
-/** The real form captured from fionas-commerce (also served by the e2e stub). */
+/** Representative version 11 form with a test catalog (also served by the e2e stub). */
 export const formFixture = (): InquiryForm =>
 	JSON.parse(
 		readFileSync(new URL('../../../../e2e/fixtures/inquiry-form.json', import.meta.url), 'utf8')
 	) as InquiryForm;
-
-/** The real POST /estimate-preview answer captured for the fixture form. */
-export const estimateFixture = (): EstimatePreview =>
-	JSON.parse(
-		readFileSync(new URL('../../../../e2e/fixtures/estimate-preview.json', import.meta.url), 'utf8')
-	) as EstimatePreview;
 
 export type RecordedCall = {
 	method: string;
@@ -54,10 +48,12 @@ const json = (status: number, body: unknown) =>
 		headers: { 'content-type': 'application/json' }
 	});
 
-/** The permission each public endpoint requires (role fionas.web grants all three). */
+/**
+ * The permission each endpoint the site calls requires. Role fionas.web also grants
+ * fionas.estimate-preview.create, which the site no longer uses.
+ */
 const PERMISSIONS: Record<string, string> = {
 	'GET /inquiry-form': 'fionas.inquiry-form.read',
-	'POST /estimate-preview': 'fionas.estimate-preview.create',
 	'POST /inquiries': 'fionas.inquiries.create'
 };
 
@@ -202,11 +198,6 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 			});
 		}
 		if (method === 'GET' && url.pathname === '/inquiry-form') return json(200, form);
-		if (method === 'POST' && url.pathname === '/estimate-preview') {
-			const next = scripted.shift();
-			if (next && typeof next === 'object') return json(next.status, next.body ?? {});
-			return json(200, estimateFixture());
-		}
 		if (method === 'POST' && url.pathname === '/inquiries') {
 			const result = createInquiry(headers, body);
 			if (result === 'drop') throw new DOMException('The operation timed out.', 'TimeoutError');
@@ -228,7 +219,7 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		revoke: (permission: string) => granted.delete(permission),
 		/** Lifetime (`expiresIn`) of tokens issued from now on. */
 		setTokenLifetime: (seconds: number) => (tokenLifetimeSeconds = seconds),
-		/** Queue one-off answers for the next POST /inquiries (or /estimate-preview) calls. */
+		/** Queue one-off answers for the next POST /inquiries calls. */
 		script: (...next: Scripted[]) => scripted.push(...next),
 		/** Publish a new catalog: later GET /inquiry-form calls see it, older revisions go stale. */
 		publish: (next: InquiryForm) => (form = next),

@@ -23,6 +23,7 @@ export {
 	reconcileAnswers,
 	validateAnswers,
 	type AnswerValue,
+	type ChoiceMetadata,
 	type ApiError,
 	type CreateInquiryRequest,
 	type DurationPricing,

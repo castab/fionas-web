@@ -1,5 +1,5 @@
 {
-	"definitionVersion": 7,
+	"definitionVersion": 11,
 	"catalogId": "0cde8e0b-aa9c-4129-9853-8db2cbbb909b",
 	"catalogRevision": 15,
 	"sections": [
@@ -137,8 +137,7 @@
 				},
 				{
 					"key": "durationMinutes",
-					"label": "How long would you like service?",
-					"description": "One service duration, in minutes.",
+					"label": "How long are we scoopin'?",
 					"submissionPointer": "/pricingInputs/durationMinutes",
 					"required": true,
 					"input": {
@@ -146,24 +145,24 @@
 						"options": [
 							{
 								"value": 90,
-								"label": "90 minutes"
+								"label": "1½ hours"
 							},
 							{
 								"value": 120,
-								"label": "120 minutes"
+								"label": "2 hours"
 							},
 							{
 								"value": 150,
-								"label": "150 minutes"
+								"label": "2½ hours"
 							},
 							{
 								"value": 180,
-								"label": "180 minutes"
+								"label": "3 hours"
 							}
 						]
 					},
 					"presentation": {
-						"control": "SELECT"
+						"control": "CHIPS"
 					}
 				},
 				{
@@ -208,7 +207,79 @@
 						]
 					},
 					"presentation": {
-						"control": "CARDS"
+						"control": "CHIPS"
+					}
+				},
+				{
+					"key": "offering:hand-scooped-flavor",
+					"label": "Choose your hand-scooped flavors",
+					"submissionPointer": "/pricingInputs/selections",
+					"required": true,
+					"input": {
+						"type": "OFFERING_CHOICE",
+						"category": "hand-scooped-flavor",
+						"minSelections": 4,
+						"maxSelections": 4,
+						"options": [
+							{
+								"key": "hand-scooped-chocolate-chip",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped Chocolate Chip",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE",
+								"badge": "Crowd favorite",
+								"statusNote": "On the menu",
+								"infoNote": "Contains milk"
+							},
+							{
+								"key": "hand-scooped-chocolate",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped Chocolate",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
+							},
+							{
+								"key": "hand-scooped-vanilla-bean",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped Vanilla Bean",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
+							},
+							{
+								"key": "hand-scooped-strawberry",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped Strawberry",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
+							},
+							{
+								"key": "hand-scooped-butter-pecan",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped Butter Pecan",
+								"selectionState": "ENABLED",
+								"availability": "UNAVAILABLE",
+								"infoNote": "Contains tree nuts"
+							},
+							{
+								"key": "hand-scooped-mint-chip",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped Mint Chip",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE"
+							},
+							{
+								"key": "hand-scooped-new-york-cheesecake",
+								"category": "hand-scooped-flavor",
+								"displayName": "Hand-scooped New York Cheesecake",
+								"selectionState": "ENABLED",
+								"availability": "UNAVAILABLE",
+								"badge": "Returning soon",
+								"statusNote": "Back on the menu this fall!"
+							}
+						]
+					},
+					"presentation": {
+						"control": "CHIPS"
 					}
 				},
 				{
@@ -267,7 +338,7 @@
 						]
 					},
 					"presentation": {
-						"control": "CHECKBOXES"
+						"control": "CHIPS"
 					}
 				},
 				{
@@ -304,7 +375,7 @@
 						]
 					},
 					"presentation": {
-						"control": "CARDS"
+						"control": "CHIPS"
 					}
 				}
 			]
@@ -349,6 +420,7 @@
 			{
 				"durationMinutes": 150,
 				"baseServiceAmount": "275.000",
+				"baseServiceSubDescription": "2½ hours · setup, staff & local travel",
 				"offeringContributions": []
 			},
 			{

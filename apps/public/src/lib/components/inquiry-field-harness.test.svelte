@@ -20,5 +20,5 @@
 	let values = $state<Record<string, AnswerValue>>({ ...untrack(() => initial) });
 </script>
 
-<InquiryField {field} bind:values {error} {preview} />
+<form><InquiryField {field} bind:values {error} {preview} /></form>
 <output data-testid="answer">{JSON.stringify(values[field.key] ?? null)}</output>

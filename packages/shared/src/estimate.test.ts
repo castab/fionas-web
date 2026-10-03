@@ -271,4 +271,43 @@ describe('computeAdvisoryEstimate', () => {
 		expect(estimate?.lines.find((l) => l.description === 'horchata')?.subtotal).toBe('7.00');
 		expect(estimate?.total).toBe('7.00');
 	});
+
+	it("labels the base service with the duration question's own label", () => {
+		const base = computeAdvisoryEstimate(form, answered(four))?.lines[0];
+		expect(base?.subDescription).toBe('120 minutes');
+
+		const fractional = JSON.parse(JSON.stringify(form)) as InquiryForm;
+		const duration = fractional.sections[0]!.fields.find((f) => f.key === 'durationMinutes')!;
+		if (duration.input.type === 'INTEGER_CHOICE') duration.input.options[0]!.label = '2 hours';
+		const answers = answered(four);
+		expect(computeAdvisoryEstimate(fractional, answers)?.lines[0]?.subDescription).toBe('2 hours');
+
+		// A duration asked as a plain number has no label: fall back to minutes.
+		duration.input = { type: 'INTEGER', minimum: 1 };
+		expect(computeAdvisoryEstimate(fractional, answers)?.lines[0]?.subDescription).toBe(
+			'120 minutes'
+		);
+	});
+
+	it('prefers line wording the backend supplies, ignoring null or blank text', () => {
+		const worded = JSON.parse(JSON.stringify(form)) as InquiryForm;
+		const preview = worded.pricingPreview;
+		preview.baseServiceDescription = 'Trailer visit';
+		preview.perGuestDescription = '   ';
+		preview.durationOptions[0]!.baseServiceSubDescription = '2 hours · setup & travel';
+		preview.toppingAdjustment.description = 'More toppings';
+		preview.toppingAdjustment.subDescription = null;
+		const estimate = computeAdvisoryEstimate(worded, answered([...four, 'gummy-bears']));
+		expect(estimate?.lines.map((l) => [l.description, l.subDescription])).toEqual([
+			['Trailer visit', '2 hours · setup & travel'],
+			['Ice cream service', '75 guests'],
+			['horchata', undefined],
+			['waffle-cone', undefined],
+			['More toppings (1)', '4 toppings included; each extra is charged per guest']
+		]);
+		// Wording never changes the arithmetic.
+		expect(estimate?.total).toBe(
+			computeAdvisoryEstimate(form, answered([...four, 'gummy-bears']))?.total
+		);
+	});
 });

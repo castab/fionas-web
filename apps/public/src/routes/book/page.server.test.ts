@@ -37,6 +37,12 @@ const priced: Fields = {
 	guestCount: '75',
 	durationMinutes: '120',
 	'offering:soft-serve-flavor': ['vanilla', 'horchata'],
+	'offering:hand-scooped-flavor': [
+		'hand-scooped-chocolate-chip',
+		'hand-scooped-chocolate',
+		'hand-scooped-vanilla-bean',
+		'hand-scooped-strawberry'
+	],
 	'offering:topping': ['sprinkles', 'oreos', 'strawberries', 'brownies'],
 	'offering:cone-option': 'waffle-cone',
 	message: '  Backyard birthday  '
@@ -176,9 +182,9 @@ describe('/book load', () => {
 		expectNoSecrets(data);
 	});
 
-	it('renders the version 7 definition as sent, service section required', async () => {
+	it('renders the version 11 definition as sent, service section required', async () => {
 		const { data } = await loadPage();
-		expect(data.form?.definitionVersion).toBe(7);
+		expect(data.form?.definitionVersion).toBe(11);
 		expect(data.form?.sections.map((s) => [s.key, s.optional])).toEqual([
 			['contact', false],
 			['event', false],
@@ -228,6 +234,32 @@ describe('/book load', () => {
 });
 
 describe('/book submission', () => {
+	it.each([
+		{ picks: [] },
+		{ picks: ['hand-scooped-chocolate'] },
+		{
+			picks: [
+				'hand-scooped-chocolate-chip',
+				'hand-scooped-chocolate',
+				'hand-scooped-vanilla-bean',
+				'hand-scooped-strawberry',
+				'hand-scooped-mint-chip'
+			]
+		}
+	])('rejects incomplete or excessive hand-scooped selections ($picks)', async ({ picks }) => {
+		const { data } = await loadPage();
+		const failure = failureOf(
+			await post(
+				formData(data.submissionToken, 15, {
+					...priced,
+					'offering:hand-scooped-flavor': picks
+				})
+			)
+		);
+		expect(failure.outcome).toBe('invalid');
+		expect(failure.errors?.['offering:hand-scooped-flavor']).toMatch(/Choose (?:no more than )?4/);
+		expect(backend.posts()).toHaveLength(0);
+	});
 	it('sends the priced intent with the service token and the page token, then shows the receipt', async () => {
 		const { data } = await loadPage();
 		const outcome = await post(formData(data.submissionToken, 15, priced));
@@ -254,6 +286,16 @@ describe('/book submission', () => {
 				durationMinutes: 120,
 				selections: [
 					{ category: 'soft-serve-flavor', offerings: ['vanilla', 'horchata'] },
+
+					{
+						category: 'hand-scooped-flavor',
+						offerings: [
+							'hand-scooped-chocolate-chip',
+							'hand-scooped-chocolate',
+							'hand-scooped-vanilla-bean',
+							'hand-scooped-strawberry'
+						]
+					},
 					{ category: 'topping', offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies'] },
 					{ category: 'cone-option', offerings: ['waffle-cone'] }
 				]
@@ -264,7 +306,7 @@ describe('/book submission', () => {
 		expect(receiptPage()).toEqual({ receipt });
 	});
 
-	// Critical regression: definition version 7 has no plain/contact-only inquiry.
+	// Critical regression: definition version 11 has no plain/contact-only inquiry.
 	it('refuses a contact-only submission and sends nothing', async () => {
 		const { data } = await loadPage();
 		const { name, email, zipCode, eventDate, eventType } = priced as Record<string, string>;
@@ -279,6 +321,7 @@ describe('/book submission', () => {
 			'durationMinutes',
 			'guestCount',
 			'offering:cone-option',
+			'offering:hand-scooped-flavor',
 			'offering:soft-serve-flavor',
 			'offering:topping'
 		]);
@@ -360,6 +403,7 @@ describe('/book submission', () => {
 		expect(Object.keys(failure.errors ?? {}).sort()).toEqual([
 			'durationMinutes',
 			'offering:cone-option',
+			'offering:hand-scooped-flavor',
 			'offering:soft-serve-flavor',
 			'offering:topping'
 		]);
@@ -743,7 +787,7 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 
 		expect(failure.outcome).toBe('stale');
 		expect(failure.answers?.values.durationMinutes).toBe('');
-		expect(failure.reviewFields).toEqual(['How long would you like service?']);
+		expect(failure.reviewFields).toEqual(["How long are we scoopin'?"]);
 		expect(failure.submissionToken).not.toBe(data.submissionToken);
 		expect(backend.posts()).toHaveLength(0);
 	});
@@ -766,7 +810,7 @@ describe('/book after a catalog change (CATALOG_REVISION_STALE)', () => {
 		});
 		expect(outcome.outcome).toBe('stale');
 		expect(outcome.refreshedForm?.catalogRevision).toBe(16);
-		expect(outcome.reviewFields).toEqual(['How long would you like service?']);
+		expect(outcome.reviewFields).toEqual(["How long are we scoopin'?"]);
 		expect(outcome.submissionToken).not.toBe(data.submissionToken);
 		expect(outcome.replay).toBeUndefined();
 	});

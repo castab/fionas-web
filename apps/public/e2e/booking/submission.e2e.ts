@@ -44,7 +44,7 @@ test('submits through the server with one key and shows the receipt', async ({ p
 	await fillAll(page, email);
 	// Dynamic options, one of them temporarily unavailable, and an advisory estimate before sending.
 	await expect(page.getByRole('checkbox', { name: /gummy-bears/ })).toBeDisabled();
-	await expect(page.getByRole('checkbox', { name: 'Vanilla' })).toBeChecked();
+	await expect(page.getByRole('checkbox', { name: 'Vanilla', exact: true })).toBeChecked();
 	await expect(page.getByText('Estimated total')).toBeVisible();
 	await expect(page.getByText('Estimate only')).toBeVisible();
 	const token = await page.locator('input[name="submissionToken"]').inputValue();
@@ -90,6 +90,7 @@ test('there is no contact-only inquiry: the service must be configured first', a
 	await expect(service.getByText('This field is required.')).toBeVisible();
 	await expect(service.getByText('Choose at least 1.')).toBeVisible();
 	await expect(service.getByText('Choose at least 4.')).toBeVisible();
+	await expect(service.getByText('Choose 4.', { exact: true })).toBeVisible();
 	expect(await attemptsFor(page, email)).toEqual([]);
 
 	// Completing the service makes it a real inquiry, priced by the backend.
@@ -277,8 +278,8 @@ test('a catalog change asks for review and sends the reviewed form as a new subm
 	await expect(horchata).not.toBeChecked();
 	await expect(horchata).toBeDisabled();
 	await expect(page.getByRole('checkbox', { name: 'cookie-dough' })).toHaveCount(0);
-	await expect(page.getByRole('checkbox', { name: 'Vanilla' })).toBeChecked();
-	await expect(page.getByRole('checkbox', { name: 'Chocolate' })).not.toBeChecked();
+	await expect(page.getByRole('checkbox', { name: 'Vanilla', exact: true })).toBeChecked();
+	await expect(page.getByRole('checkbox', { name: 'Chocolate', exact: true })).not.toBeChecked();
 	await expect(page.locator('input[name="catalogRevision"]')).toHaveValue('16');
 	const reviewedToken = await page.locator('input[name="submissionToken"]').inputValue();
 	expect(reviewedToken).not.toBe(token);
@@ -293,6 +294,16 @@ test('a catalog change asks for review and sends the reviewed form as a new subm
 	expect(submission?.pricingInputs?.catalogRevision).toBe(16);
 	expect(submission?.pricingInputs?.selections).toEqual([
 		{ category: 'soft-serve-flavor', offerings: ['vanilla'] },
+
+		{
+			category: 'hand-scooped-flavor',
+			offerings: [
+				'hand-scooped-chocolate-chip',
+				'hand-scooped-chocolate',
+				'hand-scooped-vanilla-bean',
+				'hand-scooped-strawberry'
+			]
+		},
 		{ category: 'topping', offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies'] },
 		{ category: 'cone-option', offerings: ['waffle-cone'] }
 	]);
@@ -383,6 +394,10 @@ test('a duplicated delivery of one submission records one inquiry', async ({ pag
 		['guestCount', '75'],
 		['durationMinutes', '120'],
 		['offering:soft-serve-flavor', 'vanilla'],
+		['offering:hand-scooped-flavor', 'hand-scooped-chocolate-chip'],
+		['offering:hand-scooped-flavor', 'hand-scooped-chocolate'],
+		['offering:hand-scooped-flavor', 'hand-scooped-vanilla-bean'],
+		['offering:hand-scooped-flavor', 'hand-scooped-strawberry'],
 		['offering:topping', 'sprinkles'],
 		['offering:topping', 'oreos'],
 		['offering:topping', 'strawberries'],
@@ -413,23 +428,7 @@ test('a duplicated delivery of one submission records one inquiry', async ({ pag
 test('nothing the browser receives carries the service credential, a token or the API address', async ({
 	page
 }) => {
-	const responses = [
-		await page.request.get('/book'),
-		await page.request.get('/book/__data.json'),
-		await page.request.post('/book/estimate', {
-			data: {
-				catalogRevision: 15,
-				guestCount: 75,
-				guestCountIsMinimum: false,
-				durationMinutes: 120,
-				selections: [
-					{ category: 'soft-serve-flavor', offerings: ['vanilla'] },
-					{ category: 'topping', offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies'] },
-					{ category: 'cone-option', offerings: ['cup'] }
-				]
-			}
-		})
-	];
+	const responses = [await page.request.get('/book'), await page.request.get('/book/__data.json')];
 	for (const response of responses) {
 		expect(response.ok()).toBe(true);
 		const text = `${JSON.stringify(response.headers())}\n${await response.text()}`;
