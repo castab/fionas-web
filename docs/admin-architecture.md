@@ -41,7 +41,9 @@ Why it has to be this way:
 | Resolve the signed-in user, guard routes | `apps/admin/src/hooks.server.ts`                                   |
 | Typed `locals.user`                      | `apps/admin/src/app.d.ts`                                          |
 | Sign-in page + action                    | `apps/admin/src/routes/(auth)/login/`                              |
-| Signed-in area (header, sign out)        | `apps/admin/src/routes/(app)/`                                     |
+| Signed-in shell (sidebar, nav, sign out) | `apps/admin/src/routes/(app)/+layout.svelte`                       |
+| Dashboard (placeholders, `?preview` dev) | `apps/admin/src/routes/(app)/+page.*`, `src/lib/dashboard*.ts`     |
+| What the dashboard still needs from API  | `docs/admin-dashboard-report.md`                                   |
 | Sign out                                 | `apps/admin/src/routes/logout/+server.ts`                          |
 | Temporary sign-in toast (to be removed)  | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte` |
 

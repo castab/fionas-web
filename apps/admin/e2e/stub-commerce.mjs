@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
-const cookieName = 'fionas_session';
+// The real API's cookie name and format: http4k quotes the value (`__Host-fionas_session="token"`).
+const cookieName = '__Host-fionas_session';
 
 const user = {
 	id: '00000000-0000-0000-0000-000000000001',
@@ -38,8 +39,11 @@ function readJson(req) {
 	});
 }
 
+// Like http4k: a quoted or bare value is read as-is; a percent-encoded one (`%22token%22`) is not
+// unwrapped, so it matches no session.
 const sessionToken = (req) =>
-	/(?:^|;\s*)fionas_session=([^;]+)/.exec(req.headers.cookie ?? '')?.[1] ?? null;
+	/(?:^|;\s*)__Host-fionas_session=("?)([^;"]*)\1(?:;|$)/.exec(req.headers.cookie ?? '')?.[2] ||
+	null;
 
 createServer(async (req, res) => {
 	const { pathname } = new URL(req.url ?? '/', 'http://stub');
@@ -82,7 +86,7 @@ createServer(async (req, res) => {
 		const token = randomUUID();
 		sessions.add(token);
 		return send(res, 204, undefined, {
-			'set-cookie': `${cookieName}=${token}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
+			'set-cookie': `${cookieName}="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
 		});
 	}
 

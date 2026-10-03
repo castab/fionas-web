@@ -1,27 +1,28 @@
 # AGENTS.md
 
 Fiona's Ice Cream websites. npm-workspaces monorepo: `apps/public` (marketing site), `apps/admin`
-(staff console: sign-in today), and shared packages `@fionas/ui`, `@fionas/design-tokens`,
+(staff console: sign-in and a dashboard scaffold), and shared packages `@fionas/ui`, `@fionas/design-tokens`,
 `@fionas/shared`. Stack mirrors `castab/madres-ui`: SvelteKit 2, Svelte 5 runes-only, Vite 8,
 Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
 ## Where to look
 
-| Need                                     | Read                                                                                |
-| ---------------------------------------- | ----------------------------------------------------------------------------------- |
-| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                             |
-| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                              |
-| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                       |
-| Site details, coming-soon copy           | `packages/shared/src/`                                                              |
-| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                    |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                           |
-| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`            |
-| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"    |
-| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`   |
-| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                        |
-| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts` |
-| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                  |
-| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                           |
+| Need                                     | Read                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- |
+| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                               |
+| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                                |
+| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                         |
+| Site details, coming-soon copy           | `packages/shared/src/`                                                                |
+| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                      |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                             |
+| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`              |
+| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"      |
+| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`     |
+| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                          |
+| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`   |
+| Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md` |
+| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                    |
+| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                             |
 
 ## Commands (run from the repo root)
 

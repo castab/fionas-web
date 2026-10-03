@@ -80,10 +80,17 @@ export function parseSetCookie(header: string): ParsedSetCookie | null {
 	return { name: pair.slice(0, eq), value: pair.slice(eq + 1), options };
 }
 
-/** Re-issue the backend's cookies on the admin host (login sets them, logout clears them). */
+/** Cookie values are already encoded by the backend; pass them through untouched. */
+const verbatim = (value: string) => value;
+
+/**
+ * Re-issue the backend's cookies on the admin host (login sets them, logout clears them). The value
+ * goes back byte for byte: the API (http4k) quotes it (`name="token"`), and SvelteKit's default
+ * `encodeURIComponent` would turn that into `%22token%22`, which the API no longer recognises.
+ */
 export function applySetCookies(cookies: Cookies, setCookies: string[]): void {
 	for (const header of setCookies) {
 		const parsed = parseSetCookie(header);
-		if (parsed) cookies.set(parsed.name, parsed.value, parsed.options);
+		if (parsed) cookies.set(parsed.name, parsed.value, { ...parsed.options, encode: verbatim });
 	}
 }

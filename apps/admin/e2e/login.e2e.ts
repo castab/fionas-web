@@ -15,7 +15,7 @@ test.describe('signed out', () => {
 		await page.goto('/login');
 
 		await expect(page).toHaveTitle("Sign in · Admin · Fiona's Ice Cream");
-		await expect(page.getByRole('heading', { level: 1 })).toHaveText('admin sign in');
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('sign in');
 		await expect(page.getByText('Booking requests, quotes & the calendar.')).toBeVisible();
 		await expect(page.getByLabel('User')).toBeVisible();
 		await expect(page.getByLabel('Password')).toHaveAttribute('type', 'password');
@@ -120,13 +120,14 @@ test.describe('signing in and out', () => {
 		await expect(
 			page.getByRole('status').filter({ hasText: 'Signed in — welcome back.' })
 		).toBeVisible();
-		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Admin');
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('hi, brayan');
 
-		const session = (await context.cookies()).find((c) => c.name === 'fionas_session');
+		const session = (await context.cookies()).find((c) => c.name === '__Host-fionas_session');
 		expect(session).toBeDefined();
 		expect(session?.httpOnly).toBe(true);
 		expect(session?.path).toBe('/');
-		expect(session?.value).not.toBe('');
+		// Re-issued exactly as the API sent it: quoted, never percent-encoded (%22).
+		expect(session?.value).toMatch(/^"[^"%]+"$/);
 	});
 
 	test('a signed-in visitor is sent away from the sign-in page', async ({ page }) => {
@@ -145,20 +146,28 @@ test.describe('signing in and out', () => {
 		await submit(page, username, password);
 
 		await expect(page).toHaveURL(/\/$/);
-		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Admin');
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('hi, brayan');
 		await context.close();
 	});
 
-	test('signing out clears the session and guards the console again', async ({ page, context }) => {
+	test('signing out clears the session and guards the console again', async ({
+		page,
+		context,
+		isMobile
+	}) => {
 		await page.goto('/login');
 		await submit(page, username, password);
 		await expect(page).toHaveURL(/\/$/);
+		// On a phone, Sign out lives in the account menu.
+		if (isMobile) await page.getByLabel('Your account').click();
 		await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 
 		await page.getByRole('button', { name: 'Sign out' }).click();
 
 		await expect(page).toHaveURL(/\/login$/);
-		expect((await context.cookies()).find((c) => c.name === 'fionas_session')).toBeUndefined();
+		expect(
+			(await context.cookies()).find((c) => c.name === '__Host-fionas_session')
+		).toBeUndefined();
 		await page.goto('/');
 		await expect(page).toHaveURL(/\/login$/);
 	});
