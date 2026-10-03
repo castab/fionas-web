@@ -74,6 +74,16 @@ describe('login', () => {
 describe('getCurrentUser', () => {
 	const user = { id: '1', username: 'brayan', displayName: 'Brayan', roles: [], permissions: [] };
 
+	it('preserves optional staff names from the current contract', async () => {
+		const profile = { ...user, firstName: 'Brayan', lastName: 'Test' };
+		expect(
+			await getCurrentUser(
+				config(async () => Response.json(profile)),
+				'a=b'
+			)
+		).toEqual(profile);
+	});
+
 	it('forwards the cookie and returns the user', async () => {
 		const fetch = vi.fn(
 			async () =>

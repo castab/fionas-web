@@ -6,6 +6,8 @@ export type StaffUser = {
 	id: string;
 	username: string;
 	displayName: string;
+	firstName?: string;
+	lastName?: string;
 	roles: string[];
 	permissions: string[];
 };
