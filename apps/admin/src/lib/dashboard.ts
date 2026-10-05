@@ -1,6 +1,6 @@
 import type { StaffDashboardItem, StaffDashboardResponse } from './dashboard-contract.js';
+import { BUSINESS_TIME_ZONE, dateTile, eventTypeLabel, formatMoney } from './presentation.js';
 
-export const BUSINESS_TIME_ZONE = 'America/Los_Angeles';
 export type StatTone = 'olive' | 'olive-soft' | 'moss' | 'rust';
 export type StatTileView = { label: string; count: number; tone: StatTone };
 export type RequestCardView = {
@@ -32,16 +32,6 @@ export function formatToday(asOf: string): string {
 	}).format(new Date(asOf));
 }
 
-/** Date-only values use UTC for construction and formatting, regardless of host/browser zone. */
-export function dateTile(iso: string): { month: string; day: string } {
-	const [year, month, day] = iso.split('-').map(Number);
-	const date = new Date(Date.UTC(year, month - 1, day));
-	return {
-		month: new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date),
-		day: String(day)
-	};
-}
-
 /** Completed elapsed days in the same snapshot; sub-day attention gets human wording. */
 export function waitingAge(attentionSince: string, asOf: string): string {
 	const days = Math.max(
@@ -52,37 +42,11 @@ export function waitingAge(attentionSince: string, asOf: string): string {
 	return `Waiting ${days} day${days === 1 ? '' : 's'}`;
 }
 
-/** Intl accepts exact decimal strings at runtime; the cast bridges TS's narrower signature. */
-export function formatMoney(decimal: string, currency: string): string {
-	const fraction = (decimal.split('.')[1] ?? '').replace(/0+$/, '');
-	const currencyDigits =
-		new Intl.NumberFormat('en-US', {
-			style: 'currency',
-			currency
-		}).resolvedOptions().maximumFractionDigits ?? 2;
-	const digits = fraction ? Math.max(currencyDigits, fraction.length) : 0;
-	return new Intl.NumberFormat('en-US', {
-		style: 'currency',
-		currency,
-		minimumFractionDigits: digits,
-		maximumFractionDigits: digits
-	}).format(decimal as unknown as number);
-}
-
 export function amountLabel(
 	item: Pick<StaffDashboardItem, 'total' | 'totalQualifier' | 'currency'>
 ): string {
 	return `${item.totalQualifier === 'FROM' ? 'from ' : ''}${formatMoney(item.total, item.currency)}`;
 }
-
-const eventLabels: Record<StaffDashboardItem['eventType'], string> = {
-	BIRTHDAY: 'Birthday party',
-	WEDDING: 'Wedding',
-	CORPORATE: 'Corporate event',
-	SCHOOL_EVENT: 'School event',
-	NEIGHBORHOOD_EVENT: 'Neighborhood event',
-	OTHER: 'Other event'
-};
 
 export function requestCard(
 	item: StaffDashboardItem,
@@ -96,7 +60,7 @@ export function requestCard(
 		eventDate: item.eventDate,
 		dateMonth: tile.month,
 		dateDay: tile.day,
-		waitMeta: `${waitingAge(item.attentionSince, asOf)} · ${eventLabels[item.eventType]}`,
+		waitMeta: `${waitingAge(item.attentionSince, asOf)} · ${eventTypeLabel(item.eventType)}`,
 		estLabel: amountLabel(item),
 		urgent
 	};

@@ -41,10 +41,12 @@ Successful empty queues show "You’re caught up here." A forbidden response exp
 account cannot view the dashboard; other failures show safe unavailable copy and a full reload
 link. Failures do not render zero counts or expose backend diagnostic messages.
 
-Dashboard is the only active navigation destination. New quote, Requests, Calendar, Menu, and
-Account settings are disabled pending their workflows. Queue cards and summary tiles are
-presentational, with no fake links or actions. Sign out remains available in the desktop sidebar
-and the mobile account disclosure, including without JavaScript.
+Queue cards link to `/requests/{inquiryId}` without fetching additional data themselves; summary
+tiles remain presentational. New quote, the Requests index, Calendar, Menu, and Account settings
+remain disabled. The request workspace highlights Requests without providing a fake index link.
+Sign out remains available in the sidebar and mobile disclosure, including without JavaScript.
+
+See [admin-request-workspace.md](admin-request-workspace.md) for request review and Quote issuance.
 
 ## Validation
 

@@ -45,6 +45,9 @@ Why it has to be this way:
 | Dashboard projection client              | `apps/admin/src/lib/server/dashboard.ts`                           |
 | Dashboard page and presentation          | `apps/admin/src/routes/(app)/+page.*`, `src/lib/dashboard*.ts`     |
 | Dashboard data and presentation boundary | `docs/admin-dashboard-report.md`                                   |
+| Request projection + Quote client        | `apps/admin/src/lib/server/staff-request.ts`                       |
+| Request review + Issue Quote action      | `apps/admin/src/routes/(app)/requests/[inquiryId]/`                |
+| Request workspace behavior               | `docs/admin-request-workspace.md`                                  |
 | Sign out                                 | `apps/admin/src/routes/logout/+server.ts`                          |
 | Temporary sign-in toast (to be removed)  | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte` |
 
@@ -145,8 +148,11 @@ npm run test:e2e                             # builds admin and runs it against 
 ```
 
 E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `/auth/login`, `/auth/me`,
-`/auth/logout`, and `/staff/dashboard` (Origin check, `Secure; HttpOnly` cookie, plus the usernames
+`/auth/logout`, `/staff/dashboard`, `/staff/requests/{inquiryId}`, and the Quote transition
+(Origin check, `Secure; HttpOnly` cookie, plus the usernames
 `ratelimited` and `outage` to simulate login 429 and 500). Dashboard scenarios and read counters are
 session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
+Request projections and Quote mutations also have session-isolated state, including stale and
+post-commit failure scenarios.
 Playwright starts it beside the admin preview. The real login is
 rate limited per IP, so don't point automated tests at it.

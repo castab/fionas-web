@@ -11,9 +11,10 @@
 	const avatar = $derived(initials(data.user));
 	const userMeta = $derived(`${staffHandle(data.user)} · ${roleLabel(data.user.roles)}`);
 
-	// Only the dashboard exists so far; the other sections are inert until their screens are built.
+	// Requests has a detail workspace; its index and the other sections remain unavailable.
 	const sections = ['Requests', 'Calendar', 'Menu'] as const;
 	const onDashboard = $derived(page.url.pathname === '/');
+	const onRequest = $derived(page.url.pathname.startsWith('/requests/'));
 
 	const pillButton = `inline-flex cursor-pointer items-center justify-center rounded-full border-2 border-transparent bg-olive-700 font-sans text-[11px] leading-[1.4] font-semibold text-cream-200 uppercase transition-colors duration-(--dur-fast) ease-(--ease-out) hover:bg-olive-800 active:translate-y-px ${focusRing}`;
 	const menuItem = `flex w-full cursor-pointer items-center gap-2.5 rounded-sm border-0 bg-transparent p-2.5 text-left font-sans text-[13px] leading-[1.4] font-semibold transition-colors duration-(--dur-fast) ease-(--ease-out) ${focusRing}`;
@@ -138,11 +139,19 @@
 				<button
 					type="button"
 					disabled
-					title={`${section} · Coming next`}
-					class="flex min-h-11 cursor-default items-center justify-between gap-2 rounded-input border-0 bg-transparent px-3.5 py-2.5 text-left font-sans text-xs leading-[1.4] font-semibold tracking-[0.1em] text-olive-800 uppercase opacity-65"
+					title={`${section} · ${section === 'Requests' && onRequest ? 'Index coming next' : 'Coming next'}`}
+					aria-current={section === 'Requests' && onRequest ? 'location' : undefined}
+					class={[
+						'flex min-h-11 cursor-default items-center justify-between gap-2 rounded-input border-0 px-3.5 py-2.5 text-left font-sans text-xs leading-[1.4] font-semibold tracking-[0.1em] uppercase',
+						section === 'Requests' && onRequest
+							? 'bg-olive-700 text-cream-200'
+							: 'bg-transparent text-olive-800 opacity-65'
+					]}
 				>
 					{section}
-					<span class="text-[9px] tracking-normal normal-case">Coming next</span>
+					<span class="text-[9px] tracking-normal normal-case"
+						>{section === 'Requests' && onRequest ? 'Index coming next' : 'Coming next'}</span
+					>
 				</button>
 			{/each}
 		</nav>
@@ -227,11 +236,19 @@
 					<button
 						type="button"
 						disabled
-						title={`${section} · Coming next`}
-						class="inline-flex min-h-11 flex-[1_1_calc(50%-4px)] cursor-default flex-col items-center justify-center rounded-full border-[1.5px] border-(--border-soft) bg-transparent px-2 py-2 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase opacity-65 min-[640px]:basis-0"
+						title={`${section} · ${section === 'Requests' && onRequest ? 'Index coming next' : 'Coming next'}`}
+						aria-current={section === 'Requests' && onRequest ? 'location' : undefined}
+						class={[
+							'inline-flex min-h-11 flex-[1_1_calc(50%-4px)] cursor-default flex-col items-center justify-center rounded-full border-[1.5px] px-2 py-2 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) uppercase min-[640px]:basis-0',
+							section === 'Requests' && onRequest
+								? 'border-olive-700 bg-olive-700 text-cream-200'
+								: 'border-(--border-soft) bg-transparent text-olive-800 opacity-65'
+						]}
 					>
 						{section}
-						<span class="text-[9px] tracking-normal normal-case">Coming next</span>
+						<span class="text-[9px] tracking-normal normal-case"
+							>{section === 'Requests' && onRequest ? 'Index coming next' : 'Coming next'}</span
+						>
 					</button>
 				{/each}
 			</nav>
