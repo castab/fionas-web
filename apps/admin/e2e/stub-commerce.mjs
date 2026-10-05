@@ -4,6 +4,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
+import { requestFixtures } from './request-fixture.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
@@ -15,7 +16,11 @@ const user = {
 	username: 'brayan',
 	displayName: 'Brayan',
 	roles: ['commerce.administrator'],
-	permissions: ['fionas.inquiries.read', 'commerce.financial-document.read']
+	permissions: [
+		'fionas.inquiries.read',
+		'commerce.financial-document.read',
+		'commerce.financial-document.create'
+	]
 };
 const password = 'e2e-password';
 const sessions = new Map();
@@ -91,14 +96,29 @@ createServer(async (req, res) => {
 				'dashboard-forbidden',
 				'dashboard-unavailable',
 				'dashboard-empty',
-				'dashboard-overlap'
+				'dashboard-overlap',
+				'request-read-only'
 			].includes(body.username) ||
 			body.password !== password
 		) {
 			return send(res, 401, { code: 'unauthenticated', message: 'Invalid credentials' });
 		}
 		const token = randomUUID();
-		sessions.set(token, { mode: body.username, dashboardReads: 0, authReads: 0, readPaths: [] });
+		sessions.set(token, {
+			mode: body.username,
+			dashboardReads: 0,
+			authReads: 0,
+			readPaths: [],
+			requestReads: 0,
+			quoteAttempts: [],
+			requests: requestFixtures(),
+			permissions:
+				body.username === 'request-read-only'
+					? user.permissions.filter(
+							(permission) => permission !== 'commerce.financial-document.create'
+						)
+					: [...user.permissions]
+		});
 		return send(res, 204, undefined, {
 			'set-cookie': `${cookieName}="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
 		});
@@ -110,7 +130,7 @@ createServer(async (req, res) => {
 			return send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
 		}
 		sessions.get(token).authReads++;
-		return send(res, 200, user);
+		return send(res, 200, { ...user, permissions: sessions.get(token).permissions });
 	}
 
 	if (route === 'GET /staff/dashboard' || pathname === '/__test/dashboard') {
@@ -145,7 +165,107 @@ createServer(async (req, res) => {
 				reasons: ['CUSTOMER_COMMUNICATION_UNACKNOWLEDGED']
 			});
 		}
+		for (const queue of Object.values(projection.workQueue)) {
+			for (const item of queue.items) {
+				const request = session.requests[item.inquiryId];
+				if (!request) continue;
+				item.documentId = request.financial.id;
+				item.stage = request.inquiry.lifecycle.stage;
+				item.financialStage = request.financial.stage;
+				item.version = request.financial.version;
+			}
+		}
+		const issued = projection.workQueue.needsQuote.items.filter((item) => item.stage === 'QUOTED');
+		projection.workQueue.needsQuote.items = projection.workQueue.needsQuote.items.filter(
+			(item) => item.stage !== 'QUOTED'
+		);
+		projection.summary.new -= issued.length;
+		projection.summary.quoted += issued.length;
 		return send(res, 200, projection, { 'cache-control': 'no-store' });
+	}
+
+	if (pathname === '/__test/request') {
+		if (!currentSession) return send(res, 401);
+		if (req.method === 'GET') return send(res, 200, currentSession);
+		if (req.method === 'POST') {
+			const body = await readJson(req);
+			currentSession.mode = body?.mode ?? user.username;
+			if (body?.permissions) currentSession.permissions = body.permissions;
+			if (body?.request) currentSession.requests[body.request.inquiry.id] = body.request;
+			return send(res, 204);
+		}
+	}
+
+	const requestMatch = /^\/staff\/requests\/([^/]+)$/.exec(pathname);
+	if (req.method === 'GET' && requestMatch) {
+		if (!currentSession) return send(res, 401);
+		currentSession.requestReads++;
+		const mode = currentSession.mode;
+		const status =
+			mode === 'request-forbidden'
+				? 403
+				: mode === 'request-not-found'
+					? 404
+					: mode === 'request-unavailable'
+						? 500
+						: null;
+		if (status)
+			return send(res, status, {
+				code: 'failure',
+				message: 'PRIVATE request database/access diagnostic'
+			});
+		const request = currentSession.requests[requestMatch[1]];
+		if (!request)
+			return send(res, 404, { code: 'not_found', message: 'PRIVATE inquiry identity diagnostic' });
+		const projection = structuredClone(request);
+		if (mode === 'request-missing-reconciliation') delete projection.financial.reconciliation;
+		return send(res, 200, projection, { 'cache-control': 'no-store' });
+	}
+
+	const quoteMatch = /^\/financial-documents\/([^/]+)\/quote$/.exec(pathname);
+	if (req.method === 'POST' && quoteMatch) {
+		if (!currentSession) return send(res, 401);
+		const body = await readJson(req);
+		currentSession.quoteAttempts.push({ documentId: quoteMatch[1], body });
+		if (
+			req.headers.origin !== trustedOrigin ||
+			!currentSession.permissions.includes('commerce.financial-document.create') ||
+			currentSession.mode === 'quote-forbidden'
+		) {
+			return send(res, 403, { code: 'forbidden', message: 'PRIVATE quote permission diagnostic' });
+		}
+		const request = Object.values(currentSession.requests).find(
+			(request) => request.financial.id === quoteMatch[1]
+		);
+		if (!request || currentSession.mode === 'quote-not-found')
+			return send(res, 404, { code: 'not_found', message: 'PRIVATE quote identity diagnostic' });
+		if (
+			currentSession.mode === 'quote-conflict' ||
+			body?.expectedVersion !== request.financial.version ||
+			request.financial.stage !== 'ESTIMATE'
+		) {
+			return send(res, 409, {
+				code: request.financial.stage !== 'ESTIMATE' ? 'illegal_transition' : 'conflict',
+				message: 'PRIVATE stale ledger diagnostic'
+			});
+		}
+		if (currentSession.mode === 'quote-unavailable')
+			return send(res, 500, {
+				code: 'internal_failure',
+				message: 'PRIVATE quote transaction diagnostic'
+			});
+		request.financial.previousVersion = request.financial.version;
+		request.financial.version++;
+		request.financial.stage = 'QUOTE';
+		request.financial.createdAt = '2026-07-16T19:01:00Z';
+		request.inquiry.lifecycle.stage = 'QUOTED';
+		// Commit then fail: the UI must reload/review rather than immediately replay the mutation.
+		if (currentSession.mode === 'quote-ambiguous')
+			return send(res, 500, {
+				code: 'internal_failure',
+				message: 'PRIVATE post-commit failure diagnostic'
+			});
+		return send(res, 200, request.financial);
 	}
 
 	if (route === 'POST /auth/logout') {

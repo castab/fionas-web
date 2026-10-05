@@ -62,6 +62,10 @@ test('renders the operational projection with dates, amounts and snapshot waitin
 	await expect(cards.filter({ hasText: 'Lena Ortiz' }).locator('time')).toHaveText('Jul 22');
 	await expect(cards.filter({ hasText: 'Dan Whitfield' }).locator('time')).toHaveText('Aug 8');
 	await expect(cards.getByRole('button')).toHaveCount(0);
+	for (const card of await cards.all()) {
+		await expect(card).toHaveAttribute('href', /^\/requests\/[0-9a-f-]+$/);
+		await expect(card).toHaveRole('link');
+	}
 	const overflow = await page.evaluate(
 		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
 	);

@@ -2,14 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
 	amountLabel,
 	dashboardView,
-	dateTile,
-	formatMoney,
 	formatToday,
 	requestCard,
 	todayLine,
 	uniqueWaitingCount,
 	waitingAge
 } from './dashboard.js';
+import { dateTile, formatMoney } from './presentation.js';
 import { dashboardFixture } from '../../e2e/dashboard-fixture.mjs';
 
 const asOf = dashboardFixture.asOf;
