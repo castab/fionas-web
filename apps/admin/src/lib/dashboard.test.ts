@@ -1,128 +1,102 @@
 import { describe, expect, it } from 'vitest';
 import {
-	buildGroup,
+	amountLabel,
+	dashboardView,
 	dateTile,
-	daysBetween,
-	estimateLabel,
 	formatMoney,
 	formatToday,
 	requestCard,
-	todayIso,
 	todayLine,
-	waitLabel,
-	type RequestCardInput
+	uniqueWaitingCount,
+	waitingAge
 } from './dashboard.js';
-import { PREVIEW_TODAY, previewDashboard } from './dashboard-fixtures.js';
+import { dashboardFixture } from '../../e2e/dashboard-fixture.mjs';
 
-const input = (overrides: Partial<RequestCardInput> = {}): RequestCardInput => ({
-	id: 'r1',
-	name: 'Maya Torres',
-	eventDate: '2026-07-25',
-	eventTypeLabel: 'Birthday party',
-	waitingSince: '2026-07-14',
-	estimateTotal: '415.00',
-	estimateIsMinimum: false,
-	...overrides
-});
+const asOf = dashboardFixture.asOf;
 
-describe('today', () => {
-	it('uses the business calendar, not UTC', () => {
-		// 03:30 UTC on Jul 17 is still the evening of Jul 16 in Fresno.
-		const now = new Date('2026-07-17T03:30:00Z');
-		expect(todayIso(now)).toBe('2026-07-16');
-		expect(formatToday(now)).toBe('Thursday, July 16');
+describe('dashboard presentation', () => {
+	it('formats the snapshot date on the business calendar, not the browser clock', () => {
+		expect(formatToday('2026-07-17T03:30:00Z')).toBe('Thursday, July 16');
+		expect(dashboardView(dashboardFixture).dateLabel).toBe('Thursday, July 16');
 	});
-
-	it('adds the waiting count only when it is known', () => {
-		expect(todayLine('Thursday, July 16', null)).toBe('Thursday, July 16');
-		expect(todayLine('Thursday, July 16', 0)).toBe('Thursday, July 16 · 0 requests waiting on you');
-		expect(todayLine('Thursday, July 16', 1)).toBe('Thursday, July 16 · 1 request waiting on you');
-		expect(todayLine('Thursday, July 16', 4)).toBe('Thursday, July 16 · 4 requests waiting on you');
-	});
-});
-
-describe('calendar math', () => {
-	it('counts whole days across month and DST boundaries', () => {
-		expect(daysBetween('2026-07-14', '2026-07-16')).toBe(2);
-		expect(daysBetween('2026-06-30', '2026-07-01')).toBe(1);
-		expect(daysBetween('2026-11-01', '2026-11-02')).toBe(1);
-		expect(daysBetween('2026-07-16', '2026-07-14')).toBe(-2);
-	});
-
-	it('reads event dates as calendar dates', () => {
-		expect(dateTile('2026-07-25')).toEqual({ month: 'Jul', day: '25' });
+	it('formats date-only events without timezone drift, including month and year boundaries', () => {
+		expect(dateTile('2026-07-22')).toEqual({ month: 'Jul', day: '22' });
 		expect(dateTile('2026-08-01')).toEqual({ month: 'Aug', day: '1' });
+		expect(dateTile('2027-01-01')).toEqual({ month: 'Jan', day: '1' });
+		expect(dateTile('2028-02-29')).toEqual({ month: 'Feb', day: '29' });
 	});
-
-	it('labels the wait', () => {
-		expect(waitLabel(0)).toBe('Came in today');
-		expect(waitLabel(1)).toBe('Waiting 1 day');
-		expect(waitLabel(36)).toBe('Waiting 36 days');
+	it('formats exact currency and material cents without floating-point loss', () => {
+		expect(formatMoney('560.00', 'USD')).toBe('$560');
+		expect(formatMoney('492.50', 'USD')).toBe('$492.50');
+		expect(formatMoney('0.10', 'USD')).toBe('$0.10');
+		expect(formatMoney('9007199254740993.50', 'USD')).toBe('$9,007,199,254,740,993.50');
+		expect(formatMoney('1234.5', 'EUR')).toBe('€1,234.50');
+		expect(formatMoney('1234', 'JPY')).toBe('¥1,234');
 	});
-});
-
-describe('money', () => {
-	it('formats exact decimals, dropping whole cents', () => {
-		expect(formatMoney('415.00')).toBe('$415');
-		expect(formatMoney('985')).toBe('$985');
-		expect(formatMoney('1234.5')).toBe('$1,234.50');
-		expect(formatMoney('1234567.25')).toBe('$1,234,567.25');
-		expect(formatMoney('0.10')).toBe('$0.10');
-		expect(formatMoney('-12.00')).toBe('-$12');
+	it('uses EXACT/FROM only from the qualifier', () => {
+		expect(amountLabel({ total: '560', totalQualifier: 'EXACT', currency: 'USD' })).toBe('$560');
+		expect(amountLabel({ total: '985', totalQualifier: 'FROM', currency: 'USD' })).toBe(
+			'from $985'
+		);
 	});
-
-	it('prefixes a minimum-guest estimate with "from"', () => {
-		expect(estimateLabel('985.00', true)).toBe('from $985');
-		expect(estimateLabel('415.00', false)).toBe('$415');
-		expect(estimateLabel(null, true)).toBeNull();
+	it('uses attention onset and asOf for completed elapsed days', () => {
+		expect(waitingAge('2026-07-14T19:00:00Z', asOf)).toBe('Waiting 2 days');
+		expect(waitingAge('2026-07-15T19:00:00Z', asOf)).toBe('Waiting 1 day');
+		expect(waitingAge('2026-07-16T18:00:00Z', asOf)).toBe('Waiting less than a day');
+		expect(waitingAge(asOf, asOf)).toBe('Waiting less than a day');
+		expect(waitingAge('2026-07-20T00:00:00Z', asOf)).toBe('Waiting less than a day');
+		// Elapsed days across DST, rather than a local-date reclassification.
+		expect(waitingAge('2026-03-08T09:00:00Z', '2026-03-09T08:00:00Z')).toBe(
+			'Waiting less than a day'
+		);
 	});
-});
-
-describe('request cards', () => {
-	it('maps an input to the card view', () => {
-		expect(requestCard(input(), '2026-07-16')).toEqual({
-			id: 'r1',
-			name: 'Maya Torres',
-			dateMonth: 'Jul',
-			dateDay: '25',
-			waitDays: 2,
-			waitMeta: 'Waiting 2 days · Birthday party',
-			estLabel: '$415',
-			urgent: false
+	it('maps display fields without consulting lifecycle, financial stage, or reasons', () => {
+		const item = dashboardFixture.workQueue.needsQuote.items[1];
+		expect(
+			requestCard({ ...item, financialStage: 'QUOTE', stage: 'SERVED', reasons: [] }, asOf)
+		).toMatchObject({
+			name: 'Dan Whitfield',
+			dateMonth: 'Aug',
+			dateDay: '8',
+			estLabel: 'from $985',
+			waitMeta: 'Waiting 1 day · Corporate event'
 		});
 	});
-
-	it('never shows a negative wait', () => {
-		expect(requestCard(input({ waitingSince: '2026-07-20' }), '2026-07-16').waitMeta).toBe(
-			'Came in today · Birthday party'
-		);
-	});
-
-	it('sorts a group longest-waiting first and marks urgency', () => {
-		const group = buildGroup(
-			[
-				input({ id: 'a', waitingSince: '2026-07-15' }),
-				input({ id: 'b', waitingSince: '2026-07-01' }),
-				input({ id: 'c', waitingSince: '2026-07-10' })
-			],
-			'2026-07-16',
-			{ urgent: true }
-		);
-		expect(group.map((card) => card.id)).toEqual(['b', 'c', 'a']);
-		expect(group.every((card) => card.urgent)).toBe(true);
-	});
-});
-
-describe('preview fixtures', () => {
-	it('match the design on its pinned day', () => {
-		const view = previewDashboard(PREVIEW_TODAY);
-		expect(view.stats.map((s) => s.count)).toEqual([2, 1, 1, 1]);
-		expect(view.waitingCount).toBe(4);
-		expect(view.replyGroup.map((c) => c.name)).toEqual(['Lena Ortiz', 'Marcus Lee']);
-		expect(view.quoteGroup[1]).toMatchObject({ name: 'Dan Whitfield', estLabel: 'from $985' });
+	it('uses returned counts directly and preserves every backend queue and its ordering', () => {
+		const response = structuredClone(dashboardFixture);
+		response.summary = { new: 17, quoted: 8, booked: 12, needsClosing: 3 };
+		response.workQueue.needsReply.items.reverse();
+		const view = dashboardView(response);
+		expect(view.stats.map((stat) => stat.count)).toEqual([17, 8, 12, 3]);
+		expect(view.replyGroup.map((card) => card.name)).toEqual(['Marcus Lee', 'Lena Ortiz']);
+		expect(view.quoteGroup.map((card) => card.name)).toEqual(['Maya Torres', 'Dan Whitfield']);
 		expect(view.resolutionGroup[0]).toMatchObject({
+			name: 'Priya Nathan',
 			urgent: true,
-			waitMeta: 'Waiting 36 days · Retirement party'
+			estLabel: '$492.50'
 		});
+	});
+	it('counts unique inquiries across all three queues without removing overlapping cards', () => {
+		const response = structuredClone(dashboardFixture);
+		response.workQueue.needsReply.items.push(response.workQueue.needsQuote.items[0]);
+		response.workQueue.needsResolution.items.push(response.workQueue.needsQuote.items[0]);
+		expect(uniqueWaitingCount(response.workQueue)).toBe(5);
+		expect(dashboardView(response).replyGroup).toHaveLength(3);
+		expect(dashboardView(response).resolutionGroup).toHaveLength(2);
+		expect(todayLine('Thursday, July 16', 5)).toBe('Thursday, July 16 · 5 requests waiting on you');
+		expect(todayLine('Thursday, July 16', 1)).toContain('1 request waiting');
+	});
+	it('presents a successful empty projection as zero, with empty queues', () => {
+		const response = {
+			asOf,
+			summary: { new: 0, quoted: 0, booked: 0, needsClosing: 0 },
+			workQueue: {
+				needsReply: { items: [] },
+				needsQuote: { items: [] },
+				needsResolution: { items: [] }
+			}
+		};
+		expect(dashboardView(response).waitingCount).toBe(0);
+		expect(dashboardView(response).stats.every((stat) => stat.count === 0)).toBe(true);
 	});
 });

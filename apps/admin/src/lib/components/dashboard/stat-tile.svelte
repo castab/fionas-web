@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { focusRing } from '@fionas/ui';
+	import { Card } from '@fionas/ui';
 	import type { StatTileView, StatTone } from '$lib/dashboard.js';
-
 	let { stat }: { stat: StatTileView } = $props();
-
 	const toneClass: Record<StatTone, string> = {
 		olive: 'text-olive-700',
 		'olive-soft': 'text-olive-500',
@@ -12,17 +10,16 @@
 	};
 </script>
 
-<!-- Will open the request list filtered to this status; inert in the scaffold. -->
-<button
-	type="button"
-	class={`flex cursor-pointer flex-col items-start gap-1 rounded-card border-0 bg-(--surface-card) px-3.5 py-4 text-left shadow-card transition-shadow duration-(--dur-fast) ease-(--ease-out) hover:shadow-raised ${focusRing}`}
+<Card
+	data-testid="summary-card"
+	aria-label={`${stat.label}: ${stat.count}`}
+	class="flex flex-col items-start gap-1 px-3.5 py-4"
 >
-	<span class={`font-sans text-[26px] leading-none font-bold ${toneClass[stat.tone]}`}>
-		{stat.count}
-	</span>
+	<span class={`font-sans text-[26px] leading-none font-bold ${toneClass[stat.tone]}`}
+		>{stat.count}</span
+	>
 	<span
 		class="font-sans text-[10px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-muted) uppercase"
+		>{stat.label}</span
 	>
-		{stat.label}
-	</span>
-</button>
+</Card>

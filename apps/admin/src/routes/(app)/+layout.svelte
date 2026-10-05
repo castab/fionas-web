@@ -52,8 +52,12 @@
 {/snippet}
 
 {#snippet accountActions()}
-	<!-- Account settings get their own screen later; inert in the scaffold. -->
-	<button type="button" class={`${menuItem} text-(--text-heading) hover:bg-cream-300/60`}>
+	<button
+		disabled
+		title="Account settings · Coming next"
+		type="button"
+		class={`${menuItem} cursor-default text-(--text-muted) opacity-65`}
+	>
 		<svg
 			width="16"
 			height="16"
@@ -107,10 +111,12 @@
 		>
 			<Wordmark class="h-[53px]" aria-hidden="true" />
 		</a>
-		<!-- Starts a staff-entered quote later; inert in the scaffold. -->
+		<!-- Future workflows are visibly disabled until their routes exist. -->
 		<button
 			type="button"
-			class={`mx-0.5 mb-3.5 min-h-11 px-4 py-[11px] tracking-(--track-caps-tight) ${pillButton}`}
+			disabled
+			title="New quote · Coming next"
+			class={`mx-0.5 mb-3.5 min-h-11 cursor-default px-4 py-[11px] tracking-(--track-caps-tight) opacity-65 ${pillButton}`}
 		>
 			+ New quote
 		</button>
@@ -131,9 +137,12 @@
 			{#each sections as section (section)}
 				<button
 					type="button"
-					class={`flex min-h-11 cursor-pointer items-center rounded-input border-0 bg-transparent px-3.5 py-2.5 text-left font-sans text-xs leading-[1.4] font-semibold tracking-[0.1em] text-olive-800 uppercase transition-colors duration-(--dur-fast) ease-(--ease-out) hover:bg-cream-300/60 ${focusRing}`}
+					disabled
+					title={`${section} · Coming next`}
+					class="flex min-h-11 cursor-default items-center justify-between gap-2 rounded-input border-0 bg-transparent px-3.5 py-2.5 text-left font-sans text-xs leading-[1.4] font-semibold tracking-[0.1em] text-olive-800 uppercase opacity-65"
 				>
 					{section}
+					<span class="text-[9px] tracking-normal normal-case">Coming next</span>
 				</button>
 			{/each}
 		</nav>
@@ -160,8 +169,10 @@
 				<!-- Starts a staff-entered quote later; inert in the scaffold. -->
 				<button
 					type="button"
+					disabled
+					title="New quote · Coming next"
 					aria-label="New quote"
-					class={`ml-auto min-h-10 flex-none gap-1.5 px-3.5 py-[9px] tracking-[0.1em] ${pillButton}`}
+					class={`ml-auto min-h-10 flex-none cursor-default gap-1.5 px-3.5 py-[9px] tracking-[0.1em] opacity-65 ${pillButton}`}
 				>
 					<svg
 						width="14"
@@ -215,18 +226,22 @@
 				{#each sections as section (section)}
 					<button
 						type="button"
-						class={`inline-flex min-h-11 flex-[1_1_calc(50%-4px)] cursor-pointer items-center justify-center rounded-full border-[1.5px] border-(--border-soft) bg-transparent px-2 py-2.5 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase transition-colors duration-(--dur-fast) ease-(--ease-out) min-[640px]:basis-0 ${focusRing}`}
+						disabled
+						title={`${section} · Coming next`}
+						class="inline-flex min-h-11 flex-[1_1_calc(50%-4px)] cursor-default flex-col items-center justify-center rounded-full border-[1.5px] border-(--border-soft) bg-transparent px-2 py-2 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase opacity-65 min-[640px]:basis-0"
 					>
 						{section}
+						<span class="text-[9px] tracking-normal normal-case">Coming next</span>
 					</button>
 				{/each}
 			</nav>
 		</header>
 
-		<main
-			class="mx-auto w-full max-w-[1200px] flex-1 px-5 pt-6 min-[900px]:overflow-y-auto min-[1150px]:max-w-[1440px]"
-		>
+		<main class="w-full flex-1 px-5 pt-6 min-[900px]:overflow-y-auto min-[1150px]:px-16">
 			{@render children()}
 		</main>
+		<footer class="bg-olive-700 px-4 py-2.5 text-center font-sans text-[11px] text-cream-200">
+			admin console
+		</footer>
 	</div>
 </div>
