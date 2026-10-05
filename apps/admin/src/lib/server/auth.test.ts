@@ -171,8 +171,24 @@ describe('applySetCookies', () => {
 			httpOnly: true,
 			secure: true,
 			maxAge: 3600,
-			sameSite: 'lax'
+			sameSite: 'lax',
+			encode: expect.any(Function)
 		});
-		expect(set).toHaveBeenNthCalledWith(2, 'b', '2', { path: '/', httpOnly: false });
+		expect(set).toHaveBeenNthCalledWith(2, 'b', '2', {
+			path: '/',
+			httpOnly: false,
+			encode: expect.any(Function)
+		});
+	});
+
+	it('re-issues a quoted value byte for byte, as the API (http4k) sends it', () => {
+		const set = vi.fn();
+		applySetCookies({ set } as unknown as Cookies, [
+			'__Host-fionas_session="aB-_9"; Path=/; Secure; HttpOnly; SameSite=Lax'
+		]);
+		const [name, value, options] = set.mock.calls[0];
+		expect([name, value]).toEqual(['__Host-fionas_session', '"aB-_9"']);
+		// SvelteKit's default encoder would turn the quotes into %22.
+		expect(options.encode(value)).toBe('"aB-_9"');
 	});
 });

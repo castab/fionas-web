@@ -75,7 +75,7 @@ export async function request<T = null>(
 	}
 
 	const body = await response.json().catch(() => null);
-	if (response.status === 403 && body?.code === 'forbidden') {
+	if (path === '/auth/login' && response.status === 403 && body?.code === 'forbidden') {
 		// Operator hint only: a 403 on /auth/login almost always means this admin's origin is not in
 		// the backend's trusted-origin list. Never log cookies or request bodies.
 		console.error(

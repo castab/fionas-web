@@ -55,7 +55,7 @@
 	>
 		<div class="flex flex-col gap-1.5">
 			<h1 class="m-0 tracking-(--track-heading) text-(--text-heading) [font:var(--type-h1)]">
-				admin sign in
+				sign in
 			</h1>
 			<p class="m-0 text-(--text-muted) [font:var(--type-body-sm)]">
 				Booking requests, quotes &amp; the calendar.

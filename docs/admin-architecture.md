@@ -41,7 +41,10 @@ Why it has to be this way:
 | Resolve the signed-in user, guard routes | `apps/admin/src/hooks.server.ts`                                   |
 | Typed `locals.user`                      | `apps/admin/src/app.d.ts`                                          |
 | Sign-in page + action                    | `apps/admin/src/routes/(auth)/login/`                              |
-| Signed-in area (header, sign out)        | `apps/admin/src/routes/(app)/`                                     |
+| Signed-in shell (sidebar, nav, sign out) | `apps/admin/src/routes/(app)/+layout.svelte`                       |
+| Dashboard projection client              | `apps/admin/src/lib/server/dashboard.ts`                           |
+| Dashboard page and presentation          | `apps/admin/src/routes/(app)/+page.*`, `src/lib/dashboard*.ts`     |
+| Dashboard data and presentation boundary | `docs/admin-dashboard-report.md`                                   |
 | Sign out                                 | `apps/admin/src/routes/logout/+server.ts`                          |
 | Temporary sign-in toast (to be removed)  | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte` |
 
@@ -141,7 +144,9 @@ npm run test:unit -- --run                   # includes apps/admin (vitest, fake
 npm run test:e2e                             # builds admin and runs it against a stub API
 ```
 
-E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `/auth/login`, `/auth/me`
-and `/auth/logout` (Origin check, `Secure; HttpOnly` cookie, plus the usernames `ratelimited` and
-`outage` to simulate 429 and 500) and Playwright starts it beside the admin preview. The real login is
+E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `/auth/login`, `/auth/me`,
+`/auth/logout`, and `/staff/dashboard` (Origin check, `Secure; HttpOnly` cookie, plus the usernames
+`ratelimited` and `outage` to simulate login 429 and 500). Dashboard scenarios and read counters are
+session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
+Playwright starts it beside the admin preview. The real login is
 rate limited per IP, so don't point automated tests at it.
