@@ -4,7 +4,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
-import { requestFixtures } from './request-fixture.mjs';
+import { requestFixtures, proposalPair } from './request-fixture.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
@@ -19,7 +19,8 @@ const user = {
 	permissions: [
 		'fionas.inquiries.read',
 		'commerce.financial-document.read',
-		'commerce.financial-document.create'
+		'commerce.financial-document.create',
+		'commerce.deposit-requirement.manage'
 	]
 };
 const password = 'e2e-password';
@@ -110,7 +111,7 @@ createServer(async (req, res) => {
 			authReads: 0,
 			readPaths: [],
 			requestReads: 0,
-			quoteAttempts: [],
+			proposalAttempts: [],
 			requests: requestFixtures(),
 			permissions:
 				body.username === 'request-read-only'
@@ -222,34 +223,72 @@ createServer(async (req, res) => {
 		return send(res, 200, projection, { 'cache-control': 'no-store' });
 	}
 
-	const quoteMatch = /^\/financial-documents\/([^/]+)\/quote$/.exec(pathname);
-	if (req.method === 'POST' && quoteMatch) {
+	const proposalMatch = /^\/staff\/requests\/([^/]+)\/proposals$/.exec(pathname);
+	if (req.method === 'POST' && proposalMatch) {
 		if (!currentSession) return send(res, 401);
 		const body = await readJson(req);
-		currentSession.quoteAttempts.push({ documentId: quoteMatch[1], body });
+		currentSession.proposalAttempts.push({ inquiryId: proposalMatch[1], body });
 		if (
 			req.headers.origin !== trustedOrigin ||
 			!currentSession.permissions.includes('commerce.financial-document.create') ||
-			currentSession.mode === 'quote-forbidden'
+			!currentSession.permissions.includes('commerce.deposit-requirement.manage') ||
+			currentSession.mode === 'proposal-forbidden'
 		) {
 			return send(res, 403, { code: 'forbidden', message: 'PRIVATE quote permission diagnostic' });
 		}
-		const request = Object.values(currentSession.requests).find(
-			(request) => request.financial.id === quoteMatch[1]
-		);
-		if (!request || currentSession.mode === 'quote-not-found')
+		const request = currentSession.requests[proposalMatch[1]];
+		if (!request || currentSession.mode === 'proposal-not-found')
 			return send(res, 404, { code: 'not_found', message: 'PRIVATE quote identity diagnostic' });
 		if (
-			currentSession.mode === 'quote-conflict' ||
-			body?.expectedVersion !== request.financial.version ||
-			request.financial.stage !== 'ESTIMATE'
+			currentSession.mode === 'proposal-conflict' ||
+			body?.expectedDocumentVersion !== request.financial.version ||
+			request.financial.stage !== 'ESTIMATE' ||
+			request.inquiry.lifecycle.stage !== 'REQUESTED' ||
+			request.proposal != null ||
+			request.depositRequirement.state !== 'NONE'
 		) {
 			return send(res, 409, {
 				code: request.financial.stage !== 'ESTIMATE' ? 'illegal_transition' : 'conflict',
 				message: 'PRIVATE stale ledger diagnostic'
 			});
 		}
-		if (currentSession.mode === 'quote-unavailable')
+		const terms = body?.terms;
+		const positive = (value) =>
+			typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value) && /[1-9]/.test(value);
+		const percentageValid = (value) => {
+			if (!positive(value)) return false;
+			const [whole, fraction = ''] = value.split('.');
+			return BigInt(whole + fraction) <= 100n * 10n ** BigInt(fraction.length);
+		};
+		if (
+			Object.keys(body ?? {}).length !== 2 ||
+			!terms ||
+			(terms.type === 'PERCENTAGE'
+				? Object.keys(terms).length !== 2 || !percentageValid(terms.percentage)
+				: terms.type !== 'FIXED' ||
+					Object.keys(terms).length !== 3 ||
+					!positive(terms.amount) ||
+					terms.currency !== request.financial.currency) ||
+			currentSession.mode === 'proposal-invalid'
+		)
+			return send(res, 422, { code: 'validation_failed', message: 'PRIVATE deposit diagnostic' });
+		let pair;
+		try {
+			pair = proposalPair(
+				request.inquiry.id,
+				request.financial.id,
+				request.financial.version + 1,
+				request.financial.total,
+				terms,
+				request.financial.currency
+			);
+		} catch {
+			return send(res, 422, {
+				code: 'validation_failed',
+				message: 'PRIVATE minor units diagnostic'
+			});
+		}
+		if (currentSession.mode === 'proposal-unavailable')
 			return send(res, 500, {
 				code: 'internal_failure',
 				message: 'PRIVATE quote transaction diagnostic'
@@ -259,13 +298,19 @@ createServer(async (req, res) => {
 		request.financial.stage = 'QUOTE';
 		request.financial.createdAt = '2026-07-16T19:01:00Z';
 		request.inquiry.lifecycle.stage = 'QUOTED';
+		Object.assign(request, pair);
 		// Commit then fail: the UI must reload/review rather than immediately replay the mutation.
-		if (currentSession.mode === 'quote-ambiguous')
+		if (currentSession.mode === 'proposal-ambiguous')
 			return send(res, 500, {
 				code: 'internal_failure',
 				message: 'PRIVATE post-commit failure diagnostic'
 			});
-		return send(res, 200, request.financial);
+		return send(
+			res,
+			200,
+			{ ...pair, financial: request.financial },
+			{ 'cache-control': 'no-store' }
+		);
 	}
 
 	if (route === 'POST /auth/logout') {

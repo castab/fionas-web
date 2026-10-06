@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getStaffRequest, issueQuote } from './staff-request.js';
+import { getStaffRequest, issueInquiryProposal } from './staff-request.js';
 import type { BackendConfig } from './backend.js';
-import { mayaId, mayaDocumentId, requestFixtures } from '../../../e2e/request-fixture.mjs';
+import { mayaId, requestFixtures } from '../../../e2e/request-fixture.mjs';
 
 const projection = requestFixtures()[mayaId];
 const config = (fetch: BackendConfig['fetch']): BackendConfig => ({
@@ -11,6 +11,28 @@ const config = (fetch: BackendConfig['fetch']): BackendConfig => ({
 });
 
 describe('staff request clients', () => {
+	it('sends exact fixed terms and preserves mutation cookies', async () => {
+		const fetch = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ proposal: {}, financial: {}, depositRequirement: {} }), {
+					headers: { 'set-cookie': 'session=renewed; Path=/' }
+				})
+		);
+		const result = await issueInquiryProposal(
+			config(fetch),
+			'inquiry/identity',
+			7,
+			{ type: 'FIXED', amount: '125.00', currency: 'CAD' },
+			'session=staff'
+		);
+		expect(fetch).toHaveBeenCalledExactlyOnceWith(
+			'http://api.test/staff/requests/inquiry%2Fidentity/proposals',
+			expect.objectContaining({
+				body: '{"expectedDocumentVersion":7,"terms":{"type":"FIXED","amount":"125.00","currency":"CAD"}}'
+			})
+		);
+		expect(result).toMatchObject({ ok: true, setCookies: ['session=renewed; Path=/'] });
+	});
 	it('makes one coherent request read, forwarding the USER cookie and returned cookies', async () => {
 		const fetch = vi.fn(
 			async () =>
@@ -34,17 +56,29 @@ describe('staff request clients', () => {
 		);
 		expect(result).toEqual({ ok: true, data: projection, setCookies: ['session=renewed; Path=/'] });
 	});
-	it('issues the exact reviewed version on the existing document endpoint', async () => {
-		const quote = { ...projection.financial, version: 2, previousVersion: 1, stage: 'QUOTE' };
+	it('issues the exact reviewed version on the inquiry proposal endpoint', async () => {
+		const quote = {
+			financial: { ...projection.financial, version: 2, previousVersion: 1, stage: 'QUOTE' },
+			proposal: {},
+			depositRequirement: {}
+		};
 		const fetch = vi.fn(async () => new Response(JSON.stringify(quote)));
-		expect(await issueQuote(config(fetch), mayaDocumentId, 1, 'session=staff')).toEqual({
+		expect(
+			await issueInquiryProposal(
+				config(fetch),
+				mayaId,
+				1,
+				{ type: 'PERCENTAGE', percentage: '20' },
+				'session=staff'
+			)
+		).toEqual({
 			ok: true,
 			data: quote,
 			setCookies: []
 		});
 		expect(fetch).toHaveBeenCalledOnce();
 		expect(fetch).toHaveBeenCalledWith(
-			`http://api.test/financial-documents/${mayaDocumentId}/quote`,
+			`http://api.test/staff/requests/${mayaId}/proposals`,
 			expect.objectContaining({
 				method: 'POST',
 				headers: {
@@ -53,7 +87,7 @@ describe('staff request clients', () => {
 					cookie: 'session=staff',
 					'content-type': 'application/json'
 				},
-				body: '{"expectedVersion":1}'
+				body: '{"expectedDocumentVersion":1,"terms":{"type":"PERCENTAGE","percentage":"20"}}'
 			})
 		);
 	});
@@ -68,7 +102,14 @@ describe('staff request clients', () => {
 			);
 			for (const invoke of [
 				() => getStaffRequest(config(fetch), mayaId, 'session=staff'),
-				() => issueQuote(config(fetch), mayaDocumentId, 1, 'session=staff')
+				() =>
+					issueInquiryProposal(
+						config(fetch),
+						mayaId,
+						1,
+						{ type: 'PERCENTAGE', percentage: '20' },
+						'session=staff'
+					)
 			]) {
 				fetch.mockClear();
 				expect(await invoke()).toMatchObject({ ok: false, error: { status, code: 'conflict' } });
@@ -84,7 +125,15 @@ describe('staff request clients', () => {
 			ok: false,
 			error: { status: 503 }
 		});
-		expect(await issueQuote(config(fetch), mayaDocumentId, 1, 'session=staff')).toMatchObject({
+		expect(
+			await issueInquiryProposal(
+				config(fetch),
+				mayaId,
+				1,
+				{ type: 'PERCENTAGE', percentage: '20' },
+				'session=staff'
+			)
+		).toMatchObject({
 			ok: false,
 			error: { status: 503 }
 		});

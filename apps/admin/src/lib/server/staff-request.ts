@@ -1,7 +1,8 @@
 import type {
 	StaffRequestResponse,
-	FinancialDocumentResponse,
-	StageTransitionRequest
+	DepositTermsRequest,
+	IssueInquiryProposalRequest,
+	IssuedInquiryProposalResponse
 } from '../request-contract.js';
 import { request, type BackendConfig } from './backend.js';
 
@@ -11,16 +12,17 @@ export function getStaffRequest(config: BackendConfig, inquiryId: string, cookie
 	});
 }
 
-export function issueQuote(
+export function issueInquiryProposal(
 	config: BackendConfig,
-	documentId: string,
-	expectedVersion: number,
+	inquiryId: string,
+	expectedDocumentVersion: number,
+	terms: DepositTermsRequest,
 	cookie: string | null
 ) {
-	const json: StageTransitionRequest = { expectedVersion };
-	return request<FinancialDocumentResponse>(
+	const json: IssueInquiryProposalRequest = { expectedDocumentVersion, terms };
+	return request<IssuedInquiryProposalResponse>(
 		config,
-		`/financial-documents/${encodeURIComponent(documentId)}/quote`,
+		`/staff/requests/${encodeURIComponent(inquiryId)}/proposals`,
 		{
 			method: 'POST',
 			json,

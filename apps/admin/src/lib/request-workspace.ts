@@ -3,8 +3,15 @@ import type {
 	StaffRequestResponse,
 	CurrentStaffRequest
 } from './request-contract.js';
+import { isDepositTerms } from './deposit.js';
 
-export const QUOTE_PERMISSION = 'commerce.financial-document.create';
+export const PROPOSAL_PERMISSIONS = [
+	'commerce.financial-document.create',
+	'commerce.deposit-requirement.manage'
+] as const;
+export function hasProposalPermissions(permissions: string[]): boolean {
+	return PROPOSAL_PERMISSIONS.every((permission) => permissions.includes(permission));
+}
 export const lifecycleStages = ['REQUESTED', 'QUOTED', 'BOOKED', 'SERVED', 'CLOSED'] as const;
 
 const lifecycleLabels: Record<InquiryLifecycle['stage'], string> = {
@@ -37,7 +44,7 @@ export function isCurrentStaffRequest(
 	data: StaffRequestResponse | null,
 	inquiryId: string
 ): data is CurrentStaffRequest {
-	return (
+	if (!(
 		!!data &&
 		data.inquiry?.id === inquiryId &&
 		data.financial?.inquiryId === inquiryId &&
@@ -46,13 +53,73 @@ export function isCurrentStaffRequest(
 		Array.isArray(data.financial.lines) &&
 		typeof data.financial.reconciliation?.balance === 'string' &&
 		typeof data.financial.reconciliation.currency === 'string'
+	))
+		return false;
+	const { inquiry, financial, proposal, depositRequirement: deposit } = data;
+	const version = (value: unknown) =>
+		typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
+	const instant = (value: unknown) =>
+		typeof value === 'string' &&
+		/^\d{4}-\d\d-\d\dT/.test(value) &&
+		Number.isFinite(Date.parse(value));
+	if (
+		!version(financial.version) ||
+		financial.reconciliation!.currency !== financial.currency ||
+		typeof financial.currency !== 'string' ||
+		!/^[A-Z]{3}$/.test(financial.currency) ||
+		!isDepositTerms(data.suggestedDepositTerms, financial.currency) ||
+		!deposit ||
+		deposit.documentId !== financial.id
+	)
+		return false;
+	if (inquiry.lifecycle.stage === 'REQUESTED')
+		return financial.stage === 'ESTIMATE' && proposal == null && deposit.state === 'NONE';
+	if (
+		!proposal ||
+		typeof proposal.id !== 'string' ||
+		!proposal.id ||
+		proposal.inquiryId !== inquiry.id ||
+		proposal.documentId !== financial.id ||
+		!version(proposal.documentVersion) ||
+		!version(proposal.depositRequirementRevision) ||
+		!instant(proposal.issuedAt) ||
+		typeof proposal.principalKind !== 'string' ||
+		typeof proposal.principalId !== 'string' ||
+		typeof proposal.issuanceKind !== 'string'
+	)
+		return false;
+	if (
+		deposit.state !== 'ACTIVE' ||
+		!version(deposit.revision) ||
+		deposit.revision !== proposal.depositRequirementRevision ||
+		deposit.approvalDocumentVersion !== proposal.documentVersion ||
+		!instant(deposit.createdAt) ||
+		!isDepositTerms(deposit.terms, financial.currency) ||
+		!deposit.requiredAmount ||
+		typeof deposit.requiredAmount.amount !== 'string' ||
+		!/^\d+(?:\.\d+)?$/.test(deposit.requiredAmount.amount) ||
+		deposit.requiredAmount.currency !== financial.currency ||
+		typeof deposit.satisfied !== 'boolean' ||
+		(deposit.previousRevision !== undefined &&
+			(!version(deposit.previousRevision) || deposit.previousRevision >= deposit.revision))
+	)
+		return false;
+	return inquiry.lifecycle.stage === 'QUOTED'
+		? financial.stage === 'QUOTE' && financial.version === proposal.documentVersion
+		: ['BOOKED', 'SERVED', 'CLOSED'].includes(inquiry.lifecycle.stage) &&
+				financial.stage === 'INVOICE' &&
+				financial.version > proposal.documentVersion;
+}
+export function isProposalEligible(data: StaffRequestResponse): boolean {
+	return (
+		data.inquiry.lifecycle.stage === 'REQUESTED' &&
+		data.financial.stage === 'ESTIMATE' &&
+		data.proposal == null &&
+		data.depositRequirement.state === 'NONE'
 	);
 }
-export function isQuoteEligible(data: StaffRequestResponse): boolean {
-	return data.inquiry.lifecycle.stage === 'REQUESTED' && data.financial.stage === 'ESTIMATE';
-}
 export function canIssueQuote(data: StaffRequestResponse, permissions: string[]): boolean {
-	return isQuoteEligible(data) && permissions.includes(QUOTE_PERMISSION);
+	return isProposalEligible(data) && hasProposalPermissions(permissions);
 }
 export type RequestError = 'forbidden' | 'not-found' | 'unavailable';
 export function requestErrorKind(status: number): RequestError {
@@ -72,7 +139,9 @@ export function requestErrorMessage(kind: RequestError): string {
 export function quoteErrorMessage(status: number): string {
 	if (status === 403) return 'This account cannot issue a quote for this request.';
 	if (status === 404)
-		return 'This request or its financial document is no longer available. Reload to review the latest state.';
+		return 'This request is no longer available. Reload to review the latest state.';
+	if (status === 400 || status === 422)
+		return 'Enter a valid deposit percentage or amount before issuing the quote.';
 	if (status === 409)
 		return 'This request changed since you opened it. Reload to review the latest version before trying again.';
 	if (status >= 500)

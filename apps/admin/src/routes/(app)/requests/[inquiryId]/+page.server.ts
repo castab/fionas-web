@@ -1,11 +1,19 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { applySetCookies } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
-import { getStaffRequest, issueQuote } from '$lib/server/staff-request.js';
+import { getStaffRequest, issueInquiryProposal } from '$lib/server/staff-request.js';
+import {
+	readDepositForm,
+	depositInputError,
+	matchesReviewedSuggestion,
+	type DepositFormValues,
+	type DepositErrorField
+} from '$lib/deposit.js';
+import type { DepositTermsRequest } from '$lib/request-contract.js';
 import {
 	isCurrentStaffRequest,
-	isQuoteEligible,
-	QUOTE_PERMISSION,
+	isProposalEligible,
+	hasProposalPermissions,
 	quoteErrorMessage,
 	requestErrorKind
 } from '$lib/request-workspace.js';
@@ -37,31 +45,45 @@ export const load: PageServerLoad = async ({ params, request, url, cookies, setH
 	return { inquiryId: params.inquiryId, staffRequest: result.data, requestError: null };
 };
 
-function quoteFailure(status: number, mutationAttempted = false) {
+function quoteFailure(
+	status: number,
+	mutationAttempted = false,
+	values?: DepositFormValues,
+	depositErrorField?: DepositErrorField
+) {
+	const correctable = !!values && (status === 400 || status === 422);
 	return fail(status >= 500 ? 503 : status, {
 		quoteError:
 			!mutationAttempted && status >= 500
 				? 'We couldn’t review this request. Reload before trying to issue a quote.'
 				: quoteErrorMessage(status),
-		reviewRequired: true
+		reviewRequired: !correctable,
+		values,
+		depositErrorField: correctable
+			? (depositErrorField ??
+				(values.depositChoice === 'percentage'
+					? 'depositPercentage'
+					: values.depositChoice === 'fixed'
+						? 'depositAmount'
+						: 'depositChoice'))
+			: undefined
 	});
 }
 
 export const actions: Actions = {
-	issueQuote: async ({ params, locals, request, url, cookies }) => {
+	issueProposal: async ({ params, locals, request, url, cookies }) => {
 		if (!locals.user) redirect(303, '/login');
-		if (!locals.user.permissions.includes(QUOTE_PERMISSION)) return quoteFailure(403);
-		const form = await request.formData();
-		const version = form.get('expectedVersion');
-		if (
-			typeof version !== 'string' ||
-			!/^[1-9]\d*$/.test(version) ||
-			Number(version) > 2_147_483_647 ||
-			form.getAll('expectedVersion').length !== 1 ||
-			[...form.keys()].some((key) => key !== 'expectedVersion')
-		) {
+		if (!hasProposalPermissions(locals.user.permissions)) return quoteFailure(403);
+		let form: FormData;
+		try {
+			form = await request.formData();
+		} catch {
 			return quoteFailure(422);
 		}
+		const values = readDepositForm(form);
+		if (!values) return quoteFailure(422);
+		const fieldError = depositInputError(values);
+		if (fieldError) return quoteFailure(422, false, values, fieldError);
 		const config = backendConfig(url.origin);
 		const cookie = request.headers.get('cookie');
 		// Scope the mutation through the route's authoritative projection, never a posted document id.
@@ -72,12 +94,33 @@ export const actions: Actions = {
 		}
 		applySetCookies(cookies, current.setCookies);
 		if (!isCurrentStaffRequest(current.data, params.inquiryId)) return quoteFailure(503);
-		if (!isQuoteEligible(current.data)) return quoteFailure(409);
+		if (!isProposalEligible(current.data)) return quoteFailure(409);
+		if (
+			values.depositChoice === 'suggested' &&
+			!matchesReviewedSuggestion(values, current.data.suggestedDepositTerms)
+		)
+			return quoteFailure(409);
+		const terms: DepositTermsRequest =
+			values.depositChoice === 'suggested'
+				? current.data.suggestedDepositTerms
+				: values.depositChoice === 'percentage'
+					? { type: 'PERCENTAGE', percentage: values.depositPercentage }
+					: {
+							type: 'FIXED',
+							amount: values.depositAmount,
+							currency: current.data.financial.currency
+						};
 		// Even if this read sees a newer Estimate, send only the version the staff member reviewed.
-		const result = await issueQuote(config, current.data.financial.id, Number(version), cookie);
+		const result = await issueInquiryProposal(
+			config,
+			params.inquiryId,
+			Number(values.expectedVersion),
+			terms,
+			cookie
+		);
 		if (!result.ok) {
 			if (result.error.status === 401) redirect(303, '/login');
-			return quoteFailure(result.error.status, true);
+			return quoteFailure(result.error.status, true, values);
 		}
 		applySetCookies(cookies, result.setCookies);
 		// PRG removes the action query and prevents resubmission on refresh. The new state is confirmation.
