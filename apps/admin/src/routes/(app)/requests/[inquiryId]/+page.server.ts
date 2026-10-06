@@ -1,7 +1,17 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { applySetCookies } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
-import { getStaffRequest, issueInquiryProposal } from '$lib/server/staff-request.js';
+import { getStaffRequest, issueInquiryProposal, recordPayment } from '$lib/server/staff-request.js';
+import {
+	canRecordDeposit,
+	canRecordInvoicePayment,
+	hasPaymentPermission,
+	readPaymentForm,
+	invoiceAmountValid,
+	paymentErrorMessage
+} from '$lib/payments.js';
+import type { PaymentFormValues } from '$lib/payments.js';
+import type { RecordPaymentRequest } from '$lib/payment-contract.js';
 import {
 	readDepositForm,
 	depositInputError,
@@ -71,6 +81,8 @@ function quoteFailure(
 }
 
 export const actions: Actions = {
+	recordDeposit: paymentAction(true),
+	recordInvoicePayment: paymentAction(false),
 	issueProposal: async ({ params, locals, request, url, cookies }) => {
 		if (!locals.user) redirect(303, '/login');
 		if (!hasProposalPermissions(locals.user.permissions)) return quoteFailure(403);
@@ -127,3 +139,75 @@ export const actions: Actions = {
 		redirect(303, url.pathname);
 	}
 };
+
+function paymentFailure(
+	status: number,
+	mutationAttempted = false,
+	paymentValues?: PaymentFormValues,
+	correctable = false
+) {
+	return fail(status >= 500 ? 503 : status, {
+		paymentError: paymentErrorMessage(status, mutationAttempted),
+		paymentReviewRequired: !correctable,
+		paymentValues
+	});
+}
+
+function paymentAction(deposit: boolean): Actions[string] {
+	return async ({ params, locals, request, url, cookies }) => {
+		if (!locals.user) redirect(303, '/login');
+		if (!hasPaymentPermission(locals.user.permissions)) return paymentFailure(403);
+		let form: FormData;
+		try {
+			form = await request.formData();
+		} catch {
+			return paymentFailure(422);
+		}
+		const values = readPaymentForm(form, deposit);
+		if (!values) return paymentFailure(422);
+		const config = backendConfig(url.origin);
+		const cookie = request.headers.get('cookie');
+		const current = await getStaffRequest(config, params.inquiryId, cookie);
+		if (!current.ok) {
+			if (current.error.status === 401) redirect(303, '/login');
+			return paymentFailure(current.error.status);
+		}
+		applySetCookies(cookies, current.setCookies);
+		if (!isCurrentStaffRequest(current.data, params.inquiryId)) return paymentFailure(503);
+		const data = current.data;
+		if (
+			values.expectedVersion !== String(data.financial.version) ||
+			(deposit
+				? !canRecordDeposit(data, locals.user.permissions) ||
+					values.expectedProposalId !== data.proposal?.id
+				: !canRecordInvoicePayment(data, locals.user.permissions))
+		)
+			return paymentFailure(409);
+		if (
+			!deposit &&
+			!invoiceAmountValid(
+				values.amount!,
+				data.financial.reconciliation.balance,
+				data.financial.currency
+			)
+		)
+			return paymentFailure(422, false, values, true);
+		const json: RecordPaymentRequest = {
+			documentVersion: Number(values.expectedVersion),
+			method: values.method,
+			amount:
+				deposit && data.depositRequirement.state === 'ACTIVE'
+					? data.depositRequirement.requiredAmount.amount
+					: values.amount!
+		};
+		if (deposit) json.expectedProposalId = values.expectedProposalId;
+		// Exactly one attempt. Even a 500 can follow commit; only a clean GET confirms the result.
+		const result = await recordPayment(config, data.financial.id, json, cookie);
+		if (!result.ok) {
+			if (result.error.status === 401) redirect(303, '/login');
+			return paymentFailure(result.error.status, true);
+		}
+		applySetCookies(cookies, result.setCookies);
+		redirect(303, url.pathname);
+	};
+}

@@ -6,6 +6,8 @@
 	import RequestDetails from '$lib/components/requests/request-details.svelte';
 	import FinancialDocumentCard from '$lib/components/requests/financial-document-card.svelte';
 	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
+	import PaymentControls from '$lib/components/requests/payment-controls.svelte';
+	import PaymentHistory from '$lib/components/requests/payment-history.svelte';
 	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
 	import {
 		eventDateLabel,
@@ -115,13 +117,23 @@
 			<p class="m-0 text-xs text-(--text-muted)">
 				{request.inquiry.lifecycle.stage === 'REQUESTED'
 					? 'Review the current Estimate below before issuing a quote.'
-					: 'Review the current financial document below.'}
+					: request.inquiry.lifecycle.stage === 'QUOTED'
+						? 'The full approved deposit is required to hold the date and book this event.'
+						: request.inquiry.lifecycle.stage === 'CLOSED'
+							? 'Review the financial and payment history below.'
+							: 'Review the current Invoice and any remaining balance below.'}
 			</p>
 			<div class="border-t border-(--border-soft) pt-3">
 				<p class={caps}>Current {financialStageLabel(request.financial.stage)}</p>
 				<p class="m-0 mt-1 text-[22px] leading-[1.3] font-bold wrap-anywhere">
 					{formatMoney(request.financial.total, request.financial.currency)}
 				</p>
+				{#if request.financial.stage === 'INVOICE'}<p class="m-0 mt-1 text-sm text-(--text-muted)">
+						Balance: {formatMoney(
+							request.financial.reconciliation.balance,
+							request.financial.currency
+						)}
+					</p>{/if}
 			</div>
 			{#if request.depositRequirement.state === 'ACTIVE'}
 				<div class="border-t border-(--border-soft) pt-3" data-testid="deposit-summary">
@@ -148,6 +160,11 @@
 								: 'Awaiting deposit'}
 						</p>
 					{/if}
+					{#if request.inquiry.lifecycle.stage !== 'QUOTED'}<p
+							class="m-0 mt-2 text-xs text-(--text-muted)"
+						>
+							Historical accepted deposit. Refunds are shown in payment history.
+						</p>{/if}
 				</div>
 			{/if}
 			{#if quoteError}
@@ -201,9 +218,18 @@
 					>
 				</form>
 			{/if}
+			<PaymentControls
+				{request}
+				permissions={data.user.permissions}
+				{route}
+				error={form?.paymentError}
+				reviewRequired={form?.paymentReviewRequired}
+				values={form?.paymentValues}
+			/>
 		</Card>
 		<RequestDetails inquiry={request.inquiry} />
 		<FinancialDocumentCard financial={request.financial} />
+		<PaymentHistory {request} />
 	{:else}
 		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request unavailable</h1>
 		<Card role="alert" class="flex flex-col items-start gap-4">

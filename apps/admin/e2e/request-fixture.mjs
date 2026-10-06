@@ -68,7 +68,8 @@ export function proposalPair(inquiryId, documentId, documentVersion, total, term
 
 /** @returns {Record<string, import('../src/lib/request-contract.js').CurrentStaffRequest>} */
 export function requestFixtures() {
-	return Object.fromEntries(
+	/** @type {Record<string, import('../src/lib/request-contract.js').CurrentStaffRequest>} */
+	const fixtures = Object.fromEntries(
 		Object.values(dashboardFixture.workQueue)
 			.flatMap((queue) => queue.items)
 			.map((item) => {
@@ -126,6 +127,7 @@ export function requestFixtures() {
 				return [
 					item.inquiryId,
 					{
+						payments: [],
 						suggestedDepositTerms,
 						...(item.stage === 'REQUESTED'
 							? { proposal: null, depositRequirement: { state: 'NONE', documentId } }
@@ -191,4 +193,136 @@ export function requestFixtures() {
 				];
 			})
 	);
+	for (const request of Object.values(fixtures)) {
+		if (request.financial.stage !== 'INVOICE' || request.depositRequirement.state !== 'ACTIVE')
+			continue;
+		const balance = request.financial.reconciliation.balance;
+		request.financial.reconciliation.balance = request.financial.total;
+		appendPayment(request, request.depositRequirement.requiredAmount.amount, 'CASH', 2);
+		request.depositRequirement.satisfied = true;
+		const additional =
+			fixtureMinor(request.financial.reconciliation.balance) - fixtureMinor(balance);
+		if (additional > 0n)
+			appendPayment(request, fixtureDecimal(additional), 'CHECK', request.financial.version);
+	}
+	return fixtures;
+}
+
+/** Fixture-only USD ledger arithmetic. Never used by the application. @param {string} value */
+export function fixtureMinor(value) {
+	if (!/^\d+(?:\.\d{1,2})?$/.test(value)) throw new Error('Invalid fixture USD amount');
+	const [whole, fraction = ''] = value.split('.');
+	return BigInt(whole + fraction.padEnd(2, '0'));
+}
+/** @param {bigint} value */
+export function fixtureDecimal(value) {
+	const digits = (value < 0n ? -value : value).toString().padStart(3, '0');
+	return `${value < 0n ? '-' : ''}${digits.slice(0, -2)}.${digits.slice(-2)}`;
+}
+/** @param {import('../src/lib/request-contract.js').CurrentStaffRequest} request @param {string} amount @param {string} method @param {number} documentVersion */
+export function appendPayment(request, amount, method, documentVersion) {
+	const ordinal = request.payments.length + 1;
+	const paymentId = `40000000-0000-0000-0000-${String(ordinal).padStart(12, '0')}`;
+	const allocationId = `50000000-0000-0000-0000-${String(ordinal).padStart(12, '0')}`;
+	const currency = request.financial.currency;
+	const receivedAt = `2026-10-06T19:0${ordinal}:00Z`;
+	const payment = { paymentId, amount, method, currency, receivedAt };
+	const allocation = {
+		allocationId,
+		paymentId,
+		documentId: request.financial.id,
+		documentVersion,
+		amount,
+		currency,
+		allocatedAt: receivedAt
+	};
+	request.payments.push({
+		payment,
+		allocations: [allocation],
+		refunds: [],
+		refundAllocations: [],
+		reconciliation: {
+			paymentAmount: amount,
+			totalRefunded: '0.00',
+			netReceived: amount,
+			grossAllocated: amount,
+			allocationReversals: '0.00',
+			refundAllocations: '0.00',
+			netAllocated: amount,
+			unallocated: '0.00',
+			currency
+		}
+	});
+	const reconciliation = request.financial.reconciliation;
+	reconciliation.grossAllocated = fixtureDecimal(
+		fixtureMinor(reconciliation.grossAllocated) + fixtureMinor(amount)
+	);
+	reconciliation.netApplied = fixtureDecimal(
+		fixtureMinor(reconciliation.netApplied) + fixtureMinor(amount)
+	);
+	reconciliation.balance = fixtureDecimal(
+		fixtureMinor(reconciliation.balance) - fixtureMinor(amount)
+	);
+	return {
+		...payment,
+		allocationId,
+		documentId: request.financial.id,
+		documentVersion,
+		allocatedAt: receivedAt,
+		reconciliation: structuredClone(reconciliation)
+	};
+}
+/** @param {'quoted' | 'booked' | 'additional' | 'refunded' | 'served'} state @returns {import('../src/lib/request-contract.js').CurrentStaffRequest} */
+export function paymentFixture(state = 'quoted') {
+	const request = requestFixtures()[mayaId];
+	Object.assign(
+		request,
+		proposalPair(
+			mayaId,
+			mayaDocumentId,
+			2,
+			request.financial.total,
+			{ type: 'FIXED', amount: '300.00', currency: 'USD' },
+			'USD'
+		)
+	);
+	request.inquiry.lifecycle.stage = 'QUOTED';
+	request.financial.stage = 'QUOTE';
+	request.financial.version = 2;
+	if (state === 'quoted') return request;
+	appendPayment(request, '300.00', 'CASH', 2);
+	request.inquiry.lifecycle.stage = state === 'served' ? 'SERVED' : 'BOOKED';
+	request.financial.stage = 'INVOICE';
+	request.financial.previousVersion = 2;
+	request.financial.version = 3;
+	if (request.depositRequirement.state === 'ACTIVE')
+		request.depositRequirement.satisfied = state !== 'refunded';
+	if (state === 'additional') appendPayment(request, '100.00', 'CASH', 3);
+	if (state === 'refunded') {
+		const history = request.payments[0];
+		history.refunds.push({
+			refundId: '60000000-0000-0000-0000-000000000001',
+			paymentId: history.payment.paymentId,
+			amount: '300.00',
+			currency: 'USD',
+			method: 'CASH',
+			refundedAt: '2026-10-06T20:00:00Z'
+		});
+		history.refundAllocations.push({
+			refundAllocationId: '70000000-0000-0000-0000-000000000001',
+			refundId: history.refunds[0].refundId,
+			paymentAllocationId: history.allocations[0].allocationId,
+			amount: '300.00',
+			currency: 'USD',
+			allocatedAt: '2026-10-06T20:00:00Z'
+		});
+		Object.assign(history.reconciliation, {
+			totalRefunded: '300.00',
+			netReceived: '0.00',
+			refundAllocations: '300.00',
+			netAllocated: '0.00'
+		});
+		Object.assign(request.financial.reconciliation, { netApplied: '0.00', balance: '415.00' });
+	}
+	return request;
 }
