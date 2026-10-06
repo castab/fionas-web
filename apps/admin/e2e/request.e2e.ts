@@ -1,5 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
-import { mayaId, mayaDocumentId, requestFixtures } from './request-fixture.mjs';
+import { mayaId, requestFixtures } from './request-fixture.mjs';
 
 const stubUrl = `http://127.0.0.1:${process.env.ADMIN_STUB_PORT ?? '4176'}`;
 const route = `/requests/${mayaId}`;
@@ -49,6 +49,8 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await card.press('Enter');
 	await expect(page).toHaveURL(route);
 	await expect(page.getByTestId('request-summary')).toContainText('Needs a quote');
+	await expect(page.getByRole('group', { name: 'Deposit to hold the date' })).toBeVisible();
+	await expect(page.getByRole('radio', { name: 'Recommended 20% of quote' })).toBeChecked();
 	await expect(page.getByTestId('event-card')).toContainText('Saturday, July 25');
 	await expect(page.getByTestId('event-card')).toContainText('Birthday party');
 	await expect(page.getByTestId('event-card')).toContainText('40 guests');
@@ -121,7 +123,7 @@ test('issues the reviewed version, lands on a fresh Quote and never resubmits on
 	page.on('request', (request) => browserUrls.push(request.url()));
 	const before = await session(context);
 	const response = page.waitForResponse(
-		(response) => response.request().method() === 'POST' && response.url().includes('issueQuote')
+		(response) => response.request().method() === 'POST' && response.url().includes('issueProposal')
 	);
 	await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
 	const actionResponse = await response;
@@ -132,6 +134,9 @@ test('issues the reviewed version, lands on a fresh Quote and never resubmits on
 	});
 	await expect(page).toHaveURL(route);
 	await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
+	await expect(page.getByTestId('deposit-summary')).toContainText('$83');
+	await expect(page.getByTestId('deposit-summary')).toContainText('20% of quote');
+	await expect(page.getByTestId('deposit-summary')).toContainText('Awaiting deposit');
 	await expect(page.getByTestId('request-summary')).not.toContainText('Needs a quote');
 	await expect(page.getByTestId('financial-document')).toContainText('Current quote · Version 2');
 	await expect(page.getByLabel('Request lifecycle').locator('[aria-current="step"]')).toHaveText(
@@ -140,8 +145,11 @@ test('issues the reviewed version, lands on a fresh Quote and never resubmits on
 	await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toHaveCount(0);
 	await expect(page.getByText(/Quote sent|Customer notified|Email delivered/)).toHaveCount(0);
 	const after = await session(context);
-	expect(after.quoteAttempts).toEqual([
-		{ documentId: mayaDocumentId, body: { expectedVersion: 1 } }
+	expect(after.proposalAttempts).toEqual([
+		{
+			inquiryId: mayaId,
+			body: { expectedDocumentVersion: 1, terms: { type: 'PERCENTAGE', percentage: '20' } }
+		}
 	]);
 	expect(after.requestReads - before.requestReads).toBe(2);
 	expect(after.readPaths.slice(before.readPaths.length)).toEqual([
@@ -152,7 +160,7 @@ test('issues the reviewed version, lands on a fresh Quote and never resubmits on
 	]);
 	expect(browserUrls.some((url) => url.startsWith(stubUrl))).toBe(false);
 	await page.reload();
-	expect((await session(context)).quoteAttempts).toHaveLength(1);
+	expect((await session(context)).proposalAttempts).toHaveLength(1);
 	await page.getByRole('link', { name: 'Back to dashboard' }).click();
 	await expect(page.getByTestId('request-card').filter({ hasText: 'Maya Torres' })).toHaveCount(0);
 	await expect(page.getByTestId('summary-card').filter({ hasText: 'New' })).toHaveAttribute(
@@ -179,22 +187,25 @@ test('stale action read does not replace the reviewed version, and conflict requ
 	);
 	await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeDisabled();
 	await expect(page.getByTestId('financial-document')).toContainText('Version 1');
-	expect((await session(context)).quoteAttempts).toEqual([
-		{ documentId: mayaDocumentId, body: { expectedVersion: 1 } }
+	expect((await session(context)).proposalAttempts).toEqual([
+		{
+			inquiryId: mayaId,
+			body: { expectedDocumentVersion: 1, terms: { type: 'PERCENTAGE', percentage: '20' } }
+		}
 	]);
 	await expect(page.getByText('PRIVATE', { exact: false })).toHaveCount(0);
 	await page.getByRole('link', { name: 'Reload to review' }).click();
 	await expect(page.getByTestId('financial-document')).toContainText('Version 2');
 	await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeEnabled();
-	expect((await session(context)).quoteAttempts).toHaveLength(1);
+	expect((await session(context)).proposalAttempts).toHaveLength(1);
 });
 
 for (const mode of [
-	'quote-forbidden',
-	'quote-not-found',
-	'quote-conflict',
-	'quote-unavailable',
-	'quote-ambiguous'
+	'proposal-forbidden',
+	'proposal-not-found',
+	'proposal-conflict',
+	'proposal-unavailable',
+	'proposal-ambiguous'
 ]) {
 	test(`${mode} requires reload/review without leaking private diagnostics or replaying`, async ({
 		page,
@@ -206,15 +217,15 @@ for (const mode of [
 		await expect(page.getByRole('alert')).toBeVisible();
 		await expect(page.getByText('PRIVATE', { exact: false })).toHaveCount(0);
 		await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeDisabled();
-		expect((await session(context)).quoteAttempts).toHaveLength(1);
-		if (mode === 'quote-unavailable' || mode === 'quote-ambiguous')
+		expect((await session(context)).proposalAttempts).toHaveLength(1);
+		if (mode === 'proposal-unavailable' || mode === 'proposal-ambiguous')
 			await expect(page.getByRole('alert')).toContainText('couldn’t confirm whether');
 		await page.getByRole('link', { name: 'Reload to review' }).click();
-		if (mode === 'quote-ambiguous') {
+		if (mode === 'proposal-ambiguous') {
 			await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
 			await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toHaveCount(0);
 		}
-		expect((await session(context)).quoteAttempts).toHaveLength(1);
+		expect((await session(context)).proposalAttempts).toHaveLength(1);
 	});
 }
 
@@ -229,7 +240,7 @@ test('same Administrator role without financial-create permission can read but s
 	await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toHaveCount(0);
 	const state = await session(context);
 	expect(state.permissions).not.toContain('commerce.financial-document.create');
-	expect(state.quoteAttempts).toHaveLength(0);
+	expect(state.proposalAttempts).toHaveLength(0);
 });
 
 for (const [mode, copy] of [
@@ -286,15 +297,175 @@ test('long user text remains escaped and wraps; minimum guests and absent messag
 	await expect(page.getByTestId('original-request')).toContainText('No additional message.');
 });
 
+for (const native of [false, true]) {
+	test.describe(native ? 'native deposit forms' : 'enhanced deposit forms', () => {
+		test.use({ javaScriptEnabled: !native });
+		test('preserves a keyboard-selected exact custom percentage', async ({ page, context }) => {
+			await openMaya(page);
+			const recommended = page.getByRole('radio', { name: 'Recommended 20% of quote' });
+			await recommended.focus();
+			await recommended.press('ArrowDown');
+			await expect(
+				page.getByRole('radio', { name: 'Custom percentage', exact: true })
+			).toBeChecked();
+			await page.getByLabel('Deposit percentage', { exact: true }).fill('017.500');
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByTestId('deposit-summary')).toContainText('$72.63');
+			await expect(page.getByTestId('deposit-summary')).toContainText('017.500% of quote');
+			expect((await session(context)).proposalAttempts).toEqual([
+				{
+					inquiryId: mayaId,
+					body: { expectedDocumentVersion: 1, terms: { type: 'PERCENTAGE', percentage: '017.500' } }
+				}
+			]);
+		});
+		test('allows correction of invalid fixed terms and backend minor-unit rejection', async ({
+			page,
+			context
+		}) => {
+			await openMaya(page);
+			await page.getByRole('radio', { name: 'Fixed amount', exact: true }).check();
+			const input = page.getByLabel('Deposit amount (USD)', { exact: true });
+			await input.fill('0');
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByRole('alert')).toContainText('Enter a valid deposit');
+			await expect(input).toHaveAttribute('aria-invalid', 'true');
+			await expect(input).toHaveAttribute('aria-describedby', 'deposit-error');
+			await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeEnabled();
+			expect((await session(context)).proposalAttempts).toHaveLength(0);
+			await input.fill('123.001');
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByRole('alert')).toContainText('Enter a valid deposit');
+			await expect(input).toHaveValue('123.001');
+			await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeEnabled();
+			expect((await session(context)).proposalAttempts).toHaveLength(1);
+			await input.fill('123.40');
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page).toHaveURL(route);
+			await expect(page.getByTestId('deposit-summary')).toContainText('$123.40');
+			await expect(page.getByTestId('deposit-summary')).toContainText('Fixed deposit');
+			expect((await session(context)).proposalAttempts.at(-1).body.terms).toEqual({
+				type: 'FIXED',
+				amount: '123.40',
+				currency: 'USD'
+			});
+		});
+		test('blocks changed suggestions without posting and uses a refreshed backend recommendation', async ({
+			page,
+			context
+		}) => {
+			await openMaya(page);
+			const changed = requestFixtures()[mayaId];
+			changed.suggestedDepositTerms = { type: 'PERCENTAGE', percentage: '25' };
+			await session(context, { request: changed });
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByRole('alert')).toContainText('Reload to review');
+			await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeDisabled();
+			expect((await session(context)).proposalAttempts).toHaveLength(0);
+			await page.getByRole('link', { name: 'Reload to review' }).click();
+			await expect(page.getByRole('radio', { name: 'Recommended 25% of quote' })).toBeChecked();
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByTestId('deposit-summary')).toContainText('$103.75');
+		});
+		test('displays and issues a backend fixed suggestion', async ({ page, context }) => {
+			const changed = requestFixtures()[mayaId];
+			changed.suggestedDepositTerms = { type: 'FIXED', amount: '125.00', currency: 'USD' };
+			await session(context, { request: changed });
+			await page.goto(route);
+			await expect(
+				page.getByRole('radio', { name: 'Recommended Fixed deposit · $125' })
+			).toBeChecked();
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByTestId('deposit-summary')).toContainText('$125');
+			expect((await session(context)).proposalAttempts[0].body.terms).toEqual(
+				changed.suggestedDepositTerms
+			);
+		});
+		test('commit then 500 requires reload and never replays', async ({ page, context }) => {
+			await openMaya(page);
+			await session(context, { mode: 'proposal-ambiguous' });
+			await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+			await expect(page.getByRole('alert')).toContainText('couldn’t confirm whether');
+			const button = page.getByRole('button', { name: 'Issue quote', exact: true });
+			if (await button.count()) await expect(button).toBeDisabled();
+			expect((await session(context)).proposalAttempts).toHaveLength(1);
+			await page.getByRole('link', { name: 'Reload to review' }).click();
+			await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
+			await expect(page.getByTestId('deposit-summary')).toContainText('$83');
+			expect((await session(context)).proposalAttempts).toHaveLength(1);
+		});
+	});
+}
+
+for (const permissions of [
+	[],
+	['commerce.financial-document.create'],
+	['commerce.deposit-requirement.manage']
+]) {
+	test(`partial proposal permissions ${permissions.join(',') || 'neither'} hide and deny issuance`, async ({
+		page,
+		context
+	}) => {
+		await session(context, {
+			permissions: ['fionas.inquiries.read', 'commerce.financial-document.read', ...permissions]
+		});
+		await page.goto(route);
+		await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toHaveCount(0);
+		const result = await context.request.post(`${route}?/issueProposal`, {
+			form: {
+				expectedVersion: '1',
+				depositChoice: 'suggested',
+				reviewedSuggestionType: 'PERCENTAGE',
+				reviewedSuggestionValue: '20'
+			}
+		});
+		expect(result.status()).toBe(403);
+		expect((await session(context)).proposalAttempts).toHaveLength(0);
+	});
+}
+
+test('booked Invoice retains the accepted deposit after a refund', async ({ page, context }) => {
+	const data = requestFixtures()['00000000-0000-0000-0000-000000000001'];
+	data.inquiry.lifecycle.stage = 'BOOKED';
+	data.financial.stage = 'INVOICE';
+	data.financial.version = 3;
+	if (data.depositRequirement.state === 'ACTIVE') data.depositRequirement.satisfied = false;
+	await session(context, { request: data });
+	await page.goto(`/requests/${data.inquiry.id}`);
+	await expect(page.getByTestId('request-summary')).toContainText('Booked');
+	await expect(page.getByTestId('deposit-summary')).toContainText('Booking deposit');
+	await expect(page.getByTestId('deposit-summary')).toContainText('$112');
+	await expect(page.getByTestId('deposit-summary')).not.toContainText('Awaiting deposit');
+	await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toHaveCount(0);
+});
+
 test.describe('native forms', () => {
 	test.use({ javaScriptEnabled: false });
+	test('a local input failure revealing newer reviewed state requires a clean GET', async ({
+		page,
+		context
+	}) => {
+		await openMaya(page);
+		await page.getByRole('radio', { name: 'Fixed amount', exact: true }).check();
+		await page.getByLabel('Deposit amount (USD)', { exact: true }).fill('0');
+		const newer = requestFixtures()[mayaId];
+		newer.financial.version = 2;
+		await session(context, { request: newer });
+		await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
+		await expect(page.getByRole('alert')).toContainText('Reload to review');
+		await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeDisabled();
+		expect((await session(context)).proposalAttempts).toHaveLength(0);
+		await page.getByRole('link', { name: 'Reload to review' }).click();
+		await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeEnabled();
+	});
 	test('uses HTTP 303 and GET after issuance, and refresh cannot resubmit', async ({
 		page,
 		context
 	}) => {
 		await openMaya(page);
 		const response = page.waitForResponse(
-			(response) => response.request().method() === 'POST' && response.url().includes('issueQuote')
+			(response) =>
+				response.request().method() === 'POST' && response.url().includes('issueProposal')
 		);
 		await page.getByRole('button', { name: 'Issue quote', exact: true }).click();
 		expect((await response).status()).toBe(303);
@@ -302,7 +473,7 @@ test.describe('native forms', () => {
 		await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
 		await expect(page.getByTestId('financial-document')).toContainText('Current quote · Version 2');
 		await page.reload();
-		expect((await session(context)).quoteAttempts).toHaveLength(1);
+		expect((await session(context)).proposalAttempts).toHaveLength(1);
 	});
 	test('conflict remains blocked until an explicit GET review, even if the POST render reloads data', async ({
 		page,
@@ -318,6 +489,6 @@ test.describe('native forms', () => {
 		await page.getByRole('link', { name: 'Reload to review' }).click();
 		await expect(page).toHaveURL(route);
 		await expect(page.getByRole('button', { name: 'Issue quote', exact: true })).toBeEnabled();
-		expect((await session(context)).quoteAttempts).toHaveLength(1);
+		expect((await session(context)).proposalAttempts).toHaveLength(1);
 	});
 });

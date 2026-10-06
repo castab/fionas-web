@@ -70,8 +70,55 @@ export type FinancialDocumentResponse = {
 export type StaffRequestResponse = {
 	inquiry: InquiryResponse;
 	financial: FinancialDocumentResponse;
+	/** Absent before issuance; the API's example also uses null. */
+	proposal?: InquiryProposalResponse | null;
+	suggestedDepositTerms: DepositTermsRequest;
+	depositRequirement: CurrentDepositRequirementResponse;
 };
-export type StageTransitionRequest = { expectedVersion: number };
+export type DepositTermsRequest =
+	{ type: 'PERCENTAGE'; percentage: string } | { type: 'FIXED'; amount: string; currency: string };
+export type DepositMoneyResponse = { amount: string; currency: string };
+export type CurrentDepositRequirementResponse =
+	| { state: 'NONE'; documentId: string }
+	| {
+			state: 'ACTIVE';
+			documentId: string;
+			revision: number;
+			previousRevision?: number;
+			createdAt: string;
+			approvalDocumentVersion: number;
+			terms: DepositTermsRequest;
+			requiredAmount: DepositMoneyResponse;
+			satisfied: boolean;
+	  }
+	| {
+			state: 'WITHDRAWN';
+			documentId: string;
+			revision: number;
+			previousRevision: number;
+			createdAt: string;
+	  };
+export type InquiryProposalResponse = {
+	id: string;
+	inquiryId: string;
+	documentId: string;
+	documentVersion: number;
+	depositRequirementRevision: number;
+	issuedAt: string;
+	/** These properties are strings, not enums, in the supplied schema. */
+	principalKind: string;
+	principalId: string;
+	issuanceKind: string;
+};
+export type IssueInquiryProposalRequest = {
+	expectedDocumentVersion: number;
+	terms: DepositTermsRequest;
+};
+export type IssuedInquiryProposalResponse = {
+	proposal: InquiryProposalResponse;
+	financial: FinancialDocumentResponse;
+	depositRequirement: CurrentDepositRequirementResponse;
+};
 export type CurrentStaffRequest = StaffRequestResponse & {
 	financial: FinancialDocumentResponse & { reconciliation: DocumentReconciliation };
 };

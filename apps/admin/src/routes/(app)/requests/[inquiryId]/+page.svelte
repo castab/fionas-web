@@ -5,6 +5,8 @@
 	import { site } from '@fionas/shared';
 	import RequestDetails from '$lib/components/requests/request-details.svelte';
 	import FinancialDocumentCard from '$lib/components/requests/financial-document-card.svelte';
+	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
+	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
 	import {
 		eventDateLabel,
 		eventTypeLabel,
@@ -17,6 +19,7 @@
 		lifecycleLabel,
 		lifecycleStages,
 		requestErrorMessage,
+		quoteErrorMessage,
 		requestSummary
 	} from '$lib/request-workspace.js';
 	import type { ActionData, PageData } from './$types';
@@ -25,8 +28,20 @@
 	let submitting = $state(false);
 	let unexpectedError = $state<string | null>(null);
 	const request = $derived(data.staffRequest);
-	const quoteError = $derived(form?.quoteError ?? unexpectedError);
-	const reviewRequired = $derived(form?.reviewRequired || !!unexpectedError);
+	const reviewedStateChanged = $derived(
+		!!form?.values &&
+			!!request &&
+			(form.values.expectedVersion !== String(request.financial.version) ||
+				!matchesReviewedSuggestion(form.values, request.suggestedDepositTerms))
+	);
+	const quoteError = $derived(
+		reviewedStateChanged && !form?.reviewRequired
+			? quoteErrorMessage(409)
+			: (form?.quoteError ?? unexpectedError)
+	);
+	const reviewRequired = $derived(
+		form?.reviewRequired || !!unexpectedError || reviewedStateChanged
+	);
 	const route = $derived(resolve('/(app)/requests/[inquiryId]', { inquiryId: data.inquiryId }));
 	const caps =
 		'm-0 font-sans text-[10px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase';
@@ -108,18 +123,47 @@
 					{formatMoney(request.financial.total, request.financial.currency)}
 				</p>
 			</div>
+			{#if request.depositRequirement.state === 'ACTIVE'}
+				<div class="border-t border-(--border-soft) pt-3" data-testid="deposit-summary">
+					<p class={caps}>
+						{request.inquiry.lifecycle.stage === 'QUOTED'
+							? 'Deposit to hold the date'
+							: 'Booking deposit'}
+					</p>
+					<p class="m-0 mt-1 text-lg font-bold">
+						{formatMoney(
+							request.depositRequirement.requiredAmount.amount,
+							request.depositRequirement.requiredAmount.currency
+						)}
+					</p>
+					<p class="m-0 mt-1 text-xs text-(--text-muted)">
+						{request.depositRequirement.terms.type === 'PERCENTAGE'
+							? depositTermsLabel(request.depositRequirement.terms)
+							: 'Fixed deposit'}
+					</p>
+					{#if request.inquiry.lifecycle.stage === 'QUOTED'}
+						<p class="m-0 mt-2 text-sm font-semibold">
+							{request.depositRequirement.satisfied
+								? 'Deposit requirement met'
+								: 'Awaiting deposit'}
+						</p>
+					{/if}
+				</div>
+			{/if}
 			{#if quoteError}
 				<div role="alert" class="flex flex-col items-start gap-3">
-					<p class="m-0 text-sm text-rust-600">{quoteError}</p>
-					<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
-						>Reload to review</Button
-					>
+					<p id="deposit-error" class="m-0 text-sm text-rust-600">{quoteError}</p>
+					{#if reviewRequired}
+						<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
+							>Reload to review</Button
+						>
+					{/if}
 				</div>
 			{/if}
 			{#if canIssueQuote(request, data.user.permissions)}
 				<form
 					method="POST"
-					action="?/issueQuote"
+					action="?/issueProposal"
 					aria-busy={submitting}
 					use:enhance={() => {
 						submitting = true;
@@ -130,6 +174,13 @@
 										'We couldn’t confirm whether the quote was issued. Reload to review the latest state before trying again.';
 								} else {
 									await update({ reset: false, invalidateAll: false });
+									if (result.type === 'failure' && result.data?.depositErrorField) {
+										document
+											.querySelector<HTMLInputElement>(
+												'[aria-invalid="true"], input[aria-describedby="deposit-error"]'
+											)
+											?.focus();
+									}
 								}
 							} finally {
 								submitting = false;
@@ -137,7 +188,14 @@
 						};
 					}}
 				>
-					<input type="hidden" name="expectedVersion" value={request.financial.version} />
+					<DepositChoices
+						suggestion={request.suggestedDepositTerms}
+						currency={request.financial.currency}
+						version={request.financial.version}
+						values={form?.values}
+						errorField={form?.depositErrorField}
+						disabled={submitting || reviewRequired}
+					/>
 					<Button type="submit" disabled={submitting || reviewRequired} class="w-full"
 						>{submitting ? 'Issuing quote…' : 'Issue quote'}</Button
 					>

@@ -33,23 +33,23 @@ Why it has to be this way:
 
 ## Where code lives
 
-| Concern                                  | File                                                               |
-| ---------------------------------------- | ------------------------------------------------------------------ |
-| The one function that calls the API      | `apps/admin/src/lib/server/backend.ts` (`request`)                 |
-| Auth calls + cookie translation          | `apps/admin/src/lib/server/auth.ts`                                |
-| Env → backend config                     | `apps/admin/src/lib/server/config.ts` (`backendConfig`)            |
-| Resolve the signed-in user, guard routes | `apps/admin/src/hooks.server.ts`                                   |
-| Typed `locals.user`                      | `apps/admin/src/app.d.ts`                                          |
-| Sign-in page + action                    | `apps/admin/src/routes/(auth)/login/`                              |
-| Signed-in shell (sidebar, nav, sign out) | `apps/admin/src/routes/(app)/+layout.svelte`                       |
-| Dashboard projection client              | `apps/admin/src/lib/server/dashboard.ts`                           |
-| Dashboard page and presentation          | `apps/admin/src/routes/(app)/+page.*`, `src/lib/dashboard*.ts`     |
-| Dashboard data and presentation boundary | `docs/admin-dashboard-report.md`                                   |
-| Request projection + Quote client        | `apps/admin/src/lib/server/staff-request.ts`                       |
-| Request review + Issue Quote action      | `apps/admin/src/routes/(app)/requests/[inquiryId]/`                |
-| Request workspace behavior               | `docs/admin-request-workspace.md`                                  |
-| Sign out                                 | `apps/admin/src/routes/logout/+server.ts`                          |
-| Temporary sign-in toast (to be removed)  | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte` |
+| Concern                                    | File                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| The one function that calls the API        | `apps/admin/src/lib/server/backend.ts` (`request`)                 |
+| Auth calls + cookie translation            | `apps/admin/src/lib/server/auth.ts`                                |
+| Env → backend config                       | `apps/admin/src/lib/server/config.ts` (`backendConfig`)            |
+| Resolve the signed-in user, guard routes   | `apps/admin/src/hooks.server.ts`                                   |
+| Typed `locals.user`                        | `apps/admin/src/app.d.ts`                                          |
+| Sign-in page + action                      | `apps/admin/src/routes/(auth)/login/`                              |
+| Signed-in shell (sidebar, nav, sign out)   | `apps/admin/src/routes/(app)/+layout.svelte`                       |
+| Dashboard projection client                | `apps/admin/src/lib/server/dashboard.ts`                           |
+| Dashboard page and presentation            | `apps/admin/src/routes/(app)/+page.*`, `src/lib/dashboard*.ts`     |
+| Dashboard data and presentation boundary   | `docs/admin-dashboard-report.md`                                   |
+| Request projection + proposal client       | `apps/admin/src/lib/server/staff-request.ts`                       |
+| Request review + atomic Issue Quote action | `apps/admin/src/routes/(app)/requests/[inquiryId]/`                |
+| Request workspace behavior                 | `docs/admin-request-workspace.md`                                  |
+| Sign out                                   | `apps/admin/src/routes/logout/+server.ts`                          |
+| Temporary sign-in toast (to be removed)    | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte` |
 
 Anything under `src/lib/server/` is server-only (SvelteKit refuses to bundle it into the client). New
 backend access goes there, built on `request()`; routes call those functions, never `fetch` the API
@@ -148,11 +148,12 @@ npm run test:e2e                             # builds admin and runs it against 
 ```
 
 E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `/auth/login`, `/auth/me`,
-`/auth/logout`, `/staff/dashboard`, `/staff/requests/{inquiryId}`, and the Quote transition
+`/auth/logout`, `/staff/dashboard`, `/staff/requests/{inquiryId}`, and
+`POST /staff/requests/{inquiryId}/proposals` for atomic Quote + deposit + proposal issuance
 (Origin check, `Secure; HttpOnly` cookie, plus the usernames
 `ratelimited` and `outage` to simulate login 429 and 500). Dashboard scenarios and read counters are
 session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
-Request projections and Quote mutations also have session-isolated state, including stale and
+Request projections and atomic proposal mutations also have session-isolated state, including stale and
 post-commit failure scenarios.
 Playwright starts it beside the admin preview. The real login is
 rate limited per IP, so don't point automated tests at it.

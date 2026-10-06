@@ -7,22 +7,23 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
 ## Where to look
 
-| Need                                     | Read                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------- |
-| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                               |
-| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                                |
-| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                         |
-| Site details, coming-soon copy           | `packages/shared/src/`                                                                |
-| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                      |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                             |
-| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`              |
-| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"      |
-| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`     |
-| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                          |
-| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`   |
-| Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md` |
-| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                    |
-| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                             |
+| Need                                     | Read                                                                                           |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                                        |
+| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                                         |
+| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                                  |
+| Site details, coming-soon copy           | `packages/shared/src/`                                                                         |
+| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                               |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                                      |
+| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                       |
+| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"               |
+| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`              |
+| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                                   |
+| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`            |
+| Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`          |
+| Staff request workspace, Quote/deposit   | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts` |
+| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                             |
+| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                      |
 
 ## Commands (run from the repo root)
 
@@ -98,3 +99,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`
   or other client code. Session cookies are re-issued on the admin host. See `docs/admin-architecture.md`.
 - Light mode only. Motion 120–220ms ease-out, no bounces. Radii: pill / 16 / 10 / 6.
+- Admin **Issue quote** uses only `POST /staff/requests/{inquiryId}/proposals`: explicit deposit terms,
+  reviewed document version unchanged, BOTH financial-document.create and deposit-requirement.manage
+  permissions. Suggested terms come from the projection. Never retry stale/ambiguous mutations;
+  reload/review first. Success PRGs to the authoritative GET; issuance does not imply delivery.

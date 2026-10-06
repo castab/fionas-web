@@ -5,7 +5,7 @@ import {
 	isCurrentStaffRequest,
 	lifecycleLabel,
 	lifecycleStages,
-	QUOTE_PERMISSION,
+	PROPOSAL_PERMISSIONS,
 	quoteErrorMessage,
 	requestErrorKind,
 	requestSummary
@@ -20,6 +20,71 @@ import {
 import { mayaId, requestFixtures } from '../../e2e/request-fixture.mjs';
 
 describe('request workspace presentation', () => {
+	it('requires the permission intersection', () => {
+		const data = requestFixtures()[mayaId];
+		for (const permissions of [[], [PROPOSAL_PERMISSIONS[0]], [PROPOSAL_PERMISSIONS[1]]])
+			expect(canIssueQuote(data, permissions)).toBe(false);
+		expect(canIssueQuote(data, [...PROPOSAL_PERMISSIONS])).toBe(true);
+	});
+	it('accepts exact quoted and historical Invoice pairs including an unsatisfied booking deposit', () => {
+		const all = requestFixtures();
+		for (const request of Object.values(all))
+			expect(isCurrentStaffRequest(request, request.inquiry.id)).toBe(true);
+		const revised = all['00000000-0000-0000-0000-000000000001'];
+		for (const kind of ['QUOTE_REVISED', 'DEPOSIT_REVISED']) {
+			revised.proposal!.issuanceKind = kind;
+			expect(isCurrentStaffRequest(revised, revised.inquiry.id)).toBe(true);
+		}
+		const booked = all['00000000-0000-0000-0000-000000000001'];
+		booked.inquiry.lifecycle.stage = 'BOOKED';
+		booked.financial.stage = 'INVOICE';
+		booked.financial.version = 3;
+		if (booked.depositRequirement.state === 'ACTIVE') booked.depositRequirement.satisfied = false;
+		expect(isCurrentStaffRequest(booked, booked.inquiry.id)).toBe(true);
+		expect(canIssueQuote(booked, [...PROPOSAL_PERMISSIONS])).toBe(false);
+	});
+	it('rejects partial or contradictory proposal/deposit state', () => {
+		const quoted = () => requestFixtures()['00000000-0000-0000-0000-000000000001'];
+		const mutations = [
+			(data: ReturnType<typeof quoted>) => {
+				data.proposal!.inquiryId = 'other';
+			},
+			(data: ReturnType<typeof quoted>) => {
+				data.proposal!.documentId = 'other';
+			},
+			(data: ReturnType<typeof quoted>) => {
+				data.proposal!.documentVersion++;
+			},
+			(data: ReturnType<typeof quoted>) => {
+				data.proposal = null;
+			},
+			(data: ReturnType<typeof quoted>) => {
+				if (data.depositRequirement.state === 'ACTIVE') data.depositRequirement.revision++;
+			},
+			(data: ReturnType<typeof quoted>) => {
+				if (data.depositRequirement.state === 'ACTIVE')
+					data.depositRequirement.approvalDocumentVersion++;
+			},
+			(data: ReturnType<typeof quoted>) => {
+				if (data.depositRequirement.state === 'ACTIVE')
+					data.depositRequirement.requiredAmount.currency = 'CAD';
+			},
+			(data: ReturnType<typeof quoted>) => {
+				data.depositRequirement.documentId = 'other';
+			}
+		];
+		for (const mutate of mutations) {
+			const data = quoted();
+			mutate(data);
+			expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(false);
+		}
+		const requested = requestFixtures()[mayaId];
+		for (const missing of ['suggestedDepositTerms', 'depositRequirement'] as const) {
+			const partial = { ...requested };
+			Reflect.deleteProperty(partial, missing);
+			expect(isCurrentStaffRequest(partial, mayaId)).toBe(false);
+		}
+	});
 	it('presents lifecycle from the inquiry, independently of the financial facts', () => {
 		const data = requestFixtures()[mayaId];
 		expect(requestSummary(data.inquiry.lifecycle.stage)).toBe('Needs a quote');
@@ -29,7 +94,7 @@ describe('request workspace presentation', () => {
 		data.inquiry.lifecycle.stage = 'QUOTED';
 		data.financial.stage = 'ESTIMATE';
 		expect(requestSummary(data.inquiry.lifecycle.stage)).toBe('Quote issued');
-		expect(canIssueQuote(data, [QUOTE_PERMISSION])).toBe(false);
+		expect(canIssueQuote(data, [...PROPOSAL_PERMISSIONS])).toBe(false);
 		expect(lifecycleStages.map(lifecycleLabel)).toEqual([
 			'Requested',
 			'Quoted',
@@ -43,9 +108,9 @@ describe('request workspace presentation', () => {
 	it('requires both eligible state and the permission, regardless of role', () => {
 		const data = requestFixtures()[mayaId];
 		expect(canIssueQuote(data, [])).toBe(false);
-		expect(canIssueQuote(data, [QUOTE_PERMISSION])).toBe(true);
+		expect(canIssueQuote(data, [...PROPOSAL_PERMISSIONS])).toBe(true);
 		data.financial.stage = 'QUOTE';
-		expect(canIssueQuote(data, [QUOTE_PERMISSION])).toBe(false);
+		expect(canIssueQuote(data, [...PROPOSAL_PERMISSIONS])).toBe(false);
 	});
 	it('rejects absent reconciliation, partial data and inconsistent ownership', () => {
 		const data = requestFixtures()[mayaId];

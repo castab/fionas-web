@@ -3,6 +3,69 @@ import { dashboardFixture } from './dashboard-fixture.mjs';
 export const mayaId = '00000000-0000-0000-0000-000000000003';
 export const mayaDocumentId = '10000000-0000-0000-0000-000000000003';
 
+/** Exact fixture-only resolution, matching the API's HALF_UP percentage rounding.
+ * @param {string} total
+ * @param {import('../src/lib/request-contract.js').DepositTermsRequest} terms
+ * @param {string} currency
+ */
+export function resolveDepositAmount(total, terms, currency) {
+	const digits =
+		new Intl.NumberFormat('en-US', { style: 'currency', currency }).resolvedOptions()
+			.maximumFractionDigits ?? 2;
+	/** @param {string} value */
+	const minor = (value) => {
+		const [whole, fraction = ''] = value.split('.');
+		if (!/^\d+(?:\.\d+)?$/.test(value) || fraction.length > digits)
+			throw new Error('Invalid fixture money');
+		return BigInt(whole + fraction.padEnd(digits, '0'));
+	};
+	let amount;
+	if (terms.type === 'FIXED') amount = minor(terms.amount);
+	else {
+		const [whole, fraction = ''] = terms.percentage.split('.');
+		const denominator = 100n * 10n ** BigInt(fraction.length);
+		const numerator = minor(total) * BigInt(whole + fraction);
+		amount = (numerator + denominator / 2n) / denominator;
+	}
+	const serialized = amount.toString().padStart(digits + 1, '0');
+	return digits ? `${serialized.slice(0, -digits)}.${serialized.slice(-digits)}` : serialized;
+}
+
+/**
+ * @param {string} inquiryId
+ * @param {string} documentId
+ * @param {number} documentVersion
+ * @param {string} total
+ * @param {import('../src/lib/request-contract.js').DepositTermsRequest} terms
+ * @param {string} currency
+ * @returns {Pick<import('../src/lib/request-contract.js').StaffRequestResponse, 'proposal' | 'depositRequirement'>}
+ */
+export function proposalPair(inquiryId, documentId, documentVersion, total, terms, currency) {
+	return {
+		proposal: {
+			id: `3${inquiryId.slice(1)}`,
+			inquiryId,
+			documentId,
+			documentVersion,
+			depositRequirementRevision: 1,
+			issuedAt: '2026-07-16T19:01:00Z',
+			principalKind: 'USER',
+			principalId: '00000000-0000-0000-0000-000000000001',
+			issuanceKind: 'INITIAL'
+		},
+		depositRequirement: {
+			state: 'ACTIVE',
+			documentId,
+			revision: 1,
+			createdAt: '2026-07-16T19:01:00Z',
+			approvalDocumentVersion: documentVersion,
+			terms: structuredClone(terms),
+			requiredAmount: { amount: resolveDepositAmount(total, terms, currency), currency },
+			satisfied: false
+		}
+	};
+}
+
 /** @returns {Record<string, import('../src/lib/request-contract.js').CurrentStaffRequest>} */
 export function requestFixtures() {
 	return Object.fromEntries(
@@ -12,6 +75,10 @@ export function requestFixtures() {
 				const maya = item.inquiryId === mayaId;
 				const dan = item.customerName === 'Dan Whitfield';
 				const documentId = `1${item.inquiryId.slice(1)}`;
+				const suggestedDepositTerms = /** @type {const} */ ({
+					type: 'PERCENTAGE',
+					percentage: '20'
+				});
 				const lines = maya
 					? [
 							{
@@ -59,6 +126,17 @@ export function requestFixtures() {
 				return [
 					item.inquiryId,
 					{
+						suggestedDepositTerms,
+						...(item.stage === 'REQUESTED'
+							? { proposal: null, depositRequirement: { state: 'NONE', documentId } }
+							: proposalPair(
+									item.inquiryId,
+									documentId,
+									2,
+									item.total,
+									suggestedDepositTerms,
+									item.currency
+								)),
 						inquiry: {
 							id: item.inquiryId,
 							customerId: item.customerId,
@@ -94,7 +172,7 @@ export function requestFixtures() {
 						financial: {
 							id: documentId,
 							inquiryId: item.inquiryId,
-							version: 1,
+							version: item.stage === 'REQUESTED' ? 1 : item.stage === 'QUOTED' ? 2 : 3,
 							createdAt: item.latestDocumentVersionAt,
 							stage: item.financialStage,
 							lines,

@@ -24,24 +24,44 @@ inconsistent document ownership is unavailable rather than an assumed zero balan
 
 ## Issue Quote
 
-The control requires REQUESTED + ESTIMATE and the effective `commerce.financial-document.create`
-permission, never a role name. Commerce remains authoritative. The form posts only the reviewed
-`expectedVersion` to `?/issueQuote`.
+Issue Quote is one atomic approval: Quote + explicit deposit requirement + durable proposal issuance.
+The control requires REQUESTED + ESTIMATE, no proposal, a NONE deposit, and BOTH effective
+`commerce.financial-document.create` and `commerce.deposit-requirement.manage` permissions.
+Roles never authorize it; Commerce remains authoritative.
 
-The action validates permission/version, reads this route's projection once, verifies its canonical
-relationship and eligibility, and calls `POST /financial-documents/{financial.id}/quote` with the
-**submitted version unchanged**. It never accepts a posted document id, substitutes a newer version,
-or automatically retries. Backend cookies are re-issued on the admin host.
+The deposit fieldset defaults to `suggestedDepositTerms` from the projection (percentage or fixed),
+or staff can enter a custom percentage or fixed amount. Text inputs preserve exact decimal strings;
+fixed currency comes only from the financial projection. No local deposit amount is calculated.
+Native forms retain both override inputs; enhancement reveals/enables the selected override.
 
-Success uses **303 to the same clean request pathname**. The subsequent authoritative GET renders
-QUOTED / Quote and its new version. The summary says **Quote issued**, and the action disappears.
-This supplies confirmation without flash/session infrastructure; refresh cannot repeat issuance.
-Native forms and progressive enhancement share this flow. Issuance neither edits nor emails a Quote.
+The form posts the reviewed `expectedVersion`, deposit choice/override values, and a small reviewed
+suggestion type/value snapshot to `?/issueProposal`. Duplicate, unexpected and file fields are
+rejected. No identifiers, currency, prices, resolved amount or backend JSON are posted. The action
+checks both permissions before backend access, validates the form, and reads this route's projection
+once. It verifies canonical coherence and eligibility, compares a selected suggestion to the reviewed
+snapshot, then calls `POST /staff/requests/{inquiryId}/proposals` with
+`{ expectedDocumentVersion, terms }`. The submitted version is unchanged even if the read sees a
+newer Estimate. A changed suggestion requires review, never silent substitution. There are no retries.
+Backend cookies are re-issued on the admin host.
 
-Conflicts, including illegal transitions, require explicit reload/review. Mutation timeout/5xx may
-occur after commit, so their copy is ambiguous and further attempts stay blocked until reload.
-Enhanced failures retain the reviewed page. Native failed POST rendering may load newer data but
-keeps issuance blocked until a clean GET. Backend diagnostic messages never reach UI error copy.
+Success uses **303 to the same clean request pathname**. The authoritative GET confirms QUOTED,
+the new Quote version, the exact proposal pair and the frozen required deposit amount. No optimistic
+POST-response state or follow-up browser fetch is used. Refresh cannot repeat issuance.
+Issuance does not imply communication delivery, customer acceptance or a payment link.
+
+Invalid staff terms and backend 400/422 term refusals give safe associated inline feedback and allow
+correction, retaining the reviewed version, suggestion, selection and exact input strings. If native
+failed-POST rendering reveals changed reviewed state, correction is blocked until a clean GET.
+Conflicts/state failures require explicit reload/review. Mutation timeout/network/5xx can happen after
+commit, so they show ambiguous copy and block further attempts until reload. Enhanced failures retain
+the reviewed projection; native failures may render newer data but never allow replay. Backend
+messages never appear in user copy.
+
+QUOTED shows the authoritative frozen amount, approved terms and current deposit status. Later
+BOOKED/SERVED/CLOSED Invoices retain the historical accepted proposal/deposit pair as **Booking
+deposit**; a refund making current satisfaction false does not undo booking or invalidate presentation.
+Lifecycle remains exclusively driven by the inquiry. Missing or contradictory proposal/deposit fields
+make the workspace unavailable. Quote/deposit revisions and payment controls are not implemented.
 
 ## Shell and limits
 
@@ -50,7 +70,7 @@ no longer current there; Back to dashboard and sign-out remain available. The in
 Decline, quote editing, communications, and booking/payment workflows are outside this slice.
 
 Historical selection display names are the remaining product-data limitation; a later contract can
-provide pinned labels. A later booking/deposit slice can replace intentional booking-detail copy
+provide pinned labels. A later booking-details slice can replace intentional booking-detail copy
 with authoritative values.
 
 ## Coverage
@@ -65,31 +85,18 @@ The response fields actually used are:
 
 - Inquiry: `id`, `name`, `email`, `message`, `createdAt`, `zipCode`, `eventDate`, `eventType`,
   `lifecycle.documentId/stage`, and all original `pricingInputs` fields.
+- Proposal/deposit: latest issuance ownership/version, active deposit revision/approval version, approved terms, frozen money and current satisfaction; backend-supplied suggested terms.
 - Financial: `id`, `inquiryId`, `version`, `stage`, ordered line `id/description/subDescription/quantity/unitPrice/total/currency`,
   `subtotal`, `taxAmount`, `total`, `currency`, and `reconciliation.balance/currency`.
 
-Changed files (relative to `apps/admin`, except documentation):
+The contract and eligibility/coherence helpers are hand-maintained typed transport. Deposit form
+validation and presentation helpers live beside them; the request route and its deposit controls
+share the reviewed snapshot shape. Session-isolated fixtures exercise the same canonical projection.
 
-- Route/shell: new `src/routes/(app)/requests/[inquiryId]/+page.server.ts`, `+page.svelte`, and
-  `page.server.test.ts`; updated `src/routes/(app)/+layout.svelte`.
-- Presentation: new `src/lib/request-contract.ts`, `request-workspace.ts`, `request-workspace.test.ts`,
-  `presentation.ts`, `components/requests/request-details.svelte`, and `financial-document-card.svelte`;
-  updated `src/lib/dashboard.ts`, `dashboard.test.ts`, and `components/dashboard/request-card.svelte`.
-- Transport/tests: new `src/lib/server/staff-request.ts`, `staff-request.test.ts`,
-  `e2e/request-fixture.mjs`, and `request.e2e.ts`; updated `e2e/stub-commerce.mjs` and `admin.e2e.ts`.
-- Documentation: new `docs/admin-request-workspace.md`; updated `docs/admin-architecture.md` and
-  `docs/admin-dashboard-report.md`.
+Validation commands for this slice (Node v26.9.0): `npm run check`, `npm run lint`,
+`npm run test:unit -- --run`, `npm run test:e2e`, and `git diff --check`. Check must have zero
+errors and warnings; inspect desktop/mobile request workspace captures. Current run results belong
+in the implementation report rather than carrying forward earlier slice totals.
 
-Validated on Node v26.9.0:
-
-- `npm run check`: passed; all Svelte checks reported **0 errors and 0 warnings**.
-- `npm run lint`: passed Prettier and ESLint.
-- `npm run test:unit -- --run`: **398 passed, 2 skipped** across 27 test files. Skips are the existing
-  POSIX-specific service-provisioning file-permission tests on Windows.
-- `npm run test:e2e`: **140 passed** — 74 admin and 66 public; both app builds completed as part of
-  the E2E web-server commands. Final admin presentation/capture edits were verified again with
-  `npm run test:e2e --workspace=@fionas/admin`: **74 passed**.
-- `git diff --check`: passed. Desktop and mobile workspace screenshots were inspected.
-
-The natural next staff workflow is the deposit/payment-to-book slice, once its authoritative facts
+The natural next staff workflow is the payment-to-book slice, once its authoritative facts
 are available; it can reuse this workspace and replace the intentional booking-detail copy.
