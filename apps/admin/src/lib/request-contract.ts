@@ -1,4 +1,5 @@
 import type { StaffDashboardItem } from './dashboard-contract.js';
+import type { PaymentHistoryResponse } from './payment-contract.js';
 
 /** Transport shapes from the supplied fionas-commerce OpenAPI staff-request schemas. */
 export type PricingSelection = { category: string; offerings: string[] };
@@ -74,6 +75,7 @@ export type StaffRequestResponse = {
 	proposal?: InquiryProposalResponse | null;
 	suggestedDepositTerms: DepositTermsRequest;
 	depositRequirement: CurrentDepositRequirementResponse;
+	payments: PaymentHistoryResponse[];
 };
 export type DepositTermsRequest =
 	{ type: 'PERCENTAGE'; percentage: string } | { type: 'FIXED'; amount: string; currency: string };

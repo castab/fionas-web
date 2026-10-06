@@ -103,3 +103,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   reviewed document version unchanged, BOTH financial-document.create and deposit-requirement.manage
   permissions. Suggested terms come from the projection. Never retry stale/ambiguous mutations;
   reload/review first. Success PRGs to the authoritative GET; issuance does not imply delivery.
+- Admin manual payments require `commerce.payment.record`: Cash/Check/Other only. Quote deposit is
+  the full authoritative amount with reviewed version + proposal ID; Invoice partial payments omit
+  proposal ID. Never retry a payment mutation; stale/ambiguous outcomes require reload/review. Success
+  PRGs to the coherent staff-request GET (including `payments`); only it confirms BOOKED/Invoice.

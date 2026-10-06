@@ -61,13 +61,60 @@ QUOTED shows the authoritative frozen amount, approved terms and current deposit
 BOOKED/SERVED/CLOSED Invoices retain the historical accepted proposal/deposit pair as **Booking
 deposit**; a refund making current satisfaction false does not undo booking or invalidate presentation.
 Lifecycle remains exclusively driven by the inquiry. Missing or contradictory proposal/deposit fields
-make the workspace unavailable. Quote/deposit revisions and payment controls are not implemented.
+make the workspace unavailable. Quote/deposit revisions are not implemented.
+
+## Manual payments and booking
+
+QUOTED + QUOTE with the current coherent proposal, active unsatisfied deposit and
+`commerce.payment.record` exposes **Record deposit**. The amount is frozen, displayed in the
+summary and never editable or posted. Staff select only Cash, Check or Other. A deposit must be
+recorded in full; renegotiating the requirement belongs to the proposal workflow.
+
+The form posts only reviewed document version, proposal ID and method to `?/recordDeposit`.
+The action checks the effective payment permission, strictly parses the envelope and reads the
+route's coherent projection. It rejects changed review tokens or nonpayable state before mutation.
+Document ID and exact required amount come from that projection. It calls
+`POST /financial-documents/{documentId}/payments` once with the reviewed version and proposal ID.
+USER cookies and trusted Origin follow the existing server client; returned cookies are re-issued.
+`receivedAt` and `externalReference` are omitted. Backend acceptance atomically books the inquiry
+and promotes the Quote to an Invoice; the frontend never changes lifecycle or calculates settlement.
+
+Success redirects **303 to the clean request pathname**; the GET confirms BOOKED, Invoice version,
+deposit context, balance and payment histories. A customer handing over $400 against a $300 deposit
+requires two explicit actions: record $300 deposit, review the reloaded Invoice, then record $100.
+There is no combined payment operation or independent Mark booked control.
+
+BOOKED/SERVED + INVOICE with positive balance and payment permission exposes **Record payment**.
+Its amount is an exact text input; positive values up to the authoritative balance are accepted at
+the currency's normal minor-unit precision. BigInt comparisons validate input only, never compute
+settlement. The form posts amount, manual method and reviewed Invoice version. The action re-reads
+and checks eligibility/version/balance, derives document identity/currency and omits proposal ID.
+The mutation again PRGs to confirmation. Paid and CLOSED requests have no payment action.
+
+Local Invoice amount errors permit correction with the reviewed tokens retained. If a native
+failed POST renders changed reviewed state, correction is blocked until a clean GET. Stale state,
+backend refusals and ambiguous mutation timeout/network/5xx outcomes disable payment controls and
+offer **Reload to review**. A 500 can follow commit; neither action ever retries. A pre-mutation read
+failure uses different copy because no payment was attempted. Backend messages are never displayed.
+
+Payment history uses only `staffRequest.payments` from the same coherent read, with no second
+payment-history GET. It shows original received amount, humanized method and Pacific receipt time,
+plus backend `totalRefunded`/`netReceived` when refunded. Unknown transport methods render safely.
+Original allocations are selected by document ID, including historical Quote versions; other
+lineages' allocations are not presented as money applied here. Refunds never erase the original
+receipt or reopen a deposit action after booking. History/deposit remain readable without payment
+permission; Administrator/proposal permissions do not substitute for payment permission.
+
+Transport types include the complete payment, allocations, refunds, refund allocations and
+reconciliation. Runtime checks cover the receipt/allocation fields actually rendered, alongside
+the existing canonical proposal/deposit checks. Missing/malformed consumed fields fail closed.
 
 ## Shell and limits
 
 Requests is visually current on detail routes while its index remains non-navigable. Dashboard is
 no longer current there; Back to dashboard and sign-out remain available. The inbox, staff notes,
-Decline, quote editing, communications, and booking/payment workflows are outside this slice.
+Decline, quote editing, communications, refunds/allocation management, electronic payment flows,
+backdating, payment notes and served/close controls are outside this slice.
 
 Historical selection display names are the remaining product-data limitation; a later contract can
 provide pinned labels. A later booking-details slice can replace intentional booking-detail copy
@@ -77,7 +124,9 @@ with authoritative values.
 
 Unit tests cover clients, route scoping, permissions, reviewed-version preservation, redirects,
 failures, and presentation. Desktop/mobile E2E has session-isolated projections and mutation counters,
-including stale versions and commit followed by 500. Native forms verify PRG and blocked conflicts.
+including stale versions/proposals and deposit/Invoice commit followed by 500. Native and enhanced
+forms verify PRG, blocked conflicts, fixed deposit amount, the separate deposit/additional-payment
+workflow, partial Invoice payments, permission-aware controls and refunded historical receipts.
 
 ## Implementation and validation
 
@@ -88,6 +137,9 @@ The response fields actually used are:
 - Proposal/deposit: latest issuance ownership/version, active deposit revision/approval version, approved terms, frozen money and current satisfaction; backend-supplied suggested terms.
 - Financial: `id`, `inquiryId`, `version`, `stage`, ordered line `id/description/subDescription/quantity/unitPrice/total/currency`,
   `subtotal`, `taxAmount`, `total`, `currency`, and `reconciliation.balance/currency`.
+- Payments: `payment.paymentId/method/amount/currency/receivedAt`,
+  `allocations.allocationId/documentId/documentVersion/amount/currency`, and
+  `reconciliation.totalRefunded/netReceived/currency`.
 
 The contract and eligibility/coherence helpers are hand-maintained typed transport. Deposit form
 validation and presentation helpers live beside them; the request route and its deposit controls
@@ -97,6 +149,3 @@ Validation commands for this slice (Node v26.9.0): `npm run check`, `npm run lin
 `npm run test:unit -- --run`, `npm run test:e2e`, and `git diff --check`. Check must have zero
 errors and warnings; inspect desktop/mobile request workspace captures. Current run results belong
 in the implementation report rather than carrying forward earlier slice totals.
-
-The natural next staff workflow is the payment-to-book slice, once its authoritative facts
-are available; it can reuse this workspace and replace the intentional booking-detail copy.

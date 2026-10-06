@@ -4,7 +4,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
-import { requestFixtures, proposalPair } from './request-fixture.mjs';
+import { requestFixtures, proposalPair, appendPayment, fixtureMinor } from './request-fixture.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
@@ -20,7 +20,8 @@ const user = {
 		'fionas.inquiries.read',
 		'commerce.financial-document.read',
 		'commerce.financial-document.create',
-		'commerce.deposit-requirement.manage'
+		'commerce.deposit-requirement.manage',
+		'commerce.payment.record'
 	]
 };
 const password = 'e2e-password';
@@ -98,7 +99,8 @@ createServer(async (req, res) => {
 				'dashboard-unavailable',
 				'dashboard-empty',
 				'dashboard-overlap',
-				'request-read-only'
+				'request-read-only',
+				'request-no-payment'
 			].includes(body.username) ||
 			body.password !== password
 		) {
@@ -112,13 +114,16 @@ createServer(async (req, res) => {
 			readPaths: [],
 			requestReads: 0,
 			proposalAttempts: [],
+			paymentAttempts: [],
 			requests: requestFixtures(),
 			permissions:
 				body.username === 'request-read-only'
 					? user.permissions.filter(
 							(permission) => permission !== 'commerce.financial-document.create'
 						)
-					: [...user.permissions]
+					: body.username === 'request-no-payment'
+						? user.permissions.filter((permission) => permission !== 'commerce.payment.record')
+						: [...user.permissions]
 		});
 		return send(res, 204, undefined, {
 			'set-cookie': `${cookieName}="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
@@ -311,6 +316,79 @@ createServer(async (req, res) => {
 			{ ...pair, financial: request.financial },
 			{ 'cache-control': 'no-store' }
 		);
+	}
+
+	const paymentMatch = /^\/financial-documents\/([^/]+)\/payments$/.exec(pathname);
+	if (req.method === 'POST' && paymentMatch) {
+		if (!currentSession) return send(res, 401);
+		const body = await readJson(req);
+		currentSession.paymentAttempts.push({ documentId: paymentMatch[1], body });
+		const refusal = (status) =>
+			send(res, status, { code: 'failure', message: 'PRIVATE payment diagnostic' });
+		if (
+			req.headers.origin !== trustedOrigin ||
+			!currentSession.permissions.includes('commerce.payment.record') ||
+			currentSession.mode === 'payment-forbidden'
+		)
+			return refusal(403);
+		const request = Object.values(currentSession.requests).find(
+			(request) => request.financial.id === paymentMatch[1]
+		);
+		if (!request || currentSession.mode === 'payment-not-found') return refusal(404);
+		const deposit = request.financial.stage === 'QUOTE';
+		if (
+			body?.documentVersion !== request.financial.version ||
+			currentSession.mode === 'payment-conflict'
+		)
+			return refusal(409);
+		if (
+			!['CASH', 'CHECK', 'OTHER'].includes(body?.method) ||
+			Object.keys(body ?? {})
+				.sort()
+				.join(',') !==
+				(deposit
+					? 'amount,documentVersion,expectedProposalId,method'
+					: 'amount,documentVersion,method') ||
+			currentSession.mode === 'payment-invalid'
+		)
+			return refusal(422);
+		let amount;
+		try {
+			amount = fixtureMinor(body.amount);
+		} catch {
+			return refusal(422);
+		}
+		if (amount <= 0n || amount > fixtureMinor(request.financial.reconciliation.balance))
+			return refusal(422);
+		if (deposit) {
+			if (
+				request.inquiry.lifecycle.stage !== 'QUOTED' ||
+				request.depositRequirement.state !== 'ACTIVE' ||
+				request.depositRequirement.satisfied ||
+				request.payments.some((history) =>
+					history.allocations.some((allocation) => allocation.documentId === request.financial.id)
+				)
+			)
+				return refusal(409);
+			if (body.expectedProposalId !== request.proposal?.id) return refusal(409);
+			if (amount !== fixtureMinor(request.depositRequirement.requiredAmount.amount))
+				return refusal(422);
+		} else if (
+			request.financial.stage !== 'INVOICE' ||
+			!['BOOKED', 'SERVED'].includes(request.inquiry.lifecycle.stage)
+		)
+			return refusal(409);
+		if (currentSession.mode === 'payment-unavailable') return refusal(500);
+		const response = appendPayment(request, body.amount, body.method, body.documentVersion);
+		if (deposit) {
+			request.depositRequirement.satisfied = true;
+			request.financial.previousVersion = request.financial.version;
+			request.financial.version++;
+			request.financial.stage = 'INVOICE';
+			request.inquiry.lifecycle.stage = 'BOOKED';
+		}
+		if (currentSession.mode === 'payment-ambiguous') return refusal(500);
+		return send(res, 201, response, { 'cache-control': 'no-store' });
 	}
 
 	if (route === 'POST /auth/logout') {

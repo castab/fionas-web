@@ -4,6 +4,7 @@ import type {
 	CurrentStaffRequest
 } from './request-contract.js';
 import { isDepositTerms } from './deposit.js';
+import { isPaymentHistory } from './payment-history.js';
 
 export const PROPOSAL_PERMISSIONS = [
 	'commerce.financial-document.create',
@@ -51,7 +52,10 @@ export function isCurrentStaffRequest(
 		typeof data.financial.id === 'string' &&
 		data.inquiry.lifecycle?.documentId === data.financial.id &&
 		Array.isArray(data.financial.lines) &&
+		Array.isArray(data.payments) &&
+		data.payments.every(isPaymentHistory) &&
 		typeof data.financial.reconciliation?.balance === 'string' &&
+		/^-?\d+(?:\.\d+)?$/.test(data.financial.reconciliation.balance) &&
 		typeof data.financial.reconciliation.currency === 'string'
 	))
 		return false;
