@@ -5,6 +5,8 @@ import { applySetCookies } from '$lib/server/auth.js';
 import { mayaId, requestFixtures } from '../../../../../e2e/request-fixture.mjs';
 
 vi.mock('$lib/server/staff-request.js', () => ({
+	markInquiryServed: vi.fn(),
+	closeInquiry: vi.fn(),
 	getStaffRequest: vi.fn(),
 	issueInquiryProposal: vi.fn()
 }));

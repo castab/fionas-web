@@ -109,12 +109,41 @@ Transport types include the complete payment, allocations, refunds, refund alloc
 reconciliation. Runtime checks cover the receipt/allocation fields actually rendered, alongside
 the existing canonical proposal/deposit checks. Missing/malformed consumed fields fail closed.
 
+## Explicit fulfillment and closeout
+
+BOOKED + INVOICE with `fionas.inquiries.manage` exposes **Mark event served**. Serving is an
+explicit staff action; `eventDate` never advances lifecycle or restricts eligibility. Serving does
+not require financial settlement. SERVED Invoices retain **Record payment** when the authoritative
+balance is positive and the account has the independent payment permission.
+
+SERVED + INVOICE exposes **Close event** only with the fulfillment permission and an exact-zero
+authoritative reconciliation balance. Decimal-string comparison accepts zero at any supplied
+precision without floating-point conversion or rounding. Positive and negative balances both block
+closure; a credit is not settlement. The financial ledger remains authoritative. CLOSED hides all
+payment and fulfillment entry while retaining financial, deposit and payment history. Optional
+served/closed occurrence times use Pacific staff formatting without principal-ID lookups.
+
+The empty forms post to `?/markServed` and `?/closeInquiry`. The actions check session and effective
+permission before backend access, reject all form fields, re-read this route's staff-request
+projection and validate coherence and current eligibility. They issue exactly one bodyless POST to
+`/inquiries/{inquiryId}/served` or `/close`; no dates, balances, financial identities, actors or times
+are submitted. USER cookies and trusted Origin use the shared backend client; returned cookies are
+re-issued on the admin host.
+
+The POST mutation response is never page state. Success confirms through **303 to the clean request
+pathname + coherent GET**, with no optimistic lifecycle changes. Pre-mutation read failures use
+review-failure copy. Conflicts and refusals require reload/review; mutation network/timeout/5xx
+outcomes use ambiguous copy because commit may already have occurred. Neither mutation is ever
+automatically retried. Native failed-POST rendering and enhancement both block payment/fulfillment
+attempts until clean reload/review. Enhanced forms also coordinate pending state and prevent double
+submission across payment and fulfillment controls.
+
 ## Shell and limits
 
 Requests is visually current on detail routes while its index remains non-navigable. Dashboard is
 no longer current there; Back to dashboard and sign-out remain available. The inbox, staff notes,
 Decline, quote editing, communications, refunds/allocation management, electronic payment flows,
-backdating, payment notes and served/close controls are outside this slice.
+backdating and payment notes are outside this slice.
 
 Historical selection display names are the remaining product-data limitation; a later contract can
 provide pinned labels. A later booking-details slice can replace intentional booking-detail copy
