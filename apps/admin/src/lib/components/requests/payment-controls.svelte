@@ -20,7 +20,9 @@
 		route,
 		error,
 		reviewRequired = false,
-		values
+		values,
+		pending = $bindable(false),
+		onReviewRequired
 	}: {
 		request: CurrentStaffRequest;
 		permissions: string[];
@@ -28,6 +30,8 @@
 		error?: string;
 		reviewRequired?: boolean;
 		values?: PaymentFormValues;
+		pending?: boolean;
+		onReviewRequired: () => void;
 	} = $props();
 	let submitting = $state(false);
 	let unexpectedError = $state<string | null>(null);
@@ -42,18 +46,26 @@
 	);
 	const blocked = $derived(reviewRequired || !!unexpectedError || changed);
 	const message = $derived(unexpectedError ?? (changed ? paymentErrorMessage(409) : error));
-	const submit: SubmitFunction = () => {
+	const submit: SubmitFunction = ({ cancel }) => {
+		if (pending || blocked) {
+			cancel();
+			return;
+		}
 		submitting = true;
+		pending = true;
 		return async ({ result, update }) => {
 			try {
-				if (result.type === 'error') unexpectedError = paymentErrorMessage(503, true);
-				else {
+				if (result.type === 'error') {
+					unexpectedError = paymentErrorMessage(503, true);
+					onReviewRequired();
+				} else {
 					if (result.type === 'redirect') amount = '';
 					await update({ reset: false, invalidateAll: false });
 					if (result.type === 'failure') document.getElementById('payment-error')?.focus();
 				}
 			} finally {
 				submitting = false;
+				pending = false;
 			}
 		};
 	};
@@ -112,7 +124,7 @@
 				pattern="[0-9]+(\.[0-9]+)?"
 				maxlength="100"
 				bind:value={amount}
-				disabled={submitting || blocked}
+				disabled={pending || blocked}
 				class={inputClass}
 				aria-invalid={error && !blocked ? 'true' : undefined}
 				aria-describedby={message ? 'payment-error' : 'payment-amount-help'}
@@ -136,7 +148,7 @@
 		<select
 			id="payment-method"
 			name="method"
-			disabled={submitting || blocked}
+			disabled={pending || blocked}
 			class={inputClass}
 			value={values?.method ?? 'CASH'}
 		>
@@ -144,7 +156,7 @@
 					>{paymentMethodLabel(method)}</option
 				>{/each}
 		</select>
-		<Button type="submit" class="w-full" disabled={submitting || blocked}
+		<Button type="submit" class="w-full" disabled={pending || blocked}
 			>{submitting
 				? 'Recording payment…'
 				: deposit && request.depositRequirement.state === 'ACTIVE'

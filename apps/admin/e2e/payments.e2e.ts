@@ -91,7 +91,7 @@ for (const native of [false, true]) {
 			await page.getByRole('button', { name: 'Record $300 deposit' }).click();
 			expect((await post).status()).toBe(native ? 303 : 200);
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Booked');
+			await expect(page.getByTestId('request-summary')).toContainText('Event booked');
 			await expect(page.getByTestId('financial-document')).toContainText('Invoice');
 			await expect(page.getByTestId('financial-document')).toContainText('Version 3');
 			await expect(page.getByTestId('payment-history')).toContainText('$300 received · Cash');
@@ -113,7 +113,7 @@ for (const native of [false, true]) {
 			await page.getByLabel('Payment amount (USD)').fill('100.00');
 			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Booked');
+			await expect(page.getByTestId('request-summary')).toContainText('Event booked');
 			await expect(page.getByTestId('payment-form')).toContainText('Invoice balance: $15');
 			await expect(page.getByLabel('Payment amount (USD)')).toHaveValue('');
 			await expect(page.getByTestId('payment-receipt')).toHaveCount(2);
@@ -178,7 +178,7 @@ for (const native of [false, true]) {
 			await input.fill('115.00');
 			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
-			await expect(page.getByTestId('request-summary')).toContainText('Booked');
+			await expect(page.getByTestId('request-summary')).toContainText('Event booked');
 			expect((await session(context)).paymentAttempts).toHaveLength(1);
 		});
 		for (const state of ['quoted', 'booked'] as const) {
@@ -202,7 +202,7 @@ for (const native of [false, true]) {
 				expect((await session(context)).paymentAttempts).toHaveLength(1);
 				await page.getByRole('link', { name: 'Reload to review' }).click();
 				await expect(page).toHaveURL(route);
-				await expect(page.getByTestId('request-summary')).toContainText('Booked');
+				await expect(page.getByTestId('request-summary')).toContainText('Event booked');
 				await expect(page.getByTestId('payment-receipt')).toHaveCount(state === 'quoted' ? 1 : 2);
 				expect((await session(context)).paymentAttempts).toHaveLength(1);
 			});
@@ -215,13 +215,13 @@ for (const native of [false, true]) {
 			await page.getByLabel('Payment amount (USD)').fill('15.00');
 			await page.getByLabel('Payment method').selectOption('CHECK');
 			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
-			await expect(page.getByTestId('request-summary')).toContainText('Served');
+			await expect(page.getByTestId('request-summary')).toContainText('Event served');
 			await expect(page.getByTestId('payment-form')).toContainText('Invoice balance: $100');
 			await page.getByLabel('Payment amount (USD)').fill('100');
 			await page.getByLabel('Payment method').selectOption('OTHER');
 			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
-			await expect(page.getByTestId('request-summary')).toContainText('Served');
+			await expect(page.getByTestId('request-summary')).toContainText('Event served');
 			await expect(page.getByTestId('payment-history')).toContainText('$15 received · Check');
 			await expect(page.getByTestId('payment-history')).toContainText('$100 received · Other');
 		});
@@ -272,7 +272,7 @@ test('refunded historical deposit stays readable and never resurrects a deposit 
 	context
 }) => {
 	await open(page, context, 'refunded');
-	await expect(page.getByTestId('request-summary')).toContainText('Booked');
+	await expect(page.getByTestId('request-summary')).toContainText('Event booked');
 	await expect(page.getByTestId('deposit-summary')).toContainText('Historical accepted deposit');
 	await expect(page.getByTestId('payment-history')).toContainText('$300 received · Cash');
 	await expect(page.getByTestId('payment-history')).toContainText(

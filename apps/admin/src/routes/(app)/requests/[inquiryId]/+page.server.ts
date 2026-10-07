@@ -1,7 +1,13 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { applySetCookies } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
-import { getStaffRequest, issueInquiryProposal, recordPayment } from '$lib/server/staff-request.js';
+import {
+	getStaffRequest,
+	issueInquiryProposal,
+	recordPayment,
+	markInquiryServed,
+	closeInquiry
+} from '$lib/server/staff-request.js';
 import {
 	canRecordDeposit,
 	canRecordInvoicePayment,
@@ -21,6 +27,11 @@ import {
 } from '$lib/deposit.js';
 import type { DepositTermsRequest } from '$lib/request-contract.js';
 import {
+	canMarkServed,
+	canCloseInquiry,
+	hasFulfillmentPermission,
+	fulfillmentErrorMessage,
+	type FulfillmentAction,
 	isCurrentStaffRequest,
 	isProposalEligible,
 	hasProposalPermissions,
@@ -81,6 +92,8 @@ function quoteFailure(
 }
 
 export const actions: Actions = {
+	markServed: fulfillmentAction('markServed'),
+	closeInquiry: fulfillmentAction('closeInquiry'),
 	recordDeposit: paymentAction(true),
 	recordInvoicePayment: paymentAction(false),
 	issueProposal: async ({ params, locals, request, url, cookies }) => {
@@ -139,6 +152,43 @@ export const actions: Actions = {
 		redirect(303, url.pathname);
 	}
 };
+
+function fulfillmentAction(action: FulfillmentAction): Actions[string] {
+	return async ({ params, locals, request, url, cookies }) => {
+		if (!locals.user) redirect(303, '/login');
+		const failure = (status: number, attempted = false) =>
+			fail(status >= 500 ? 503 : status, {
+				fulfillmentError: fulfillmentErrorMessage(status, action, attempted),
+				fulfillmentReviewRequired: true
+			});
+		if (!hasFulfillmentPermission(locals.user.permissions)) return failure(403);
+		try {
+			if ([...(await request.formData()).keys()].length !== 0) return failure(422);
+		} catch {
+			return failure(422);
+		}
+		const config = backendConfig(url.origin);
+		const cookie = request.headers.get('cookie');
+		const current = await getStaffRequest(config, params.inquiryId, cookie);
+		if (!current.ok) {
+			if (current.error.status === 401) redirect(303, '/login');
+			return failure(current.error.status);
+		}
+		applySetCookies(cookies, current.setCookies);
+		if (!isCurrentStaffRequest(current.data, params.inquiryId)) return failure(503);
+		const eligible = action === 'markServed' ? canMarkServed : canCloseInquiry;
+		if (!eligible(current.data, locals.user.permissions)) return failure(409);
+		// One bodyless attempt. An unavailable response may follow commit; reload is confirmation.
+		const mutate = action === 'markServed' ? markInquiryServed : closeInquiry;
+		const result = await mutate(config, params.inquiryId, cookie);
+		if (!result.ok) {
+			if (result.error.status === 401) redirect(303, '/login');
+			return failure(result.error.status, true);
+		}
+		applySetCookies(cookies, result.setCookies);
+		redirect(303, url.pathname);
+	};
+}
 
 function paymentFailure(
 	status: number,

@@ -432,7 +432,7 @@ test('booked Invoice retains the accepted deposit after a refund', async ({ page
 	if (data.depositRequirement.state === 'ACTIVE') data.depositRequirement.satisfied = false;
 	await session(context, { request: data });
 	await page.goto(`/requests/${data.inquiry.id}`);
-	await expect(page.getByTestId('request-summary')).toContainText('Booked');
+	await expect(page.getByTestId('request-summary')).toContainText('Event booked');
 	await expect(page.getByTestId('deposit-summary')).toContainText('Booking deposit');
 	await expect(page.getByTestId('deposit-summary')).toContainText('$112');
 	await expect(page.getByTestId('deposit-summary')).not.toContainText('Awaiting deposit');

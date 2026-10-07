@@ -1,4 +1,5 @@
 import type {
+	InquiryLifecycle,
 	StaffRequestResponse,
 	DepositTermsRequest,
 	IssueInquiryProposalRequest,
@@ -6,6 +7,20 @@ import type {
 } from '../request-contract.js';
 import { request, type BackendConfig } from './backend.js';
 import type { RecordPaymentRequest, RecordedPaymentResponse } from '../payment-contract.js';
+
+export function markInquiryServed(config: BackendConfig, inquiryId: string, cookie: string | null) {
+	return request<InquiryLifecycle>(config, `/inquiries/${encodeURIComponent(inquiryId)}/served`, {
+		method: 'POST',
+		cookie
+	});
+}
+
+export function closeInquiry(config: BackendConfig, inquiryId: string, cookie: string | null) {
+	return request<InquiryLifecycle>(config, `/inquiries/${encodeURIComponent(inquiryId)}/close`, {
+		method: 'POST',
+		cookie
+	});
+}
 
 export function recordPayment(
 	config: BackendConfig,

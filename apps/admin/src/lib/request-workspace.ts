@@ -15,6 +15,51 @@ export function hasProposalPermissions(permissions: string[]): boolean {
 }
 export const lifecycleStages = ['REQUESTED', 'QUOTED', 'BOOKED', 'SERVED', 'CLOSED'] as const;
 
+export const FULFILLMENT_PERMISSION = 'fionas.inquiries.manage';
+export type FulfillmentAction = 'markServed' | 'closeInquiry';
+export function hasFulfillmentPermission(permissions: string[]): boolean {
+	return permissions.includes(FULFILLMENT_PERMISSION);
+}
+/** Decimal-string comparison, with no rounding or currency conversion. */
+export function isExactZero(value: string): boolean {
+	return /^-?0+(?:\.0+)?$/.test(value);
+}
+export function canMarkServed(data: StaffRequestResponse, permissions: string[]): boolean {
+	return (
+		hasFulfillmentPermission(permissions) &&
+		isCurrentStaffRequest(data, data.inquiry.id) &&
+		data.inquiry.lifecycle.stage === 'BOOKED' &&
+		data.financial.stage === 'INVOICE'
+	);
+}
+export function canCloseInquiry(data: StaffRequestResponse, permissions: string[]): boolean {
+	return (
+		hasFulfillmentPermission(permissions) &&
+		isCurrentStaffRequest(data, data.inquiry.id) &&
+		data.inquiry.lifecycle.stage === 'SERVED' &&
+		data.financial.stage === 'INVOICE' &&
+		isExactZero(data.financial.reconciliation.balance)
+	);
+}
+export function fulfillmentErrorMessage(
+	status: number,
+	action: FulfillmentAction,
+	mutationAttempted = false
+): string {
+	if (status === 403) return 'This account cannot update event fulfillment.';
+	if (status === 404)
+		return 'This request is no longer available. Reload to review the latest state.';
+	if (status === 409)
+		return action === 'markServed'
+			? 'This request changed since you opened it. Reload to review whether the event can still be marked served.'
+			: 'This request changed since you opened it. Reload to review the latest balance and lifecycle before closing.';
+	if (status >= 500 && mutationAttempted)
+		return action === 'markServed'
+			? 'We couldn’t confirm whether the event was marked served. Reload to review the latest state before trying again.'
+			: 'We couldn’t confirm whether the event was closed. Reload to review the latest state before trying again.';
+	return 'We couldn’t review the latest request state. Reload before trying again.';
+}
+
 const lifecycleLabels: Record<InquiryLifecycle['stage'], string> = {
 	REQUESTED: 'Requested',
 	QUOTED: 'Quoted',
@@ -30,7 +75,23 @@ export function requestSummary(stage: InquiryLifecycle['stage']): string {
 		? 'Needs a quote'
 		: stage === 'QUOTED'
 			? 'Quote issued'
-			: lifecycleLabel(stage);
+			: `Event ${lifecycleLabel(stage).toLowerCase()}`;
+}
+export function requestSummaryDescription(data: CurrentStaffRequest): string {
+	const stage = data.inquiry.lifecycle.stage;
+	if (stage === 'REQUESTED') return 'Review the current Estimate below before issuing a quote.';
+	if (stage === 'QUOTED')
+		return 'The full approved deposit is required to hold the date and book this event.';
+	if (stage === 'CLOSED')
+		return 'Service and payment are complete. Review the financial and payment history below.';
+	if (stage === 'SERVED') {
+		const balance = data.financial.reconciliation.balance;
+		if (isExactZero(balance)) return 'The Invoice is settled and this event may be closed.';
+		return balance.startsWith('-')
+			? 'The Invoice balance must be exactly zero before closing this event.'
+			: 'This event has been served. Record the remaining payment before closing it.';
+	}
+	return 'Review the current Invoice and any remaining balance below.';
 }
 export function financialStageLabel(stage: string): string {
 	return (

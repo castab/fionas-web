@@ -17,6 +17,7 @@ const user = {
 	displayName: 'Brayan',
 	roles: ['commerce.administrator'],
 	permissions: [
+		'fionas.inquiries.manage',
 		'fionas.inquiries.read',
 		'commerce.financial-document.read',
 		'commerce.financial-document.create',
@@ -115,6 +116,7 @@ createServer(async (req, res) => {
 			requestReads: 0,
 			proposalAttempts: [],
 			paymentAttempts: [],
+			fulfillmentAttempts: [],
 			requests: requestFixtures(),
 			permissions:
 				body.username === 'request-read-only'
@@ -316,6 +318,43 @@ createServer(async (req, res) => {
 			{ ...pair, financial: request.financial },
 			{ 'cache-control': 'no-store' }
 		);
+	}
+
+	const fulfillmentMatch = /^\/inquiries\/([^/]+)\/(served|close)$/.exec(pathname);
+	if (req.method === 'POST' && fulfillmentMatch) {
+		if (!currentSession) return send(res, 401);
+		let body = '';
+		for await (const chunk of req) body += chunk;
+		const [, inquiryId, operation] = fulfillmentMatch;
+		currentSession.fulfillmentAttempts.push({ inquiryId, operation, body });
+		const refusal = (status) =>
+			send(res, status, { code: 'failure', message: 'PRIVATE fulfillment diagnostic' });
+		if (
+			req.headers.origin !== trustedOrigin ||
+			!currentSession.permissions.includes('fionas.inquiries.manage') ||
+			currentSession.mode === 'fulfillment-forbidden'
+		)
+			return refusal(403);
+		if (body !== '') return refusal(422);
+		const request = currentSession.requests[inquiryId];
+		if (!request || currentSession.mode === 'fulfillment-not-found') return refusal(404);
+		if (
+			request.financial.stage !== 'INVOICE' ||
+			request.inquiry.lifecycle.stage !== (operation === 'served' ? 'BOOKED' : 'SERVED') ||
+			(operation === 'close' &&
+				!/^-?0+(?:\.0+)?$/.test(request.financial.reconciliation.balance)) ||
+			currentSession.mode === 'fulfillment-conflict'
+		)
+			return refusal(409);
+		if (currentSession.mode === 'fulfillment-unavailable') return refusal(500);
+		request.inquiry.lifecycle.stage = operation === 'served' ? 'SERVED' : 'CLOSED';
+		request.inquiry.lifecycle[operation === 'served' ? 'served' : 'closed'] = {
+			occurredAt: operation === 'served' ? '2026-10-06T23:42:00Z' : '2026-10-07T00:18:00Z',
+			principalKind: 'USER',
+			principalId: user.id
+		};
+		if (currentSession.mode === 'fulfillment-ambiguous') return refusal(500);
+		return send(res, 200, request.inquiry.lifecycle, { 'cache-control': 'no-store' });
 	}
 
 	const paymentMatch = /^\/financial-documents\/([^/]+)\/payments$/.exec(pathname);

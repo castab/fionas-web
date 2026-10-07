@@ -8,6 +8,8 @@
 	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
 	import PaymentControls from '$lib/components/requests/payment-controls.svelte';
 	import PaymentHistory from '$lib/components/requests/payment-history.svelte';
+	import FulfillmentControls from '$lib/components/requests/fulfillment-controls.svelte';
+	import { receivedTimeLabel } from '$lib/payments.js';
 	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
 	import {
 		eventDateLabel,
@@ -17,6 +19,7 @@
 	} from '$lib/presentation.js';
 	import {
 		canIssueQuote,
+		requestSummaryDescription,
 		financialStageLabel,
 		lifecycleLabel,
 		lifecycleStages,
@@ -29,6 +32,8 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let submitting = $state(false);
 	let unexpectedError = $state<string | null>(null);
+	let mutationPending = $state(false);
+	let clientReviewRequired = $state(false);
 	const request = $derived(data.staffRequest);
 	const reviewedStateChanged = $derived(
 		!!form?.values &&
@@ -43,6 +48,17 @@
 	);
 	const reviewRequired = $derived(
 		form?.reviewRequired || !!unexpectedError || reviewedStateChanged
+	);
+	const mutationReviewRequired = $derived(
+		clientReviewRequired ||
+			reviewRequired ||
+			!!form?.fulfillmentReviewRequired ||
+			!!form?.paymentReviewRequired ||
+			(!!form?.paymentValues &&
+				!!request &&
+				(form.paymentValues.expectedVersion !== String(request.financial.version) ||
+					(form.paymentValues.expectedProposalId !== undefined &&
+						form.paymentValues.expectedProposalId !== request.proposal?.id)))
 	);
 	const route = $derived(resolve('/(app)/requests/[inquiryId]', { inquiryId: data.inquiryId }));
 	const caps =
@@ -115,14 +131,16 @@
 				{requestSummary(request.inquiry.lifecycle.stage)}
 			</h2>
 			<p class="m-0 text-xs text-(--text-muted)">
-				{request.inquiry.lifecycle.stage === 'REQUESTED'
-					? 'Review the current Estimate below before issuing a quote.'
-					: request.inquiry.lifecycle.stage === 'QUOTED'
-						? 'The full approved deposit is required to hold the date and book this event.'
-						: request.inquiry.lifecycle.stage === 'CLOSED'
-							? 'Review the financial and payment history below.'
-							: 'Review the current Invoice and any remaining balance below.'}
+				{requestSummaryDescription(request)}
 			</p>
+			{#each [['Marked served', request.inquiry.lifecycle.served], ['Closed', request.inquiry.lifecycle.closed]] as [label, milestone] (label)}
+				{#if typeof milestone === 'object' && milestone && Number.isFinite(Date.parse(milestone.occurredAt))}
+					<p class="m-0 text-xs text-(--text-muted)">
+						{label}
+						<time datetime={milestone.occurredAt}>{receivedTimeLabel(milestone.occurredAt)}</time>
+					</p>
+				{/if}
+			{/each}
 			<div class="border-t border-(--border-soft) pt-3">
 				<p class={caps}>Current {financialStageLabel(request.financial.stage)}</p>
 				<p class="m-0 mt-1 text-[22px] leading-[1.3] font-bold wrap-anywhere">
@@ -182,8 +200,13 @@
 					method="POST"
 					action="?/issueProposal"
 					aria-busy={submitting}
-					use:enhance={() => {
+					use:enhance={({ cancel }) => {
+						if (mutationPending || mutationReviewRequired) {
+							cancel();
+							return;
+						}
 						submitting = true;
+						mutationPending = true;
 						return async ({ result, update }) => {
 							try {
 								if (result.type === 'error') {
@@ -201,6 +224,7 @@
 								}
 							} finally {
 								submitting = false;
+								mutationPending = false;
 							}
 						};
 					}}
@@ -211,9 +235,9 @@
 						version={request.financial.version}
 						values={form?.values}
 						errorField={form?.depositErrorField}
-						disabled={submitting || reviewRequired}
+						disabled={mutationPending || mutationReviewRequired}
 					/>
-					<Button type="submit" disabled={submitting || reviewRequired} class="w-full"
+					<Button type="submit" disabled={mutationPending || mutationReviewRequired} class="w-full"
 						>{submitting ? 'Issuing quote…' : 'Issue quote'}</Button
 					>
 				</form>
@@ -223,8 +247,23 @@
 				permissions={data.user.permissions}
 				{route}
 				error={form?.paymentError}
-				reviewRequired={form?.paymentReviewRequired}
+				reviewRequired={mutationReviewRequired}
 				values={form?.paymentValues}
+				bind:pending={mutationPending}
+				onReviewRequired={() => {
+					clientReviewRequired = true;
+				}}
+			/>
+			<FulfillmentControls
+				{request}
+				permissions={data.user.permissions}
+				{route}
+				error={form?.fulfillmentError}
+				reviewRequired={mutationReviewRequired}
+				bind:pending={mutationPending}
+				onReviewRequired={() => {
+					clientReviewRequired = true;
+				}}
 			/>
 		</Card>
 		<RequestDetails inquiry={request.inquiry} />
@@ -234,10 +273,14 @@
 		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request unavailable</h1>
 		<Card role="alert" class="flex flex-col items-start gap-4">
 			<p class="m-0 text-sm text-(--text-muted)">
-				{requestErrorMessage(data.requestError ?? 'unavailable')}
+				{form?.fulfillmentError ?? requestErrorMessage(data.requestError ?? 'unavailable')}
 			</p>
-			{#if data.requestError === 'unavailable'}<Button href={route} data-sveltekit-reload size="sm"
-					>Try again</Button
+			{#if form?.fulfillmentReviewRequired}
+				<Button href={route} data-sveltekit-reload size="sm">Reload to review</Button>
+			{:else if data.requestError === 'unavailable'}<Button
+					href={route}
+					data-sveltekit-reload
+					size="sm">Try again</Button
 				>{/if}
 		</Card>
 	{/if}

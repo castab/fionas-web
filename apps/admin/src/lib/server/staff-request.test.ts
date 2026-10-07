@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getStaffRequest, issueInquiryProposal } from './staff-request.js';
+import {
+	getStaffRequest,
+	issueInquiryProposal,
+	markInquiryServed,
+	closeInquiry
+} from './staff-request.js';
 import type { BackendConfig } from './backend.js';
 import { mayaId, requestFixtures } from '../../../e2e/request-fixture.mjs';
 
@@ -11,6 +16,52 @@ const config = (fetch: BackendConfig['fetch']): BackendConfig => ({
 });
 
 describe('staff request clients', () => {
+	for (const [operation, invoke] of [
+		['served', markInquiryServed],
+		['close', closeInquiry]
+	] as const) {
+		it(`posts ${operation} once with no body and forwards USER/Origin/cookies`, async () => {
+			const fetch = vi.fn(
+				async () =>
+					new Response(JSON.stringify({ stage: 'SERVED' }), {
+						headers: { 'set-cookie': 'session=renewed; Path=/' }
+					})
+			);
+			expect(await invoke(config(fetch), 'inquiry/identity', 'session=staff')).toMatchObject({
+				ok: true,
+				setCookies: ['session=renewed; Path=/']
+			});
+			expect(fetch).toHaveBeenCalledExactlyOnceWith(
+				`http://api.test/inquiries/inquiry%2Fidentity/${operation}`,
+				expect.objectContaining({
+					method: 'POST',
+					body: undefined,
+					headers: {
+						accept: 'application/json',
+						origin: 'https://admin.test',
+						cookie: 'session=staff'
+					}
+				})
+			);
+		});
+		it.each([401, 403, 404, 409, 500, 503, 'network', 'timeout'])(
+			`${operation} preserves %s failure without retry`,
+			async (status) => {
+				const fetch = vi.fn(async () => {
+					if (typeof status === 'string')
+						throw status === 'timeout'
+							? new DOMException('PRIVATE', 'TimeoutError')
+							: new TypeError('PRIVATE');
+					return new Response(JSON.stringify({ message: 'PRIVATE' }), { status });
+				});
+				expect(await invoke(config(fetch), mayaId, 'session=staff')).toMatchObject({
+					ok: false,
+					error: { status: typeof status === 'string' ? 503 : status }
+				});
+				expect(fetch).toHaveBeenCalledOnce();
+			}
+		);
+	}
 	it('sends exact fixed terms and preserves mutation cookies', async () => {
 		const fetch = vi.fn(
 			async () =>
