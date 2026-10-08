@@ -5,6 +5,8 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
 import { requestFixtures, proposalPair, appendPayment, fixtureMinor } from './request-fixture.mjs';
+import { catalogRevision, inquiryForm, offeringCatalog } from './catalog-fixture.mjs';
+import { issueComposedQuote, previewQuote } from './quote-stub.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
@@ -115,6 +117,9 @@ createServer(async (req, res) => {
 			readPaths: [],
 			requestReads: 0,
 			proposalAttempts: [],
+			previewAttempts: [],
+			catalogRevision,
+			quoteEpoch: 0,
 			paymentAttempts: [],
 			fulfillmentAttempts: [],
 			requests: requestFixtures(),
@@ -200,6 +205,7 @@ createServer(async (req, res) => {
 			currentSession.mode = body?.mode ?? user.username;
 			if (body?.permissions) currentSession.permissions = body.permissions;
 			if (body?.request) currentSession.requests[body.request.inquiry.id] = body.request;
+			if (body?.catalogRevision) currentSession.catalogRevision = body.catalogRevision;
 			return send(res, 204);
 		}
 	}
@@ -230,6 +236,40 @@ createServer(async (req, res) => {
 		return send(res, 200, projection, { 'cache-control': 'no-store' });
 	}
 
+	if (req.method === 'GET' && (pathname === '/offering-catalog' || pathname === '/inquiry-form')) {
+		if (!currentSession) return send(res, 401);
+		if (currentSession.mode === 'catalog-unavailable')
+			return send(res, 500, { code: 'internal_failure', message: 'PRIVATE catalog diagnostic' });
+		const revision = currentSession.catalogRevision;
+		return send(
+			res,
+			200,
+			pathname === '/inquiry-form' ? inquiryForm(revision) : offeringCatalog(revision)
+		);
+	}
+
+	const previewMatch = /^\/staff\/requests\/([^/]+)\/quote-preview$/.exec(pathname);
+	if (req.method === 'POST' && previewMatch) {
+		if (!currentSession) return send(res, 401);
+		const body = await readJson(req);
+		currentSession.previewAttempts.push({ inquiryId: previewMatch[1], body });
+		if (
+			req.headers.origin !== trustedOrigin ||
+			!currentSession.permissions.includes('commerce.financial-document.create') ||
+			!currentSession.permissions.includes('commerce.deposit-requirement.manage')
+		)
+			return send(res, 403, {
+				code: 'forbidden',
+				message: 'PRIVATE preview permission diagnostic'
+			});
+		const request = currentSession.requests[previewMatch[1]];
+		if (!request) return send(res, 404, { code: 'not_found', message: 'PRIVATE preview identity' });
+		if (currentSession.mode === 'preview-unavailable')
+			return send(res, 500, { code: 'internal_failure', message: 'PRIVATE preview diagnostic' });
+		const result = previewQuote(currentSession, request, body);
+		return send(res, result.status, result.body, { 'cache-control': 'no-store' });
+	}
+
 	const proposalMatch = /^\/staff\/requests\/([^/]+)\/proposals$/.exec(pathname);
 	if (req.method === 'POST' && proposalMatch) {
 		if (!currentSession) return send(res, 401);
@@ -258,6 +298,48 @@ createServer(async (req, res) => {
 				code: request.financial.stage !== 'ESTIMATE' ? 'illegal_transition' : 'conflict',
 				message: 'PRIVATE stale ledger diagnostic'
 			});
+		}
+		if (body && ('composition' in body || 'reviewToken' in body)) {
+			if (
+				Object.keys(body).sort().join() !== 'composition,expectedDocumentVersion,reviewToken,terms'
+			)
+				return send(res, 400, {
+					code: 'malformed_request',
+					message: 'PRIVATE envelope diagnostic'
+				});
+			if (currentSession.mode === 'quote-review-stale') {
+				// Something authoritative changed after review: tokens move on, and staff must re-approve.
+				currentSession.mode = user.username;
+				currentSession.quoteEpoch++;
+				return send(res, 409, { code: 'QUOTE_REVIEW_STALE', message: 'PRIVATE stale review' });
+			}
+			const { reviewToken, ...previewBody } = body;
+			const reviewed = previewQuote(currentSession, request, previewBody);
+			if (reviewed.status !== 200) return send(res, reviewed.status, reviewed.body);
+			if (reviewed.body.reviewToken !== reviewToken)
+				return send(res, 409, { code: 'QUOTE_REVIEW_STALE', message: 'PRIVATE stale review' });
+			if (currentSession.mode === 'proposal-unavailable')
+				return send(res, 500, {
+					code: 'internal_failure',
+					message: 'PRIVATE quote transaction diagnostic'
+				});
+			issueComposedQuote(request, reviewed.body, body.terms, user.id);
+			if (currentSession.mode === 'proposal-ambiguous')
+				return send(res, 500, {
+					code: 'internal_failure',
+					message: 'PRIVATE post-commit failure diagnostic'
+				});
+			return send(
+				res,
+				200,
+				{
+					proposal: request.proposal,
+					financial: request.financial,
+					depositRequirement: request.depositRequirement,
+					servicePlan: request.servicePlan
+				},
+				{ 'cache-control': 'no-store' }
+			);
 		}
 		const terms = body?.terms;
 		const positive = (value) =>

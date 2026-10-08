@@ -138,7 +138,12 @@ export function isCurrentStaffRequest(
 	)
 		return false;
 	if (inquiry.lifecycle.stage === 'REQUESTED')
-		return financial.stage === 'ESTIMATE' && proposal == null && deposit.state === 'NONE';
+		return (
+			financial.stage === 'ESTIMATE' &&
+			proposal == null &&
+			deposit.state === 'NONE' &&
+			data.servicePlan == null
+		);
 	if (
 		!proposal ||
 		typeof proposal.id !== 'string' ||
@@ -169,11 +174,50 @@ export function isCurrentStaffRequest(
 			(!version(deposit.previousRevision) || deposit.previousRevision >= deposit.revision))
 	)
 		return false;
+	if (!isCoherentServicePlan(data.servicePlan, data as CurrentStaffRequest)) return false;
 	return inquiry.lifecycle.stage === 'QUOTED'
 		? financial.stage === 'QUOTE' && financial.version === proposal.documentVersion
 		: ['BOOKED', 'SERVED', 'CLOSED'].includes(inquiry.lifecycle.stage) &&
 				financial.stage === 'INVOICE' &&
 				financial.version > proposal.documentVersion;
+}
+
+/**
+ * An approved plan belongs to exactly the latest proposal's Quote. While that Quote is current its
+ * lines are the plan's lines, in order. Absent is legitimate (deposit-only issuance); contradictory is not.
+ */
+function isCoherentServicePlan(
+	plan: StaffRequestResponse['servicePlan'],
+	data: CurrentStaffRequest
+): boolean {
+	if (plan == null) return true;
+	const { financial, proposal } = data;
+	if (
+		!proposal ||
+		plan.documentId !== financial.id ||
+		plan.documentVersion !== proposal.documentVersion ||
+		!Array.isArray(plan.lines) ||
+		!plan.lines.every(
+			(line) =>
+				typeof line?.lineItemId === 'string' &&
+				['ESTIMATE_LINE', 'GENERATED', 'ADJUSTMENT'].includes(line.origin?.type) &&
+				(line.overrideReason === undefined || typeof line.overrideReason === 'string')
+		) ||
+		!plan.service ||
+		!Array.isArray(plan.service.selections) ||
+		!plan.service.selections.every(
+			(category) =>
+				typeof category?.displayName === 'string' &&
+				Array.isArray(category.offerings) &&
+				category.offerings.every((offering) => typeof offering?.displayName === 'string')
+		)
+	)
+		return false;
+	return (
+		financial.version !== plan.documentVersion ||
+		(plan.lines.length === financial.lines.length &&
+			plan.lines.every((line, index) => line.lineItemId === financial.lines[index].id))
+	);
 }
 export function isProposalEligible(data: StaffRequestResponse): boolean {
 	return (
@@ -206,7 +250,7 @@ export function quoteErrorMessage(status: number): string {
 	if (status === 404)
 		return 'This request is no longer available. Reload to review the latest state.';
 	if (status === 400 || status === 422)
-		return 'Enter a valid deposit percentage or amount before issuing the quote.';
+		return 'This quote couldn’t be read. Reload to review the request before trying again.';
 	if (status === 409)
 		return 'This request changed since you opened it. Reload to review the latest version before trying again.';
 	if (status >= 500)

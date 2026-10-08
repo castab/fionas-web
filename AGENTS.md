@@ -7,23 +7,24 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
 ## Where to look
 
-| Need                                     | Read                                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                                        |
-| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                                         |
-| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                                  |
-| Site details, coming-soon copy           | `packages/shared/src/`                                                                         |
-| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                               |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                                      |
-| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                       |
-| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"               |
-| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`              |
-| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                                   |
-| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`            |
-| Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`          |
-| Staff request workspace, Quote/deposit   | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts` |
-| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                             |
-| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                      |
+| Need                                     | Read                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Brand colors, type, spacing tokens       | `packages/design-tokens/src/tokens.css`                                                           |
+| Tailwind utilities for those tokens      | `packages/design-tokens/src/theme.css`                                                            |
+| Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                                     |
+| Site details, coming-soon copy           | `packages/shared/src/`                                                                            |
+| Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                                  |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                                         |
+| Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                          |
+| Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"                  |
+| Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`                 |
+| Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                                      |
+| Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`               |
+| Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`             |
+| Staff request workspace, Quote/deposit   | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`    |
+| Admin quote builder (preview, compose)   | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts` |
+| Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                |
+| Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                         |
 
 ## Commands (run from the repo root)
 
@@ -99,10 +100,16 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`
   or other client code. Session cookies are re-issued on the admin host. See `docs/admin-architecture.md`.
 - Light mode only. Motion 120–220ms ease-out, no bounces. Radii: pill / 16 / 10 / 6.
-- Admin **Issue quote** uses only `POST /staff/requests/{inquiryId}/proposals`: explicit deposit terms,
-  reviewed document version unchanged, BOTH financial-document.create and deposit-requirement.manage
-  permissions. Suggested terms come from the projection. Never retry stale/ambiguous mutations;
-  reload/review first. Success PRGs to the authoritative GET; issuance does not imply delivery.
+- Admin **Issue quote** is the inline quote builder (`?quote`): staff compose intent only (pricing mode,
+  line overrides with a reason, CHARGE/DISCOUNT/CREDIT adjustments, deposit terms); Commerce prices it.
+  `?/previewQuote` calls the write-free `POST /staff/requests/{inquiryId}/quote-preview` (safe to repeat;
+  a REVISE refused with `SERVICE_SELECTIONS_CHANGE_PRICING` is previewed once more as REPRICE). Never sum
+  totals or resolve deposits in the browser. `?/issueQuote` sends the exact previewed composition with its
+  `reviewToken` to `POST /staff/requests/{inquiryId}/proposals`, once: a command that no longer matches the
+  reviewed fingerprint, or `QUOTE_REVIEW_STALE`, previews again and needs a new click. Same reviewed version,
+  BOTH financial-document.create and deposit-requirement.manage. Picks, guests and durations come from
+  `GET /offering-catalog` and `GET /inquiry-form` only (never hardcoded). Success PRGs to the authoritative
+  GET; issuance does not imply delivery (no expiry, message or "Send" until delivery exists).
 - Admin manual payments require `commerce.payment.record`: Cash/Check/Other only. Quote deposit is
   the full authoritative amount with reviewed version + proposal ID; Invoice partial payments omit
   proposal ID. Never retry a payment mutation; stale/ambiguous outcomes require reload/review. Success

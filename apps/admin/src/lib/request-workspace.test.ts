@@ -19,6 +19,70 @@ import {
 } from './presentation.js';
 import { mayaId, requestFixtures } from '../../e2e/request-fixture.mjs';
 
+function quotedWithPlan() {
+	const data = requestFixtures()['00000000-0000-0000-0000-000000000001'];
+	data.servicePlan = {
+		documentId: data.financial.id,
+		documentVersion: data.proposal!.documentVersion,
+		reviewedDocumentVersion: 1,
+		pricingBasis: 'KEEP_ESTIMATE',
+		catalogRevision: 15,
+		approvedAt: '2026-07-16T19:01:00Z',
+		principalKind: 'USER',
+		principalId: '00000000-0000-0000-0000-000000000001',
+		service: {
+			guestCount: 40,
+			guestCountIsMinimum: false,
+			durationMinutes: 90,
+			selections: [
+				{
+					category: 'cone-option',
+					displayName: 'Cones & cups',
+					offerings: [{ offering: 'waffle-cone', displayName: 'Waffle cones' }]
+				}
+			]
+		},
+		lines: data.financial.lines.map((line) => ({
+			lineItemId: line.id,
+			origin: { type: 'ESTIMATE_LINE' as const }
+		}))
+	};
+	return data;
+}
+
+describe('approved service plans', () => {
+	it('accepts a plan that matches the current Quote line for line, and its absence', () => {
+		const data = quotedWithPlan();
+		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
+		delete data.servicePlan;
+		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
+	});
+	it('fails closed on a plan for another document, version or line set', () => {
+		for (const corrupt of [
+			(data: ReturnType<typeof quotedWithPlan>) => (data.servicePlan!.documentId = 'other'),
+			(data: ReturnType<typeof quotedWithPlan>) => data.servicePlan!.documentVersion++,
+			(data: ReturnType<typeof quotedWithPlan>) => data.servicePlan!.lines.pop(),
+			(data: ReturnType<typeof quotedWithPlan>) =>
+				(data.servicePlan!.lines[0].lineItemId = '99999999-0000-0000-0000-000000000000')
+		]) {
+			const data = quotedWithPlan();
+			corrupt(data);
+			expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(false);
+		}
+		const requested = requestFixtures()[mayaId];
+		requested.servicePlan = quotedWithPlan().servicePlan;
+		expect(isCurrentStaffRequest(requested, mayaId)).toBe(false);
+	});
+	it('keeps the accepted plan once a later Invoice version replaces its lines', () => {
+		const data = quotedWithPlan();
+		data.inquiry.lifecycle.stage = 'BOOKED';
+		data.financial.stage = 'INVOICE';
+		data.financial.version = 3;
+		data.financial.lines = [];
+		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
+	});
+});
+
 describe('request workspace presentation', () => {
 	it('requires the permission intersection', () => {
 		const data = requestFixtures()[mayaId];
