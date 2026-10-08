@@ -149,21 +149,26 @@ export function requestFixtures() {
 							}),
 							createdAt: maya ? '2026-07-14T19:00:00Z' : item.inquiryCreatedAt,
 							pricingInputs: {
-								catalogRevision: 11,
+								catalogRevision: 15,
 								guestCount: dan ? 120 : 40,
 								guestCountIsMinimum: dan,
 								durationMinutes: dan ? 180 : 90,
 								selections: [
-									{ category: 'soft-serve', offerings: ['vanilla', 'chocolate'] },
+									{ category: 'soft-serve-flavor', offerings: ['vanilla', 'chocolate'] },
 									{
-										category: 'hand-scooped',
-										offerings: ['chocolate-chip', 'strawberry', 'rocky-road']
+										category: 'hand-scooped-flavor',
+										offerings: [
+											'hand-scooped-chocolate-chip',
+											'hand-scooped-strawberry',
+											'hand-scooped-mint-chip',
+											'hand-scooped-vanilla-bean'
+										]
 									},
 									{
-										category: 'toppings',
-										offerings: ['rainbow-sprinkles', 'hot-fudge', 'crushed-oreo']
+										category: 'topping',
+										offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies']
 									},
-									{ category: 'cones-cups', offerings: ['waffle-cone'] }
+									{ category: 'cone-option', offerings: ['waffle-cone'] }
 								]
 							},
 							zipCode: '93720',

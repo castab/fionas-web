@@ -1,5 +1,6 @@
 import type { StaffDashboardItem } from './dashboard-contract.js';
 import type { PaymentHistoryResponse } from './payment-contract.js';
+import type { QuoteCompositionRequest, ServicePlanResponse } from './quote-contract.js';
 
 /** Transport shapes from the supplied fionas-commerce OpenAPI staff-request schemas. */
 export type PricingSelection = { category: string; offerings: string[] };
@@ -76,6 +77,8 @@ export type StaffRequestResponse = {
 	suggestedDepositTerms: DepositTermsRequest;
 	depositRequirement: CurrentDepositRequirementResponse;
 	payments: PaymentHistoryResponse[];
+	/** The latest proposal's approved plan; absent before issuance or for deposit-only Quotes. */
+	servicePlan?: ServicePlanResponse | null;
 };
 export type DepositTermsRequest =
 	{ type: 'PERCENTAGE'; percentage: string } | { type: 'FIXED'; amount: string; currency: string };
@@ -115,11 +118,15 @@ export type InquiryProposalResponse = {
 export type IssueInquiryProposalRequest = {
 	expectedDocumentVersion: number;
 	terms: DepositTermsRequest;
+	/** Both or neither: the composition exactly as previewed, with that preview's token. */
+	composition?: QuoteCompositionRequest;
+	reviewToken?: string;
 };
 export type IssuedInquiryProposalResponse = {
 	proposal: InquiryProposalResponse;
 	financial: FinancialDocumentResponse;
 	depositRequirement: CurrentDepositRequirementResponse;
+	servicePlan?: ServicePlanResponse;
 };
 export type CurrentStaffRequest = StaffRequestResponse & {
 	financial: FinancialDocumentResponse & { reconciliation: DocumentReconciliation };

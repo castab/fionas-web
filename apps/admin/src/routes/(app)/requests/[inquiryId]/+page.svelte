@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { Badge, Button, Card, focusRing } from '@fionas/ui';
 	import { site } from '@fionas/shared';
 	import RequestDetails from '$lib/components/requests/request-details.svelte';
 	import FinancialDocumentCard from '$lib/components/requests/financial-document-card.svelte';
-	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
+	import QuoteBuilder from '$lib/components/requests/quote-builder/quote-builder.svelte';
 	import PaymentControls from '$lib/components/requests/payment-controls.svelte';
 	import PaymentHistory from '$lib/components/requests/payment-history.svelte';
 	import FulfillmentControls from '$lib/components/requests/fulfillment-controls.svelte';
 	import { receivedTimeLabel } from '$lib/payments.js';
 	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
+	import type { QuoteActionResult } from '$lib/quote-builder.js';
 	import {
 		eventDateLabel,
 		eventTypeLabel,
@@ -30,24 +30,27 @@
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
-	let submitting = $state(false);
-	let unexpectedError = $state<string | null>(null);
 	let mutationPending = $state(false);
 	let clientReviewRequired = $state(false);
 	const request = $derived(data.staffRequest);
+	const quoteResult = $derived(
+		form && ('quoteValues' in form || 'quoteError' in form) ? (form as QuoteActionResult) : null
+	);
+	// A native failed POST may render newer reviewed state than the staff member saw: review first.
 	const reviewedStateChanged = $derived(
-		!!form?.values &&
+		!!quoteResult?.quoteValues &&
 			!!request &&
-			(form.values.expectedVersion !== String(request.financial.version) ||
-				!matchesReviewedSuggestion(form.values, request.suggestedDepositTerms))
+			(quoteResult.quoteValues.deposit.expectedVersion !== String(request.financial.version) ||
+				!matchesReviewedSuggestion(quoteResult.quoteValues.deposit, request.suggestedDepositTerms))
 	);
-	const quoteError = $derived(
-		reviewedStateChanged && !form?.reviewRequired
-			? quoteErrorMessage(409)
-			: (form?.quoteError ?? unexpectedError)
+	const reviewRequired = $derived(!!quoteResult?.reviewRequired || reviewedStateChanged);
+	const builderResult = $derived(
+		reviewedStateChanged && !quoteResult?.reviewRequired
+			? { ...quoteResult, quoteError: quoteErrorMessage(409), reviewRequired: true }
+			: quoteResult
 	);
-	const reviewRequired = $derived(
-		form?.reviewRequired || !!unexpectedError || reviewedStateChanged
+	const showBuilder = $derived(
+		!!request && canIssueQuote(request, data.user.permissions) && (data.quoteOpen || !!quoteResult)
 	);
 	const mutationReviewRequired = $derived(
 		clientReviewRequired ||
@@ -185,62 +188,31 @@
 						</p>{/if}
 				</div>
 			{/if}
-			{#if quoteError}
-				<div role="alert" class="flex flex-col items-start gap-3">
-					<p id="deposit-error" class="m-0 text-sm text-rust-600">{quoteError}</p>
-					{#if reviewRequired}
-						<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
-							>Reload to review</Button
-						>
-					{/if}
-				</div>
-			{/if}
-			{#if canIssueQuote(request, data.user.permissions)}
-				<form
-					method="POST"
-					action="?/issueProposal"
-					aria-busy={submitting}
-					use:enhance={({ cancel }) => {
-						if (mutationPending || mutationReviewRequired) {
-							cancel();
-							return;
-						}
-						submitting = true;
-						mutationPending = true;
-						return async ({ result, update }) => {
-							try {
-								if (result.type === 'error') {
-									unexpectedError =
-										'We couldn’t confirm whether the quote was issued. Reload to review the latest state before trying again.';
-								} else {
-									await update({ reset: false, invalidateAll: false });
-									if (result.type === 'failure' && result.data?.depositErrorField) {
-										document
-											.querySelector<HTMLInputElement>(
-												'[aria-invalid="true"], input[aria-describedby="deposit-error"]'
-											)
-											?.focus();
-									}
-								}
-							} finally {
-								submitting = false;
-								mutationPending = false;
-							}
-						};
-					}}
-				>
-					<DepositChoices
-						suggestion={request.suggestedDepositTerms}
-						currency={request.financial.currency}
-						version={request.financial.version}
-						values={form?.values}
-						errorField={form?.depositErrorField}
-						disabled={mutationPending || mutationReviewRequired}
-					/>
-					<Button type="submit" disabled={mutationPending || mutationReviewRequired} class="w-full"
-						>{submitting ? 'Issuing quote…' : 'Issue quote'}</Button
+			{#if request && canIssueQuote(request, data.user.permissions)}
+				<div class="flex flex-wrap gap-2.5">
+					<!-- Once the panel is open, Build quote brings it into view instead of reloading it. -->
+					<Button
+						href={showBuilder ? '#quote-builder' : `${route}?quote`}
+						class="min-h-12 min-w-[150px] flex-1"
+						data-testid="build-quote">Build quote</Button
 					>
-				</form>
+					<!-- Placeholder until declining requests exists: visible as in the design, never actionable. -->
+					<Button
+						type="button"
+						variant="secondary"
+						disabled
+						title="Declining requests is coming soon"
+						class="min-h-12 min-w-[120px] flex-1 border-rust-600 text-rust-600"
+						data-testid="decline-request">Decline</Button
+					>
+				</div>
+			{:else if quoteResult?.reviewRequired && !showBuilder}
+				<div role="alert" class="flex flex-col items-start gap-3">
+					<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>
+					<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
+						>Reload to review</Button
+					>
+				</div>
 			{/if}
 			<PaymentControls
 				{request}
@@ -266,8 +238,24 @@
 				}}
 			/>
 		</Card>
-		<RequestDetails inquiry={request.inquiry} />
-		<FinancialDocumentCard financial={request.financial} />
+		{#if showBuilder}
+			<QuoteBuilder
+				{request}
+				choices={data.builderChoices}
+				result={builderResult ?? data.initialQuote}
+				{route}
+				blocked={mutationReviewRequired}
+				bind:pending={mutationPending}
+				onReviewRequired={() => {
+					clientReviewRequired = true;
+				}}
+			/>
+		{/if}
+		<RequestDetails inquiry={request.inquiry} servicePlan={request.servicePlan ?? null} />
+		<FinancialDocumentCard
+			financial={request.financial}
+			servicePlan={request.servicePlan ?? null}
+		/>
 		<PaymentHistory {request} />
 	{:else}
 		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request unavailable</h1>

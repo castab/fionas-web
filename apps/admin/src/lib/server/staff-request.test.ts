@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	getStaffRequest,
 	issueInquiryProposal,
+	previewInquiryQuote,
+	getOfferingCatalog,
+	getInquiryForm,
 	markInquiryServed,
 	closeInquiry
 } from './staff-request.js';
@@ -83,6 +86,44 @@ describe('staff request clients', () => {
 			})
 		);
 		expect(result).toMatchObject({ ok: true, setCookies: ['session=renewed; Path=/'] });
+	});
+	const recording = () => vi.fn<typeof fetch>(async () => new Response('{}'));
+	const sent = (fetch: ReturnType<typeof recording>, call = 0) =>
+		JSON.parse(fetch.mock.calls[call][1]!.body as string);
+	it('adds the reviewed composition and its token, both together, to issuance', async () => {
+		const fetch = recording();
+		await issueInquiryProposal(
+			config(fetch),
+			mayaId,
+			1,
+			{ type: 'PERCENTAGE', percentage: '20' },
+			'session=staff',
+			{ composition: { pricing: { mode: 'KEEP_ESTIMATE' } }, reviewToken: 'a'.repeat(64) }
+		);
+		expect(sent(fetch)).toEqual({
+			expectedDocumentVersion: 1,
+			terms: { type: 'PERCENTAGE', percentage: '20' },
+			composition: { pricing: { mode: 'KEEP_ESTIMATE' } },
+			reviewToken: 'a'.repeat(64)
+		});
+	});
+	it('previews a composition with one POST and reads catalog choices with GETs', async () => {
+		const fetch = recording();
+		const body = {
+			expectedDocumentVersion: 1,
+			composition: { pricing: { mode: 'KEEP_ESTIMATE' as const } },
+			terms: { type: 'PERCENTAGE' as const, percentage: '20' }
+		};
+		await previewInquiryQuote(config(fetch), 'inquiry/identity', body, 'session=staff');
+		await getOfferingCatalog(config(fetch), 'session=staff');
+		await getInquiryForm(config(fetch), 'session=staff');
+		expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+			['http://api.test/staff/requests/inquiry%2Fidentity/quote-preview', 'POST'],
+			['http://api.test/offering-catalog', 'GET'],
+			['http://api.test/inquiry-form', 'GET']
+		]);
+		expect(sent(fetch)).toEqual(body);
+		expect(fetch.mock.calls[1][1]?.headers).toMatchObject({ cookie: 'session=staff' });
 	});
 	it('makes one coherent request read, forwarding the USER cookie and returned cookies', async () => {
 		const fetch = vi.fn(

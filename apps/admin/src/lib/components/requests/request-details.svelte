@@ -1,13 +1,17 @@
 <script lang="ts">
 	import { Card, focusRing } from '@fionas/ui';
 	import type { InquiryResponse } from '$lib/request-contract.js';
+	import type { ServicePlanResponse } from '$lib/quote-contract.js';
 	import {
 		durationLabel,
 		eventDateLabel,
 		eventTypeLabel,
 		guestCountLabel
 	} from '$lib/presentation.js';
-	let { inquiry }: { inquiry: InquiryResponse } = $props();
+	let {
+		inquiry,
+		servicePlan = null
+	}: { inquiry: InquiryResponse; servicePlan?: ServicePlanResponse | null } = $props();
 	const caps =
 		'm-0 font-sans text-[10px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase';
 </script>
@@ -60,6 +64,37 @@
 		>
 	</div>
 </Card>
+
+{#if servicePlan}
+	<Card class="flex flex-col gap-4 p-[18px] sm:p-5" data-testid="service-plan">
+		<div>
+			<h2 class={caps}>What you’ll serve</h2>
+			<p class="m-0 mt-1 text-xs text-(--text-muted)">
+				Approved with quote version {servicePlan.documentVersion} · {guestCountLabel(
+					servicePlan.service.guestCount,
+					servicePlan.service.guestCountIsMinimum
+				)} · {durationLabel(servicePlan.service.durationMinutes)}
+			</p>
+		</div>
+		{#each servicePlan.service.selections as category (category.category)}
+			<div>
+				<h3 class={caps}>{category.displayName}</h3>
+				<ul
+					class="m-0 mt-2 flex list-none flex-wrap gap-2 p-0"
+					aria-label={`${category.displayName} in the approved plan`}
+				>
+					{#each category.offerings as offering (offering.offering)}
+						<li
+							class="max-w-full rounded-full border-[1.5px] border-olive-300 bg-cream-200 px-3.5 py-[5px] text-xs font-semibold tracking-[0.05em] wrap-anywhere"
+						>
+							{offering.displayName}
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/each}
+	</Card>
+{/if}
 
 <Card class="flex flex-col gap-4 p-[18px] sm:p-5" data-testid="original-request">
 	<div>

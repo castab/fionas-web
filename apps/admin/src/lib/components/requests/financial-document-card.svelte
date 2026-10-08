@@ -1,9 +1,33 @@
 <script lang="ts">
 	import { Badge, Card } from '@fionas/ui';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
+	import type { ServicePlanResponse } from '$lib/quote-contract.js';
+	import { adjustmentKindLabel } from '$lib/quote-builder.js';
 	import { formatMoney } from '$lib/presentation.js';
 	import { financialStageLabel } from '$lib/request-workspace.js';
-	let { financial }: { financial: CurrentStaffRequest['financial'] } = $props();
+	let {
+		financial,
+		servicePlan = null
+	}: {
+		financial: CurrentStaffRequest['financial'];
+		servicePlan?: ServicePlanResponse | null;
+	} = $props();
+	/** Why each line exists, from the plan approved with exactly this Quote version. */
+	const provenance = $derived(
+		new Map(
+			servicePlan && servicePlan.documentVersion === financial.version
+				? servicePlan.lines.flatMap((line) => {
+						const note =
+							line.origin.type === 'ADJUSTMENT'
+								? `${adjustmentKindLabel(line.origin.kind)} · ${line.origin.reason}`
+								: line.overrideReason
+									? `Negotiated · ${line.overrideReason}`
+									: null;
+						return note ? [[line.lineItemId, note] as const] : [];
+					})
+				: []
+		)
+	);
 	const stage = $derived(financialStageLabel(financial.stage));
 	const caps =
 		'm-0 font-sans text-[10px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase';
@@ -38,6 +62,12 @@
 				</div>
 				{#if line.subDescription}<p class="m-0 mt-1 text-xs wrap-anywhere text-(--text-muted)">
 						{line.subDescription}
+					</p>{/if}
+				{#if provenance.get(line.id)}<p
+						class="m-0 mt-1 text-xs font-semibold wrap-anywhere text-olive-800"
+						data-testid="line-provenance"
+					>
+						{provenance.get(line.id)}
 					</p>{/if}
 				<p class="m-0 mt-1 text-xs wrap-anywhere text-(--text-muted)">
 					{line.quantity !== undefined
