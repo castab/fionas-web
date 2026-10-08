@@ -40,7 +40,8 @@ const baseEntries: [string, string][] = [
 	['expectedVersion', '1'],
 	['depositChoice', 'suggested'],
 	['reviewedSuggestionType', 'PERCENTAGE'],
-	['reviewedSuggestionValue', '20']
+	['reviewedSuggestionValue', '20'],
+	['reviewedCurrency', 'USD']
 ];
 const mayaService: [string, string][] = [
 	['service', '1'],
@@ -61,7 +62,8 @@ const mayaService: [string, string][] = [
 	['pick:topping', 'oreos'],
 	['pick:topping', 'strawberries'],
 	['pick:topping', 'brownies'],
-	['pick:cone-option', 'waffle-cone']
+	['pick:cone-option', 'waffle-cone'],
+	['reviewedConfiguration', JSON.stringify(requestFixtures()[mayaId].inquiry.pricingInputs)]
 ];
 
 function event(
@@ -228,6 +230,7 @@ describe('request route load', () => {
 		);
 		expect(getOfferingCatalog).not.toHaveBeenCalled();
 		expect(getInquiryForm).not.toHaveBeenCalled();
+		expect(previewInquiryQuote).not.toHaveBeenCalled();
 		expect(result).toMatchObject({
 			staffRequest: { inquiry: { id: mayaId } },
 			requestError: null,
@@ -255,10 +258,32 @@ describe('request route load', () => {
 			requestError: 'unavailable'
 		});
 	});
-	it('reads catalog choices only while the builder is open for an eligible quoter', async () => {
+	it('opens the builder complete: choices and the unchanged Estimate preview, read together', async () => {
 		const result = await load(loadEvent('?quote'));
 		expect(getOfferingCatalog).toHaveBeenCalledOnce();
 		expect(getInquiryForm).toHaveBeenCalledOnce();
+		expect(previewInquiryQuote).toHaveBeenCalledExactlyOnceWith(
+			expect.anything(),
+			mayaId,
+			{
+				expectedDocumentVersion: 1,
+				composition: { pricing: { mode: 'KEEP_ESTIMATE' } },
+				terms: { type: 'PERCENTAGE', percentage: '20' }
+			},
+			'session=staff'
+		);
+		expect(result).toMatchObject({
+			initialQuote: {
+				preview: { total: '415.00' },
+				quoteValues: {
+					deposit: { expectedVersion: '1', depositChoice: 'suggested' },
+					reviewToken: 'a'.repeat(64),
+					reviewedBasis: 'KEEP_ESTIMATE',
+					reviewedFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+					reviewedCurrency: 'USD'
+				}
+			}
+		});
 		expect(result).toMatchObject({
 			quoteOpen: true,
 			builderChoices: {
@@ -277,6 +302,36 @@ describe('request route load', () => {
 		mockDefaults();
 		await load(loadEvent('?quote', ['commerce.financial-document.create']));
 		expect(getOfferingCatalog).not.toHaveBeenCalled();
+		expect(previewInquiryQuote).not.toHaveBeenCalled();
+	});
+	it('leaves the first preview to the browser when the opening preview fails', async () => {
+		vi.mocked(previewInquiryQuote).mockResolvedValue(backendFailure(500));
+		expect(await load(loadEvent('?quote'))).toMatchObject({
+			staffRequest: { inquiry: { id: mayaId } },
+			initialQuote: null
+		});
+	});
+	it('issues the opening preview as is: its fingerprint matches the untouched form', async () => {
+		const opened = (await load(loadEvent('?quote'))) as { initialQuote: QuoteActionResult };
+		const values = opened.initialQuote.quoteValues!;
+		vi.clearAllMocks();
+		mockDefaults();
+		await expect(
+			actions.issueQuote(
+				event(
+					[
+						...baseEntries,
+						...mayaService,
+						['reviewToken', values.reviewToken],
+						['reviewedBasis', values.reviewedBasis],
+						['reviewedFingerprint', values.reviewedFingerprint]
+					],
+					{ action: 'issueQuote' }
+				)
+			)
+		).rejects.toMatchObject({ status: 303 });
+		expect(previewInquiryQuote).not.toHaveBeenCalled();
+		expect(issueInquiryProposal).toHaveBeenCalledOnce();
 	});
 	it('leaves picks read-only when the menu cannot be read', async () => {
 		vi.mocked(getInquiryForm).mockResolvedValue(backendFailure(403));
@@ -317,7 +372,32 @@ describe('Preview quote action', () => {
 			reviewedBasis: 'KEEP_ESTIMATE'
 		});
 		expect(result.quoteValues?.reviewedFingerprint).toMatch(/^[0-9a-f]{64}$/);
-		expect(applySetCookies).toHaveBeenCalledWith(expect.anything(), ['session=read-renewed']);
+		// A preview writes nothing, so it trusts the posted reviewed snapshot instead of re-reading.
+		expect(getStaffRequest).not.toHaveBeenCalled();
+	});
+	it.each([
+		['without the reviewed currency', baseEntries.filter(([key]) => key !== 'reviewedCurrency')],
+		[
+			'with service edits but no reviewed configuration',
+			[...baseEntries, ...mayaService.filter(([key]) => key !== 'reviewedConfiguration')]
+		]
+	] as [string, [string, string][]][])('requires review %s', async (_name, entries) => {
+		expect(await actions.previewQuote(event(entries))).toMatchObject({
+			status: 422,
+			data: { reviewRequired: true }
+		});
+		expect(previewInquiryQuote).not.toHaveBeenCalled();
+	});
+	it('reprices directly once picks are known to change price, without failing a revision first', async () => {
+		const entries = mayaService.map(([key, value]): [string, string] =>
+			key === 'pick:soft-serve-flavor' && value === 'chocolate' ? [key, 'horchata'] : [key, value]
+		);
+		const result = (await actions.previewQuote(
+			event([...baseEntries, ...entries, ['reviewedBasis', 'REPRICE_CONFIGURATION']])
+		)) as QuoteActionResult;
+		expect(previewInquiryQuote).toHaveBeenCalledOnce();
+		expect(previewBody().composition.pricing.mode).toBe('REPRICE_CONFIGURATION');
+		expect(result.notices).toEqual({ repriced: true });
 	});
 	it('composes overrides by line id and adjustments in order, ignoring a blank native row', async () => {
 		await actions.previewQuote(
@@ -525,16 +605,6 @@ describe('Preview quote action', () => {
 			expect(previewInquiryQuote).not.toHaveBeenCalled();
 		}
 	);
-	it('requires review of a changed suggestion instead of substituting it', async () => {
-		const data = requestFixtures()[mayaId];
-		data.suggestedDepositTerms = { type: 'PERCENTAGE', percentage: '25' };
-		vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data, setCookies: [] });
-		expect(await actions.previewQuote(event())).toMatchObject({
-			status: 409,
-			data: { reviewRequired: true }
-		});
-		expect(previewInquiryQuote).not.toHaveBeenCalled();
-	});
 	it('maps violations to builder sections without exposing diagnostics', async () => {
 		vi.mocked(previewInquiryQuote).mockResolvedValue(
 			backendFailure(422, 'validation_failed', ['QUOTE_TOTAL_NOT_POSITIVE', 'OFFERING_UNAVAILABLE'])
@@ -586,26 +656,8 @@ describe('Preview quote action', () => {
 			data: { reviewRequired: true }
 		});
 	});
-	it('does not proxy a mismatched projection or an ineligible request', async () => {
-		const mismatched = requestFixtures()[mayaId];
-		mismatched.financial.inquiryId = 'another-inquiry';
-		vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data: mismatched, setCookies: [] });
-		expect(await actions.previewQuote(event())).toMatchObject({ status: 503 });
-		const quoted = requestFixtures()['00000000-0000-0000-0000-000000000001'];
-		vi.mocked(getStaffRequest).mockResolvedValue({
-			ok: true,
-			data: {
-				...quoted,
-				inquiry: { ...quoted.inquiry, id: mayaId },
-				financial: { ...quoted.financial, inquiryId: mayaId }
-			},
-			setCookies: []
-		});
-		expect(await actions.previewQuote(event())).not.toMatchObject({ preview: expect.anything() });
-		expect(previewInquiryQuote).not.toHaveBeenCalled();
-	});
 	it('redirects an expired backend session to login', async () => {
-		vi.mocked(getStaffRequest).mockResolvedValue(backendFailure(401));
+		vi.mocked(previewInquiryQuote).mockResolvedValue(backendFailure(401));
 		await expect(actions.previewQuote(event())).rejects.toMatchObject({
 			status: 303,
 			location: '/login'
@@ -772,6 +824,65 @@ describe('Issue quote action', () => {
 			location: '/login'
 		});
 		expect(issueInquiryProposal).toHaveBeenCalledOnce();
+	});
+	it('requires review of a changed suggestion instead of substituting it', async () => {
+		const entries = await reviewed();
+		const data = requestFixtures()[mayaId];
+		data.suggestedDepositTerms = { type: 'PERCENTAGE', percentage: '25' };
+		vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data, setCookies: [] });
+		expect(await actions.issueQuote(event(entries, { action: 'issueQuote' }))).toMatchObject({
+			status: 409,
+			data: { reviewRequired: true }
+		});
+		expect(issueInquiryProposal).not.toHaveBeenCalled();
+	});
+	it('issues a fixed backend suggestion whatever its JSON key order', async () => {
+		const suggested = () => {
+			const data = requestFixtures()[mayaId];
+			data.suggestedDepositTerms = { currency: 'USD', amount: '120.00', type: 'FIXED' } as never;
+			return data;
+		};
+		const fixed: [string, string][] = baseEntries.map(([key, value]) =>
+			key === 'reviewedSuggestionType'
+				? [key, 'FIXED']
+				: key === 'reviewedSuggestionValue'
+					? [key, '120.00']
+					: [key, value]
+		);
+		const entries = await reviewed(fixed);
+		vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data: suggested(), setCookies: [] });
+		await expect(
+			actions.issueQuote(event(entries, { action: 'issueQuote' }))
+		).rejects.toMatchObject({
+			status: 303
+		});
+		expect(previewInquiryQuote).not.toHaveBeenCalled();
+	});
+	it('does not proxy a mismatched projection or an ineligible request', async () => {
+		const entries = await reviewed();
+		const mismatched = requestFixtures()[mayaId];
+		mismatched.financial.inquiryId = 'another-inquiry';
+		vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data: mismatched, setCookies: [] });
+		expect(await actions.issueQuote(event(entries, { action: 'issueQuote' }))).toMatchObject({
+			status: 503
+		});
+		const quoted = requestFixtures()['00000000-0000-0000-0000-000000000001'];
+		vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data: quoted, setCookies: [] });
+		expect(await actions.issueQuote(event(entries, { action: 'issueQuote' }))).toMatchObject({
+			data: { reviewRequired: true }
+		});
+		expect(issueInquiryProposal).not.toHaveBeenCalled();
+	});
+	it('redirects an expired session found by the authoritative read', async () => {
+		const entries = await reviewed();
+		vi.mocked(getStaffRequest).mockResolvedValue(backendFailure(401));
+		await expect(
+			actions.issueQuote(event(entries, { action: 'issueQuote' }))
+		).rejects.toMatchObject({
+			status: 303,
+			location: '/login'
+		});
+		expect(issueInquiryProposal).not.toHaveBeenCalled();
 	});
 	it('checks permissions again before reading or mutating', async () => {
 		expect(

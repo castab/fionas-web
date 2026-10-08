@@ -24,9 +24,13 @@ import {
 } from '$lib/payments.js';
 import type { PaymentFormValues } from '$lib/payments.js';
 import type { RecordPaymentRequest } from '$lib/payment-contract.js';
-import { matchesReviewedSuggestion } from '$lib/deposit.js';
-import type { CurrentStaffRequest, DepositTermsRequest } from '$lib/request-contract.js';
-import type { InquiryQuotePreviewResponse, QuotePricingBasis } from '$lib/quote-contract.js';
+import { matchesReviewedSuggestion, suggestionValue } from '$lib/deposit.js';
+import type {
+	CurrentStaffRequest,
+	DepositTermsRequest,
+	InquiryRequestedPricing
+} from '$lib/request-contract.js';
+import type { QuotePricingBasis } from '$lib/quote-contract.js';
 import {
 	basisStillReviewed,
 	buildComposition,
@@ -37,10 +41,13 @@ import {
 	quoteInputErrors,
 	quoteViolationFeedback,
 	readQuoteForm,
+	reviewedTerms,
 	type BuilderChoices,
 	type FeedbackSection,
+	type QuoteActionResult,
 	type QuoteFieldErrors,
-	type QuoteFormValues
+	type QuoteFormValues,
+	type QuoteNotices
 } from '$lib/quote-builder.js';
 import {
 	canMarkServed,
@@ -77,7 +84,8 @@ export const load: PageServerLoad = async ({
 			staffRequest: null,
 			requestError: requestErrorKind(result.error.status),
 			quoteOpen,
-			builderChoices: null
+			builderChoices: null,
+			initialQuote: null
 		};
 	}
 	applySetCookies(cookies, result.setCookies);
@@ -87,34 +95,96 @@ export const load: PageServerLoad = async ({
 			staffRequest: null,
 			requestError: 'unavailable' as const,
 			quoteOpen,
-			builderChoices: null
+			builderChoices: null,
+			initialQuote: null
 		};
 	}
+	const data = result.data;
 	let choices: BuilderChoices | null = null;
-	// Selection choices are read only while the builder is open and the service may be edited.
-	if (
-		quoteOpen &&
-		canIssueQuote(result.data, locals.user?.permissions ?? []) &&
-		effectiveConfiguration(result.data)
-	) {
-		const [catalog, form] = await Promise.all([
-			getOfferingCatalog(config, cookie),
-			getInquiryForm(config, cookie)
+	let initialQuote: QuoteActionResult | null = null;
+	// The builder opens complete: its choices and the unchanged Estimate's preview are read together.
+	if (quoteOpen && canIssueQuote(data, locals.user?.permissions ?? [])) {
+		const effective = effectiveConfiguration(data);
+		const [catalog, form, opening] = await Promise.all([
+			effective ? getOfferingCatalog(config, cookie) : null,
+			effective ? getInquiryForm(config, cookie) : null,
+			// After a form action the page shows that action's own result; only a GET opens fresh.
+			request.method === 'GET' ? openingPreview(config, cookie, data, effective) : null
 		]);
-		if (catalog.ok) applySetCookies(cookies, catalog.setCookies);
-		if (form.ok) applySetCookies(cookies, form.setCookies);
-		choices = catalog.ok && form.ok ? builderChoices(catalog.data, form.data) : null;
+		if (catalog?.ok) applySetCookies(cookies, catalog.setCookies);
+		if (form?.ok) applySetCookies(cookies, form.setCookies);
+		choices = catalog?.ok && form?.ok ? builderChoices(catalog.data, form.data) : null;
+		if (opening) {
+			applySetCookies(cookies, opening.setCookies);
+			initialQuote = opening.result;
+		}
 	}
 	return {
 		inquiryId: params.inquiryId,
-		staffRequest: result.data,
+		staffRequest: data,
 		requestError: null,
 		quoteOpen,
-		builderChoices: choices
+		builderChoices: choices,
+		initialQuote
 	};
 };
 
-type QuoteNotices = { repriced?: boolean; overridesCleared?: boolean; reviewStale?: boolean };
+/**
+ * The preview of the Estimate as it stands, with the suggested deposit: exactly what the builder's
+ * untouched form would post. Any failure just leaves the builder to preview once it has mounted.
+ */
+async function openingPreview(
+	config: BackendConfig,
+	cookie: string | null,
+	data: CurrentStaffRequest,
+	effective: InquiryRequestedPricing | null
+): Promise<{ result: QuoteActionResult; setCookies: string[] } | null> {
+	const terms = data.suggestedDepositTerms;
+	const expectedDocumentVersion = data.financial.version;
+	const composition = { pricing: { mode: 'KEEP_ESTIMATE' as const } };
+	const result = await previewInquiryQuote(
+		config,
+		data.inquiry.id,
+		{ expectedDocumentVersion, composition, terms },
+		cookie
+	);
+	if (
+		!result.ok ||
+		!isQuotePreview(result.data, {
+			inquiryId: data.inquiry.id,
+			currency: data.financial.currency,
+			documentId: data.financial.id
+		}) ||
+		result.data.pricingBasis !== 'KEEP_ESTIMATE'
+	)
+		return null;
+	return {
+		setCookies: result.setCookies,
+		result: {
+			preview: result.data,
+			notices: {},
+			quoteValues: {
+				deposit: {
+					expectedVersion: String(expectedDocumentVersion),
+					depositChoice: 'suggested',
+					reviewedSuggestionType: terms.type,
+					reviewedSuggestionValue: suggestionValue(terms),
+					depositPercentage: '',
+					depositAmount: ''
+				},
+				service: null,
+				overrides: [],
+				adjustments: [],
+				reviewToken: result.data.reviewToken,
+				reviewedBasis: 'KEEP_ESTIMATE',
+				reviewedFingerprint: reviewFingerprint(expectedDocumentVersion, composition, terms),
+				reviewedCurrency: data.financial.currency,
+				reviewedConfiguration: effective
+			}
+		}
+	};
+}
+
 type QuoteFailureData = {
 	quoteError: string;
 	reviewRequired: boolean;
@@ -124,6 +194,7 @@ type QuoteFailureData = {
 	catalogStale?: boolean;
 	notices?: QuoteNotices;
 };
+type Failure = { failure: ActionFailure<QuoteFailureData> };
 
 function quoteFailure(status: number, mutationAttempted = false, quoteValues?: QuoteFormValues) {
 	return fail(status >= 500 ? 503 : status, {
@@ -156,26 +227,41 @@ function correctableFailure(error: ApiError, quoteValues: QuoteFormValues, notic
 	} satisfies QuoteFailureData);
 }
 
+function fieldFailure(values: QuoteFormValues, currency: string): Failure | null {
+	const fieldErrors = quoteInputErrors(values, currency);
+	return Object.keys(fieldErrors).length
+		? {
+				failure: fail(422, {
+					quoteError: 'Check the highlighted fields, then preview again.',
+					reviewRequired: false,
+					fieldErrors,
+					quoteValues: values
+				} satisfies QuoteFailureData)
+			}
+		: null;
+}
+
 type QuoteContext = {
 	config: BackendConfig;
 	cookie: string | null;
 	inquiryId: string;
-	data: CurrentStaffRequest;
 	values: QuoteFormValues;
 	terms: DepositTermsRequest;
+	currency: string;
+	/** What the reviewed Estimate was priced from, for choosing the pricing mode. */
+	effective: InquiryRequestedPricing | null;
+	/** Known only from an authoritative read; a preview checks it when present. */
+	documentId?: string;
 	setCookies: (values: string[]) => void;
 };
+type Envelope = { values: QuoteFormValues; config: BackendConfig; cookie: string | null };
 
-/** Shared by preview and issue: permission, strict envelope, one coherent read, local checks. */
-async function quoteContext({
-	params,
+/** Permission and the strict form envelope, before any backend access. */
+async function readEnvelope({
 	locals,
 	request,
-	url,
-	cookies
-}: RequestEvent): Promise<
-	{ context: QuoteContext } | { failure: ActionFailure<QuoteFailureData> }
-> {
+	url
+}: RequestEvent): Promise<{ envelope: Envelope } | Failure> {
 	if (!locals.user) redirect(303, '/login');
 	if (!hasProposalPermissions(locals.user.permissions)) return { failure: quoteFailure(403) };
 	let form: FormData;
@@ -186,8 +272,48 @@ async function quoteContext({
 	}
 	const values = readQuoteForm(form);
 	if (!values) return { failure: quoteFailure(422) };
-	const config = backendConfig(url.origin);
-	const cookie = request.headers.get('cookie');
+	return {
+		envelope: {
+			values,
+			config: backendConfig(url.origin),
+			cookie: request.headers.get('cookie')
+		}
+	};
+}
+
+/**
+ * A preview writes nothing, so it trusts the reviewed snapshot the page posted (currency, priced
+ * configuration, deposit suggestion) instead of re-reading the request. Commerce validates every
+ * value; issuing re-reads everything and only accepts exactly what was previewed.
+ */
+function postedContext(
+	{ params, cookies }: RequestEvent,
+	{ values, config, cookie }: Envelope
+): { context: QuoteContext } | Failure {
+	const currency = values.reviewedCurrency;
+	if (!currency || (values.service && !values.reviewedConfiguration))
+		return { failure: quoteFailure(422, false, values) };
+	const invalid = fieldFailure(values, currency);
+	if (invalid) return invalid;
+	return {
+		context: {
+			config,
+			cookie,
+			inquiryId: params.inquiryId,
+			values,
+			terms: reviewedTerms(values.deposit, currency),
+			currency,
+			effective: values.reviewedConfiguration,
+			setCookies: (setCookies) => applySetCookies(cookies, setCookies)
+		}
+	};
+}
+
+/** Issuing scopes everything through one coherent, authoritative read of this route's request. */
+async function authoritativeContext(
+	{ params, cookies }: RequestEvent,
+	{ values, config, cookie }: Envelope
+): Promise<{ context: QuoteContext } | Failure> {
 	// Scope every call through the route's authoritative projection, never a posted document id.
 	const current = await getStaffRequest(config, params.inquiryId, cookie);
 	if (!current.ok) {
@@ -198,38 +324,30 @@ async function quoteContext({
 	const data = current.data;
 	if (!isCurrentStaffRequest(data, params.inquiryId))
 		return { failure: quoteFailure(503, false, values) };
+	const effective = effectiveConfiguration(data);
 	if (
 		!isProposalEligible(data) ||
-		(values.service && !effectiveConfiguration(data)) ||
+		(values.service && !effective) ||
 		(values.deposit.depositChoice === 'suggested' &&
 			!matchesReviewedSuggestion(values.deposit, data.suggestedDepositTerms))
 	)
 		return { failure: quoteFailure(409, false, values) };
-	const fieldErrors = quoteInputErrors(values, data.financial.currency);
-	if (Object.keys(fieldErrors).length)
-		return {
-			failure: fail(422, {
-				quoteError: 'Check the highlighted fields, then preview again.',
-				reviewRequired: false,
-				fieldErrors,
-				quoteValues: values
-			} satisfies QuoteFailureData)
-		};
-	const deposit = values.deposit;
-	const terms: DepositTermsRequest =
-		deposit.depositChoice === 'suggested'
-			? data.suggestedDepositTerms
-			: deposit.depositChoice === 'percentage'
-				? { type: 'PERCENTAGE', percentage: deposit.depositPercentage }
-				: { type: 'FIXED', amount: deposit.depositAmount, currency: data.financial.currency };
+	const currency = data.financial.currency;
+	const invalid = fieldFailure(values, currency);
+	if (invalid) return invalid;
 	return {
 		context: {
 			config,
 			cookie,
 			inquiryId: params.inquiryId,
-			data,
 			values,
-			terms,
+			terms:
+				values.deposit.depositChoice === 'suggested'
+					? data.suggestedDepositTerms
+					: reviewedTerms(values.deposit, currency),
+			currency,
+			effective,
+			documentId: data.financial.id,
 			setCookies: (setCookies) => applySetCookies(cookies, setCookies)
 		}
 	};
@@ -244,9 +362,8 @@ async function preview(
 	basis: QuotePricingBasis,
 	notices: QuoteNotices = {}
 ) {
-	const { config, cookie, inquiryId, data, values, terms } = context;
-	const currency = data.financial.currency;
-	// Even if the read sees a newer Estimate, preview only the version the staff member reviewed.
+	const { config, cookie, inquiryId, values, terms, currency } = context;
+	// Preview only the version the staff member reviewed, whatever a newer read might show.
 	const expectedDocumentVersion = Number(values.deposit.expectedVersion);
 	let built = buildComposition(values, basis, currency);
 	let result = await previewInquiryQuote(
@@ -291,15 +408,17 @@ async function preview(
 		return quoteFailure(error.status, false, values);
 	}
 	context.setCookies(result.setCookies);
-	if (!isQuotePreview(result.data, data) || result.data.pricingBasis !== basis)
+	if (
+		!isQuotePreview(result.data, { inquiryId, currency, documentId: context.documentId }) ||
+		result.data.pricingBasis !== basis
+	)
 		return quoteFailure(503, false, values);
-	const reviewed: InquiryQuotePreviewResponse = result.data;
 	return {
-		preview: reviewed,
+		preview: result.data,
 		notices,
 		quoteValues: {
 			...values,
-			reviewToken: reviewed.reviewToken,
+			reviewToken: result.data.reviewToken,
 			reviewedBasis: basis,
 			reviewedFingerprint: reviewFingerprint(expectedDocumentVersion, built.composition, terms)
 		}
@@ -312,17 +431,25 @@ export const actions: Actions = {
 	recordDeposit: paymentAction(true),
 	recordInvoicePayment: paymentAction(false),
 	previewQuote: async (event) => {
-		const result = await quoteContext(event);
-		if ('failure' in result) return result.failure;
-		const { values, data } = result.context;
-		return preview(result.context, chooseBasis(values.service, effectiveConfiguration(data)));
+		const read = await readEnvelope(event);
+		if ('failure' in read) return read.failure;
+		const posted = postedContext(event, read.envelope);
+		if ('failure' in posted) return posted.failure;
+		const { values, effective } = posted.context;
+		const basis = chooseBasis(values.service, effective);
+		// Picks already found to change pricing reprice directly, without failing a revision first.
+		if (basis === 'REVISE_SERVICE_SELECTIONS' && values.reviewedBasis === 'REPRICE_CONFIGURATION')
+			return preview(posted.context, 'REPRICE_CONFIGURATION', { repriced: true });
+		return preview(posted.context, basis);
 	},
 	issueQuote: async (event) => {
-		const result = await quoteContext(event);
+		const read = await readEnvelope(event);
+		if ('failure' in read) return read.failure;
+		const result = await authoritativeContext(event, read.envelope);
 		if ('failure' in result) return result.failure;
 		const context = result.context;
-		const { values, data, terms } = context;
-		const basis = chooseBasis(values.service, effectiveConfiguration(data));
+		const { values, terms, currency, effective } = context;
+		const basis = chooseBasis(values.service, effective);
 		const expectedDocumentVersion = Number(values.deposit.expectedVersion);
 		// Only the exact previewed command may be issued; anything else is previewed again for review.
 		if (
@@ -331,7 +458,7 @@ export const actions: Actions = {
 			!basisStillReviewed(values.reviewedBasis, basis)
 		)
 			return preview(context, basis, { reviewStale: true });
-		const { composition } = buildComposition(values, values.reviewedBasis, data.financial.currency);
+		const { composition } = buildComposition(values, values.reviewedBasis, currency);
 		if (
 			reviewFingerprint(expectedDocumentVersion, composition, terms) !== values.reviewedFingerprint
 		)

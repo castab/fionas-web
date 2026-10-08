@@ -5,14 +5,19 @@ import type { QuoteCompositionRequest } from '../quote-contract.js';
 /**
  * Identity of the exact command staff previewed. Issuing re-derives the command from the posted
  * form and refuses (re-previewing instead) unless it is byte-for-byte what was reviewed, so an edit
- * made after the preview can never be issued silently, with or without JavaScript.
+ * made after the preview can never be issued silently, with or without JavaScript. Terms are
+ * canonical: the same terms hash alike whether they came from the form or from Commerce's JSON.
  */
 export function reviewFingerprint(
 	expectedDocumentVersion: number,
 	composition: QuoteCompositionRequest,
 	terms: DepositTermsRequest
 ): string {
+	const canonicalTerms =
+		terms.type === 'PERCENTAGE'
+			? { type: terms.type, percentage: terms.percentage }
+			: { type: terms.type, amount: terms.amount, currency: terms.currency };
 	return createHash('sha256')
-		.update(JSON.stringify({ expectedDocumentVersion, composition, terms }))
+		.update(JSON.stringify({ expectedDocumentVersion, composition, terms: canonicalTerms }))
 		.digest('hex');
 }

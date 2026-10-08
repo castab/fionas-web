@@ -242,7 +242,7 @@
 			<QuoteBuilder
 				{request}
 				choices={data.builderChoices}
-				result={builderResult}
+				result={builderResult ?? data.initialQuote}
 				{route}
 				blocked={mutationReviewRequired}
 				bind:pending={mutationPending}

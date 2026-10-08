@@ -32,7 +32,7 @@ test('negotiates a line and adds a discount, then shows why each Quote line exis
 	);
 	await page.getByLabel('Amount for Ice cream service').fill('160');
 	await expect(issueButton(page)).toBeDisabled();
-	await expect(total(page)).toContainText('Changes not previewed yet');
+	await expect(total(page)).toContainText('Finish your changes to update the total');
 	await page.getByLabel('Why the price of Ice cream service changed').fill('Package rate');
 	await expect(total(page)).toContainText('$395');
 	await expect(total(page)).toContainText('Their estimate was $415');
@@ -208,17 +208,16 @@ test('a failed preview can be retried and never enables issue on its own', async
 	expect((await session(context)).proposalAttempts).toHaveLength(0);
 });
 
-test('a catalog change mid-review reloads the menu and asks for another preview', async ({
+test('a catalog change mid-review reloads the menu, previews against it and asks for a check', async ({
 	page,
 	context
 }) => {
 	await openBuilder(page);
 	await session(context, { catalogRevision: 16 });
 	await page.getByLabel('Guests', { exact: true }).fill('45');
-	await expect(page.getByRole('alert').first()).toContainText('The menu changed');
-	await expect(issueButton(page)).toBeDisabled();
-	await page.getByRole('button', { name: 'Preview again' }).click();
+	// No retry click needed: the refreshed menu previews on its own, and staff are told to check it.
 	await expect(total(page)).toContainText('$441.25');
+	await expect(page.getByText('The menu changed since this quote was opened')).toBeVisible();
 	await expect(issueButton(page)).toBeEnabled();
 	const attempts = (await session(context)).previewAttempts;
 	expect(attempts.at(-1).body.composition.pricing.catalogRevision).toBe(16);

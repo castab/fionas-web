@@ -12,6 +12,7 @@
 		type QuoteFieldErrors
 	} from '$lib/quote-builder.js';
 	import { formatMoney } from '$lib/presentation.js';
+	import { moneyMinorUnits } from '$lib/payments.js';
 	import { dashedPill, errorText, fieldInput, fieldSurface, roundIconButton } from './styles.js';
 
 	let {
@@ -90,6 +91,19 @@
 		return adjustmentLines.find(
 			(line) => line.origin.type === 'ADJUSTMENT' && line.origin.clientKey === clientKey
 		);
+	}
+	/**
+	 * The line as staff typed it, shown at once: the entered amount with its kind's sign. It's the
+	 * input echoed back, not arithmetic; totals and deposits only ever come from the preview.
+	 */
+	function echo(row: AdjustmentDraft): string | null {
+		const amount = row.amount.trim();
+		const minor = moneyMinorUnits(amount, currency);
+		if (minor === null || minor <= 0n) {
+			const line = previewed(row.clientKey);
+			return line ? formatMoney(line.total, currency) : null;
+		}
+		return `${row.kind === 'CHARGE' ? '' : '-'}${formatMoney(amount, currency)}`;
 	}
 	function removeAdjustment(clientKey: string) {
 		adjustments = adjustments.filter((row) => row.clientKey !== clientKey);
@@ -182,7 +196,6 @@
 
 		{#each rows as row (row.clientKey)}
 			{@const key = row.clientKey}
-			{@const result = previewed(key)}
 			<li class="flex flex-col gap-1" data-testid="quote-adjustment">
 				<input type="hidden" name="adjustment" value={key} />
 				<div class="flex items-center gap-2">
@@ -235,10 +248,8 @@
 							{adjustmentKindLabel(kind)}
 						</label>
 					{/each}
-					{#if result}
-						<span class="ml-auto text-xs font-semibold text-olive-800"
-							>{formatMoney(result.total, currency)}</span
-						>
+					{#if echo(row)}
+						<span class="ml-auto text-xs font-semibold text-olive-800">{echo(row)}</span>
 					{/if}
 				</fieldset>
 				<input

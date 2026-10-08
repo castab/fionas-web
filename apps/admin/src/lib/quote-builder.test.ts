@@ -13,6 +13,7 @@ import {
 	quoteInputErrors,
 	quoteViolationFeedback,
 	readQuoteForm,
+	reviewedTerms,
 	targetKey,
 	type QuoteFormValues
 } from './quote-builder.js';
@@ -37,6 +38,8 @@ function values(patch: Partial<QuoteFormValues> = {}): QuoteFormValues {
 		reviewToken: '',
 		reviewedBasis: '',
 		reviewedFingerprint: '',
+		reviewedCurrency: 'USD',
+		reviewedConfiguration: null,
 		...patch
 	};
 }
@@ -172,6 +175,37 @@ describe('reading the posted builder form', () => {
 		const data = form([]);
 		mutate(data);
 		expect(readQuoteForm(data)).toBeNull();
+	});
+});
+
+describe('the reviewed snapshot a preview trusts', () => {
+	it('reads the reviewed currency and priced configuration strictly', () => {
+		const read = readQuoteForm(
+			form([
+				['reviewedCurrency', 'USD'],
+				['reviewedConfiguration', JSON.stringify(maya.inquiry.pricingInputs)]
+			])
+		);
+		expect(read?.reviewedCurrency).toBe('USD');
+		expect(read?.reviewedConfiguration).toEqual(maya.inquiry.pricingInputs);
+		for (const [key, value] of [
+			['reviewedCurrency', 'usd'],
+			['reviewedConfiguration', '{"guestCount":40}'],
+			['reviewedConfiguration', 'not json']
+		])
+			expect(readQuoteForm(form([[key, value]]))).toBeNull();
+	});
+	it('takes suggested terms from the reviewed snapshot and custom terms as typed', () => {
+		expect(reviewedTerms(deposit, 'USD')).toEqual({ type: 'PERCENTAGE', percentage: '20' });
+		expect(
+			reviewedTerms(
+				{ ...deposit, reviewedSuggestionType: 'FIXED', reviewedSuggestionValue: '125.00' },
+				'CAD'
+			)
+		).toEqual({ type: 'FIXED', amount: '125.00', currency: 'CAD' });
+		expect(
+			reviewedTerms({ ...deposit, depositChoice: 'fixed', depositAmount: '90' }, 'USD')
+		).toEqual({ type: 'FIXED', amount: '90', currency: 'USD' });
 	});
 });
 
@@ -364,14 +398,20 @@ describe('preview presentation', () => {
 		},
 		reviewToken: 'd0bf75539c59600ceb1d6a29afd5fe38b6a2c6b1b613bd02e9f024f4f25ba98f'
 	};
+	const expected = { inquiryId: mayaId, currency: 'USD', documentId: maya.financial.id };
 	it('accepts a coherent preview and rejects one for another request or currency', () => {
-		expect(isQuotePreview(preview, maya)).toBe(true);
-		expect(isQuotePreview({ ...preview, documentId: 'other' }, maya)).toBe(false);
-		expect(isQuotePreview({ ...preview, currency: 'CAD' }, maya)).toBe(false);
-		expect(isQuotePreview({ ...preview, reviewToken: 'ABC' }, maya)).toBe(false);
-		expect(isQuotePreview({ ...preview, pricingBasis: 'GUESS' }, maya)).toBe(false);
+		expect(isQuotePreview(preview, expected)).toBe(true);
+		expect(isQuotePreview({ ...preview, documentId: 'other' }, expected)).toBe(false);
+		// Without an authoritative read the document cannot be checked, only the request and currency.
 		expect(
-			isQuotePreview({ ...preview, lines: [{ ...line, origin: { type: 'MYSTERY' } }] }, maya)
+			isQuotePreview({ ...preview, documentId: 'other' }, { inquiryId: mayaId, currency: 'USD' })
+		).toBe(true);
+		expect(isQuotePreview(preview, { inquiryId: 'other', currency: 'USD' })).toBe(false);
+		expect(isQuotePreview({ ...preview, currency: 'CAD' }, expected)).toBe(false);
+		expect(isQuotePreview({ ...preview, reviewToken: 'ABC' }, expected)).toBe(false);
+		expect(isQuotePreview({ ...preview, pricingBasis: 'GUESS' }, expected)).toBe(false);
+		expect(
+			isQuotePreview({ ...preview, lines: [{ ...line, origin: { type: 'MYSTERY' } }] }, expected)
 		).toBe(false);
 	});
 	it('describes the original price of an overridden line', () => {

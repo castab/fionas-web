@@ -153,9 +153,10 @@ test('issues the previewed quote, lands on a fresh Quote and never resubmits on 
 	expect(after.proposalAttempts).toEqual([
 		{ inquiryId: mayaId, body: keptEstimate({ type: 'PERCENTAGE', percentage: '20' }) }
 	]);
+	// The builder opened with its preview already made; nothing else was previewed.
 	expect(after.previewAttempts).toHaveLength(1);
-	// Builder load, preview action, issue action and the confirming GET.
-	expect(after.requestReads - before.requestReads).toBe(4);
+	// Builder load (with its preview), the issue action's authoritative read and the confirming GET.
+	expect(after.requestReads - before.requestReads).toBe(3);
 	expect(browserUrls.some((url) => url.startsWith(stubUrl))).toBe(false);
 	await page.reload();
 	expect((await session(context)).proposalAttempts).toHaveLength(1);
@@ -467,7 +468,8 @@ test.describe('native forms', () => {
 		await expect(issueButton(page)).toBeDisabled();
 		const state = await session(context);
 		expect(state.proposalAttempts).toHaveLength(0);
-		expect(state.previewAttempts).toHaveLength(0);
+		// Only the opening preview ran; the invalid deposit was never previewed.
+		expect(state.previewAttempts).toHaveLength(1);
 		await page.getByRole('link', { name: 'Reload to review' }).click();
 		await expect(page.getByTestId('build-quote')).toBeVisible();
 	});
@@ -490,15 +492,19 @@ test.describe('native forms', () => {
 		await page.reload();
 		expect((await session(context)).proposalAttempts).toHaveLength(1);
 	});
-	test('an unreviewed native issue previews first and issues only on a second explicit click', async ({
+	test('an edit issued without previewing previews first and issues only on a second explicit click', async ({
 		page,
 		context
 	}) => {
 		await openMaya(page);
 		await openBuilder(page, true);
+		// The panel opens already previewed; this edit is not part of that preview.
+		await expect(page.getByTestId('quote-deposit')).toContainText('$83');
+		await page.getByRole('radio', { name: 'Custom percentage', exact: true }).check();
+		await page.getByLabel('Deposit percentage', { exact: true }).fill('25');
 		await issueButton(page).click();
 		await expect(page.getByText('The quote changed since you reviewed it')).toBeVisible();
-		await expect(page.getByTestId('quote-deposit')).toContainText('$83');
+		await expect(page.getByTestId('quote-deposit')).toContainText('$103.75');
 		expect((await session(context)).proposalAttempts).toHaveLength(0);
 		await issueButton(page).click();
 		await expect(page.getByTestId('request-summary')).toContainText('Quote issued');

@@ -1,6 +1,7 @@
 import type { InquiryForm, OfferingOption } from '@fionas/shared';
 import type {
 	CurrentStaffRequest,
+	DepositTermsRequest,
 	InquiryRequestedPricing,
 	PricingSelection
 } from './request-contract.js';
@@ -181,6 +182,10 @@ export type QuoteFormValues = {
 	reviewToken: string;
 	reviewedBasis: QuotePricingBasis | '';
 	reviewedFingerprint: string;
+	/** The reviewed Estimate's currency, posted so a preview needs no projection read. */
+	reviewedCurrency: string;
+	/** What the reviewed Estimate was priced from; absent when the service isn't editable. */
+	reviewedConfiguration: InquiryRequestedPricing | null;
 };
 
 const DEPOSIT_FIELDS = [
@@ -199,17 +204,25 @@ const SINGLE_FIELDS = [
 	'durationMinutes',
 	'reviewToken',
 	'reviewedBasis',
-	'reviewedFingerprint'
+	'reviewedFingerprint',
+	'reviewedCurrency',
+	'reviewedConfiguration'
 ];
 const CLIENT_KEY = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_TEXT = 600;
+/** A whole configuration (every category's picks) as JSON. */
+const MAX_CONFIGURATION = 8000;
 
 /** Strict UI envelope: unknown, duplicate or file fields reject the whole post. */
 export function readQuoteForm(form: FormData): QuoteFormValues | null {
 	const deposit = new FormData();
 	const seen = new Set<string>();
 	for (const [key, value] of form.entries()) {
-		if (typeof value !== 'string' || value.length > MAX_TEXT) return null;
+		if (
+			typeof value !== 'string' ||
+			value.length > (key === 'reviewedConfiguration' ? MAX_CONFIGURATION : MAX_TEXT)
+		)
+			return null;
 		if (DEPOSIT_FIELDS.includes(key)) {
 			deposit.append(key, value);
 			continue;
@@ -315,6 +328,13 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 	if (reviewedBasis && !quoteBasisValues.includes(reviewedBasis)) return null;
 	const reviewedFingerprint = text('reviewedFingerprint');
 	if (reviewedFingerprint && !/^[0-9a-f]{64}$/.test(reviewedFingerprint)) return null;
+	const reviewedCurrency = text('reviewedCurrency');
+	if (reviewedCurrency && !/^[A-Z]{3}$/.test(reviewedCurrency)) return null;
+	let reviewedConfiguration: InquiryRequestedPricing | null = null;
+	if (form.has('reviewedConfiguration')) {
+		reviewedConfiguration = parseConfiguration(text('reviewedConfiguration'));
+		if (!reviewedConfiguration) return null;
+	}
 	return {
 		deposit: depositValues,
 		service,
@@ -322,8 +342,58 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 		adjustments,
 		reviewToken,
 		reviewedBasis,
-		reviewedFingerprint
+		reviewedFingerprint,
+		reviewedCurrency,
+		reviewedConfiguration
 	};
+}
+
+function parseConfiguration(json: string): InquiryRequestedPricing | null {
+	let value: unknown;
+	try {
+		value = JSON.parse(json);
+	} catch {
+		return null;
+	}
+	if (!value || typeof value !== 'object') return null;
+	const config = value as InquiryRequestedPricing;
+	const count = (n: unknown) => Number.isInteger(n) && (n as number) > 0;
+	return count(config.catalogRevision) &&
+		count(config.guestCount) &&
+		count(config.durationMinutes) &&
+		typeof config.guestCountIsMinimum === 'boolean' &&
+		Array.isArray(config.selections) &&
+		config.selections.every(
+			(s) =>
+				typeof s?.category === 'string' &&
+				Array.isArray(s.offerings) &&
+				s.offerings.every((o) => typeof o === 'string')
+		)
+		? {
+				catalogRevision: config.catalogRevision,
+				guestCount: config.guestCount,
+				guestCountIsMinimum: config.guestCountIsMinimum,
+				durationMinutes: config.durationMinutes,
+				selections: config.selections.map(({ category, offerings }) => ({
+					category,
+					offerings: [...offerings]
+				}))
+			}
+		: null;
+}
+
+/**
+ * Deposit terms exactly as staff reviewed them. The suggestion comes from the reviewed snapshot;
+ * issuance compares it with the authoritative projection before anything is written.
+ */
+export function reviewedTerms(deposit: DepositFormValues, currency: string): DepositTermsRequest {
+	if (deposit.depositChoice === 'percentage')
+		return { type: 'PERCENTAGE', percentage: deposit.depositPercentage };
+	if (deposit.depositChoice === 'fixed')
+		return { type: 'FIXED', amount: deposit.depositAmount, currency };
+	return deposit.reviewedSuggestionType === 'PERCENTAGE'
+		? { type: 'PERCENTAGE', percentage: deposit.reviewedSuggestionValue }
+		: { type: 'FIXED', amount: deposit.reviewedSuggestionValue, currency };
 }
 
 /** A native form always carries one blank added line; untouched blank rows are not intent. */
@@ -525,14 +595,15 @@ const DECIMAL = /^\d+(?:\.\d+)?$/;
 /** Validate the preview fields the builder renders and posts back; anything else is unavailable. */
 export function isQuotePreview(
 	value: unknown,
-	data: CurrentStaffRequest
+	expected: { inquiryId: string; currency: string; documentId?: string }
 ): value is InquiryQuotePreviewResponse {
 	if (!value || typeof value !== 'object') return false;
 	const preview = value as InquiryQuotePreviewResponse;
-	const currency = data.financial.currency;
+	const currency = expected.currency;
 	return (
-		preview.inquiryId === data.inquiry.id &&
-		preview.documentId === data.financial.id &&
+		preview.inquiryId === expected.inquiryId &&
+		typeof preview.documentId === 'string' &&
+		(expected.documentId === undefined || preview.documentId === expected.documentId) &&
 		Number.isInteger(preview.reviewedDocumentVersion) &&
 		Number.isInteger(preview.quoteVersion) &&
 		Number.isInteger(preview.catalogRevision) &&

@@ -102,9 +102,11 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 - Light mode only. Motion 120–220ms ease-out, no bounces. Radii: pill / 16 / 10 / 6.
 - Admin **Issue quote** is the inline quote builder (`?quote`): staff compose intent only (pricing mode,
   line overrides with a reason, CHARGE/DISCOUNT/CREDIT adjustments, deposit terms); Commerce prices it.
-  `?/previewQuote` calls the write-free `POST /staff/requests/{inquiryId}/quote-preview` (safe to repeat;
-  a REVISE refused with `SERVICE_SELECTIONS_CHANGE_PRICING` is previewed once more as REPRICE). Never sum
-  totals or resolve deposits in the browser. `?/issueQuote` sends the exact previewed composition with its
+  `?/previewQuote` calls the write-free `POST /staff/requests/{inquiryId}/quote-preview` from the posted
+  reviewed snapshot without re-reading the request (safe to repeat; a REVISE refused with
+  `SERVICE_SELECTIONS_CHANGE_PRICING` is previewed once more as REPRICE). `load` makes the opening preview.
+  Edits may be acknowledged instantly ("Updating…", typed amounts echoed), but never sum totals or
+  resolve deposits in the browser. `?/issueQuote` sends the exact previewed composition with its
   `reviewToken` to `POST /staff/requests/{inquiryId}/proposals`, once: a command that no longer matches the
   reviewed fingerprint, or `QUOTE_REVIEW_STALE`, previews again and needs a new click. Same reviewed version,
   BOTH financial-document.create and deposit-requirement.manage. Picks, guests and durations come from

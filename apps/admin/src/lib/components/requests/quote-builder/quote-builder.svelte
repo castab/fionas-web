@@ -51,7 +51,9 @@
 
 	const PREVIEW_ACTION = '?quote&/previewQuote';
 	const ISSUE_ACTION = '?quote&/issueQuote';
-	const DEBOUNCE_MS = 600;
+	/** Typing settles briefly; a click, pick or choice is a complete edit and previews at once. */
+	const TYPING_MS = 300;
+	const QUICK_MS = 40;
 	const currency = $derived(request.financial.currency);
 	const effective = $derived(effectiveConfiguration(request));
 	const firstName = $derived(request.inquiry.name.trim().split(/\s+/)[0] || 'them');
@@ -86,6 +88,12 @@
 	let touched = $state(new Set<string>());
 	let currentSnapshot = $state('');
 	let previewSnapshot = $state<string | null>(null);
+	/** The edits a scheduled or in-flight preview already covers, so nothing restarts it. */
+	let queuedSnapshot = $state<string | null>(null);
+	/** Edits Commerce just refused; only a new edit or "Preview again" previews them. */
+	let failedSnapshot: string | null = null;
+	/** The menu changed under this quote; staff should check the picks until they next edit. */
+	let menuRefreshed = $state(false);
 	let formElement = $state<HTMLFormElement | null>(null);
 	let previewButton = $state<HTMLButtonElement | null>(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -117,6 +125,14 @@
 			(!enhanced || (!!preview && !!reviewed.token && !dirty))
 	);
 	const notice = $derived(preview ? basisNotice(preview.pricingBasis) : null);
+	/** Edits are acknowledged at once; the authoritative numbers follow from Commerce. */
+	const status = $derived(
+		submitting === 'preview' || (dirty && queuedSnapshot === currentSnapshot)
+			? 'Updating…'
+			: dirty && Object.keys(clientErrors).length
+				? 'Finish your changes to update the total'
+				: null
+	);
 	const depositError = $derived(
 		errors.depositPercentage
 			? 'depositPercentage'
@@ -142,17 +158,42 @@
 		return formElement ? new FormData(formElement) : null;
 	}
 
-	function edited() {
+	function isTyping(event?: Event): boolean {
+		const target = event?.target;
+		return (
+			event?.type === 'input' &&
+			(target instanceof HTMLTextAreaElement ||
+				(target instanceof HTMLInputElement && !['checkbox', 'radio'].includes(target.type)))
+		);
+	}
+
+	function edited(event?: Event) {
 		const data = formData();
 		if (!data) return;
 		currentSnapshot = snapshotOf(data);
 		const values = readQuoteForm(data);
 		clientErrors = values ? quoteInputErrors(values, currency) : {};
-		serverErrors = {};
+		if (event) serverErrors = {};
+		if (event && event.type !== 'click') menuRefreshed = false;
+		const settled =
+			currentSnapshot === previewSnapshot ||
+			currentSnapshot === failedSnapshot ||
+			reviewRequired ||
+			blocked ||
+			Object.keys(clientErrors).length > 0;
+		if (settled) {
+			clearTimeout(timer);
+			if (!submitting) queuedSnapshot = null;
+			return;
+		}
+		// Already scheduled or on its way: a click or blur that changed nothing never delays it.
+		if (currentSnapshot === queuedSnapshot) return;
 		clearTimeout(timer);
-		if (currentSnapshot === previewSnapshot || reviewRequired || blocked) return;
-		if (Object.keys(clientErrors).length) return;
-		timer = setTimeout(() => formElement?.requestSubmit(previewButton), DEBOUNCE_MS);
+		queuedSnapshot = currentSnapshot;
+		timer = setTimeout(
+			() => formElement?.requestSubmit(previewButton),
+			isTyping(event) ? TYPING_MS : QUICK_MS
+		);
 	}
 
 	/** Overrides for lines the latest preview no longer has can never be posted; forget them. */
@@ -195,7 +236,7 @@
 		aria-busy={!!submitting}
 		oninput={edited}
 		onchange={edited}
-		onclick={() => void tick().then(edited)}
+		onclick={(event) => void tick().then(() => edited(event))}
 		onfocusout={(event) => {
 			const name = (event.target as HTMLInputElement | null)?.name;
 			if (name) touched = new Set([...touched, name]);
@@ -215,6 +256,7 @@
 			latest?.abort();
 			latest = controller;
 			const submitted = snapshotOf(formData);
+			if (action === 'preview') queuedSnapshot = submitted;
 			const id = ++sequence;
 			submitting = action;
 			if (action === 'issue') pending = true;
@@ -235,6 +277,7 @@
 							onReviewRequired();
 						}
 						previewSnapshot = null;
+						failedSnapshot = submitted;
 						return;
 					}
 					const data = (outcome.data ?? {}) as QuoteResult;
@@ -250,21 +293,29 @@
 							fingerprint: data.quoteValues.reviewedFingerprint
 						};
 						previewSnapshot = submitted;
+						failedSnapshot = null;
 						forgetMissingOverrides(data.preview.lines);
-						await tick();
-						edited();
 						return;
 					}
 					previewSnapshot = null;
+					failedSnapshot = submitted;
 					if (data.reviewRequired) {
 						reviewRequired = true;
 						onReviewRequired();
 					}
-					if (data.catalogStale) await invalidateAll();
+					if (data.catalogStale) {
+						// Reload the menu; the refreshed revision then previews on its own.
+						menuRefreshed = true;
+						await invalidateAll();
+					}
 				} finally {
 					if (id === sequence) {
 						submitting = null;
+						queuedSnapshot = null;
 						if (action === 'issue') pending = false;
+						// Anything edited while this was in flight previews next.
+						await tick();
+						edited();
 					}
 				}
 			};
@@ -285,6 +336,13 @@
 		<input type="hidden" name="reviewToken" value={reviewed.token} />
 		<input type="hidden" name="reviewedBasis" value={reviewed.basis} />
 		<input type="hidden" name="reviewedFingerprint" value={reviewed.fingerprint} />
+		<!-- The reviewed Estimate's facts, so a preview needs no extra read; issuing re-checks them. -->
+		<input type="hidden" name="reviewedCurrency" value={currency} />
+		{#if effective}<input
+				type="hidden"
+				name="reviewedConfiguration"
+				value={JSON.stringify(effective)}
+			/>{/if}
 
 		<div class="flex flex-col gap-1">
 			<h2 class={panelCaps}>Formal quote</h2>
@@ -327,12 +385,12 @@
 					aria-live="polite"
 					class={[
 						'text-[22px] leading-[1.3] font-bold text-olive-900 transition-opacity duration-(--dur-fast) ease-(--ease-out)',
-						(dirty || submitting === 'preview') && 'opacity-45'
+						(dirty || submitting === 'preview') && 'opacity-60'
 					]}>{preview ? formatMoney(preview.total, currency) : '—'}</span
 				>
 			</div>
 			<p class={`${hint} text-right`} aria-live="polite">
-				{#if submitting === 'preview'}Updating preview…{:else if dirty}Changes not previewed yet{:else if preview && preview.estimateTotal !== preview.total}Their
+				{#if status}{status}{:else if !dirty && preview && preview.estimateTotal !== preview.total}Their
 					estimate was {formatMoney(preview.estimateTotal, currency)}{:else if !preview}Preview the
 					quote to see its total{/if}
 			</p>
@@ -352,6 +410,10 @@
 			{#if notices.repriced}<p class={hint} role="status">
 					Those pick changes affect the price, so the whole quote is recalculated from today’s
 					catalog.
+				</p>{/if}
+			{#if menuRefreshed}<p class="m-0 text-xs font-semibold text-ink-700" role="status">
+					The menu changed since this quote was opened, so it now uses today’s menu. Check the picks
+					before issuing.
 				</p>{/if}
 			{#if notices.overridesCleared}<p class={hint} role="status">
 					Line price changes were cleared because the lines were recalculated. Re-enter any you
@@ -402,7 +464,10 @@
 						type="button"
 						variant="secondary"
 						size="sm"
-						onclick={() => formElement?.requestSubmit(previewButton)}>Preview again</Button
+						onclick={() => {
+							failedSnapshot = null;
+							formElement?.requestSubmit(previewButton);
+						}}>Preview again</Button
 					>
 				{/if}
 			</div>

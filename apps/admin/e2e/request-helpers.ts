@@ -46,9 +46,7 @@ export async function openBuilder(page: Page, native = false) {
 /** The preview is current: its deposit is shown and nothing is waiting to be previewed. */
 export async function waitForPreview(page: Page) {
 	await expect(page.getByTestId('quote-deposit')).toBeVisible();
-	await expect(page.getByTestId('quote-total')).not.toContainText(
-		/Updating preview|Changes not previewed/
-	);
+	await expect(page.getByTestId('quote-total')).not.toContainText(/Updating…|Finish your changes/);
 }
 
 /** Native forms preview explicitly; enhanced ones have already previewed the current edits. */

@@ -34,6 +34,10 @@ reload and works without JavaScript). Only then does `load` read the selection c
 and availability from `GET /offering-catalog` (DISABLED offerings dropped, UNAVAILABLE shown but not
 selectable) and service durations plus the guest minimum from `GET /inquiry-form`, found by submission
 pointer. If either read fails the service stays read-only and only the Estimate's lines can be adjusted.
+The same GET also previews the untouched Estimate with the suggested deposit, in parallel with those
+reads, so the panel opens with its total and deposit already shown (its fingerprint matches the untouched
+form, so it can be issued as is). A failed opening preview just leaves the browser to preview after
+mounting; POST re-renders never repeat it.
 No offering, price or limit is named in code (`src/catalog-hardcoding.test.ts`).
 
 Staff compose **intent**, never amounts:
@@ -42,7 +46,8 @@ Staff compose **intent**, never amounts:
   keeps the Estimate (`KEEP_ESTIMATE`). Guests, minimum or duration changes reprice the whole quote from
   today's catalog (`REPRICE_CONFIGURATION`). Pick-only changes preview as `REVISE_SERVICE_SELECTIONS`;
   if Commerce answers `SERVICE_SELECTIONS_CHANGE_PRICING` the action previews once more as a reprice and
-  says so. The effective configuration is `financial.pricing`, else the inquiry's requested inputs for
+  says so. Once a preview has repriced, later pick-only edits reprice directly instead of failing a
+  revision first. The effective configuration is `financial.pricing`, else the inquiry's requested inputs for
   Estimate v1; otherwise the service is not editable. Write-ins do not exist.
 - **Lines**: each service line's amount is an override of its final flat amount with a required reason.
   Targets come from the preview line's provenance: the persisted line id while the Estimate is kept, the
@@ -52,18 +57,26 @@ Staff compose **intent**, never amounts:
 - **+ Add line**: CHARGE, DISCOUNT or CREDIT adjustments (name, positive amount, optional detail, reason)
   with a request-local `clientKey`. Without JavaScript one blank row is always offered; blank rows are
   ignored.
-- **Deposit**: the existing suggested / custom percentage / fixed choice. Fixed currency comes from the
-  projection.
+- **Deposit**: the existing suggested / custom percentage / fixed choice. Fixed currency is the reviewed
+  Estimate's; issuance uses the projection's currency and suggestion.
 
-`?/previewQuote` checks permissions, strictly parses the envelope, reads this route's projection once,
-checks coherence, eligibility and the reviewed suggestion, then calls the write-free
-`POST /staff/requests/{inquiryId}/quote-preview` with the reviewed `expectedDocumentVersion`. The panel
-renders only the preview: lines with their provenance and "Was $X" originals, total (with the
-Estimate's for comparison), pricing-basis note and the resolved deposit. Nothing is summed in the browser.
-With JavaScript the preview refreshes about 600 ms after edits (aborting stale requests); without it,
-**Update preview** posts the same form. Violation codes map to builder sections with staff copy;
-`CATALOG_REVISION_STALE` reloads the choices and asks for another preview; a 5xx may be retried because
-nothing was written.
+`?/previewQuote` checks permissions and strictly parses the envelope, then calls the write-free
+`POST /staff/requests/{inquiryId}/quote-preview` with the reviewed `expectedDocumentVersion`. Because a
+preview writes nothing, it does not re-read the request: it uses the reviewed snapshot the page posts
+(`reviewedCurrency`, `reviewedConfiguration` as JSON, and the reviewed deposit suggestion), and Commerce
+validates every value. Issuing still re-reads everything (below). The panel renders only the preview:
+lines with their provenance and "Was $X" originals, total (with the Estimate's for comparison),
+pricing-basis note and the resolved deposit. Nothing is summed in the browser.
+
+With JavaScript, edits are acknowledged at once ("Updating…"). Clicks, picks, selects and radios preview
+after ~40 ms and typing after ~300 ms. A click or blur that changes nothing never delays a scheduled
+preview, newer previews abort older ones, and edits made while one is in flight preview next. An added
+line echoes its typed amount with its kind's sign immediately; that is the input shown back, not
+arithmetic. Totals and deposits still come only from the preview. Without JavaScript, **Update preview**
+posts the same form. Violation codes map to builder sections with staff copy. A refused snapshot is not
+re-sent until it changes or staff choose **Preview again**. `CATALOG_REVISION_STALE` reloads the choices;
+the refreshed revision then previews on its own, and a note asks staff to check the picks. A 5xx may be
+retried because nothing was written.
 
 `?/issueQuote` rebuilds the command from the posted form and requires it to be exactly what was
 previewed: same pricing basis (a REVISE previewed as REPRICE stays REPRICE) and the same SHA-256
