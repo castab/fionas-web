@@ -188,10 +188,24 @@
 						</p>{/if}
 				</div>
 			{/if}
-			{#if request && canIssueQuote(request, data.user.permissions) && !showBuilder}
-				<Button href={`${route}?quote`} class="self-start" data-testid="build-quote"
-					>Build quote</Button
-				>
+			{#if request && canIssueQuote(request, data.user.permissions)}
+				<div class="flex flex-wrap gap-2.5">
+					<!-- Once the panel is open, Build quote brings it into view instead of reloading it. -->
+					<Button
+						href={showBuilder ? '#quote-builder' : `${route}?quote`}
+						class="min-h-12 min-w-[150px] flex-1"
+						data-testid="build-quote">Build quote</Button
+					>
+					<!-- Placeholder until declining requests exists: visible as in the design, never actionable. -->
+					<Button
+						type="button"
+						variant="secondary"
+						disabled
+						title="Declining requests is coming soon"
+						class="min-h-12 min-w-[120px] flex-1 border-rust-600 text-rust-600"
+						data-testid="decline-request">Decline</Button
+					>
+				</div>
 			{:else if quoteResult?.reviewRequired && !showBuilder}
 				<div role="alert" class="flex flex-col items-start gap-3">
 					<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>

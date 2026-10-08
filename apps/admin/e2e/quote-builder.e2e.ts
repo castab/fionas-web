@@ -24,6 +24,9 @@ test('negotiates a line and adds a discount, then shows why each Quote line exis
 	isMobile
 }, testInfo) => {
 	await openBuilder(page);
+	// Both actions stay side by side while the panel is open; Decline remains a disabled placeholder.
+	await expect(page.getByTestId('build-quote')).toHaveAttribute('href', '#quote-builder');
+	await expect(page.getByTestId('decline-request')).toBeDisabled();
 	await expect(page.getByTestId('quote-basis')).toContainText(
 		'Starts from their estimate’s lines and prices.'
 	);

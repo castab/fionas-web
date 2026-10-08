@@ -181,7 +181,8 @@
 
 <Card
 	variant="flat"
-	class="flex flex-col gap-4 border-2 border-olive-700 p-[18px] sm:p-5"
+	id="quote-builder"
+	class="flex scroll-mt-4 flex-col gap-4 border-2 border-olive-700 p-[18px] sm:p-5"
 	data-testid="quote-builder"
 >
 	<!-- Clicks only observe chip and line buttons (keyboard activation also clicks) to refresh the preview. -->

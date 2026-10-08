@@ -37,6 +37,17 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page).toHaveURL(route);
 	await expect(page.getByTestId('request-summary')).toContainText('Needs a quote');
 	await expect(page.getByTestId('build-quote')).toBeVisible();
+	// Declining is a visible placeholder only: disabled and wired to nothing.
+	const decline = page.getByTestId('decline-request');
+	await expect(decline).toBeVisible();
+	await expect(decline).toBeDisabled();
+	await expect(decline).toHaveText('Decline');
+	const [buildBox, declineBox] = await Promise.all([
+		page.getByTestId('build-quote').boundingBox(),
+		decline.boundingBox()
+	]);
+	expect(Math.abs(buildBox!.y - declineBox!.y)).toBeLessThan(2);
+	expect(declineBox!.x).toBeGreaterThan(buildBox!.x);
 	await expect(page.getByTestId('quote-builder')).toHaveCount(0);
 	await expect(page.getByTestId('event-card')).toContainText('Saturday, July 25');
 	await expect(page.getByTestId('event-card')).toContainText('Birthday party');
@@ -223,6 +234,7 @@ test('same Administrator role without financial-create permission can read but s
 	await openMaya(page);
 	await expect(page.getByTestId('financial-document')).toContainText('Current estimate');
 	await expect(page.getByTestId('build-quote')).toHaveCount(0);
+	await expect(page.getByTestId('decline-request')).toHaveCount(0);
 	await page.goto(`${route}?quote`);
 	await expect(page.getByTestId('quote-builder')).toHaveCount(0);
 	const state = await session(context);
