@@ -13,7 +13,6 @@ export type LineNote = { lineItemId?: string; key?: string; note: string };
 export type ServicePlanRequest = {
 	description: string;
 	guestCount?: number;
-	durationMinutes?: number;
 	items?: string[];
 	lineNotes?: LineNote[];
 };
@@ -38,7 +37,6 @@ export type QuotePreviewLine = {
 export type ServicePlanPreview = {
 	description: string;
 	guestCount?: number;
-	durationMinutes?: number;
 	items: string[];
 	lineNotes: { lineItemId: string; note: string }[];
 };

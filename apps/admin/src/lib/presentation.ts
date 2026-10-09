@@ -62,12 +62,6 @@ export function formatMoney(decimal: string, currency: string): string {
 	}).format(decimal as unknown as number);
 }
 
-export function durationLabel(minutes: number): string {
-	return minutes % 60 === 0
-		? `${minutes / 60} hour${minutes === 60 ? '' : 's'}`
-		: `${minutes} minutes`;
-}
-
 export function guestCountLabel(count: number, minimum: boolean): string {
 	return `${count}${minimum ? '+' : ''} guest${count === 1 && !minimum ? '' : 's'}${minimum ? ' (minimum)' : ''}`;
 }

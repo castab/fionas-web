@@ -23,9 +23,10 @@ function item(
 }
 
 /**
- * Code-owned menu and controls, laid out as the Booking design: "Your event" (contact, event,
- * guests and length), the ice cream choices, then the optional note. Monetary amounts are supplied
- * only by the server. Keys are stable: they name price-book entries and submitted selections.
+ * Code-owned menu and controls, laid out as the Booking design: "Your event" (contact, event and
+ * guest count), the ice cream choices, then the optional note. There is no service duration.
+ * Monetary amounts are supplied only by the server. Keys are stable: they name price-book entries
+ * and submitted selections.
  */
 export const MENU_SECTIONS: InquiryFormSection[] = [
 	{
@@ -87,29 +88,22 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 			},
 			{
 				key: 'guestCount',
-				label: 'How many guests?',
-				description: "An estimate is fine — we'll confirm when we follow up.",
+				label: 'About how many guests?',
+				description: "A best guess is fine. We'll confirm when we follow up.",
 				submissionPointer: '/serviceInputs/guestCount',
 				required: true,
-				input: { type: 'INTEGER', minimum: 1 },
-				presentation: { control: 'NUMBER', placeholder: '50', summaryLabel: 'guest count' }
-			},
-			{
-				key: 'durationMinutes',
-				label: 'How long should we scoop for?',
-				description: "We'll confirm the exact start time when we follow up.",
-				submissionPointer: '/serviceInputs/durationMinutes',
-				required: true,
-				input: {
-					type: 'INTEGER_CHOICE',
-					options: [
-						{ value: 90, label: '1½ hours' },
-						{ value: 120, label: '2 hours' },
-						{ value: 150, label: '2½ hours' },
-						{ value: 180, label: '3 hours' }
-					]
-				},
-				presentation: { control: 'CHIPS', summaryLabel: 'service length' }
+				input: { type: 'INTEGER', minimum: 1, maximum: 300, defaultValue: 50 },
+				presentation: {
+					control: 'STEPPER',
+					step: 5,
+					presets: [25, 50, 100, 200],
+					summaryLabel: 'an estimated guest count',
+					messages: {
+						belowMinimum: 'Add a rough headcount so we can size your quote.',
+						aboveMaximum:
+							"We quote up to 300 online — for bigger crowds, add a note below and we'll plan it with you."
+					}
+				}
 			}
 		]
 	},
@@ -227,7 +221,6 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 
 export const PRICE_KEYS = [
 	'event.base',
-	'event.hourly',
 	'event.per_guest',
 	'topping.extra_per_guest',
 	...MENU_SECTIONS.flatMap((s) =>

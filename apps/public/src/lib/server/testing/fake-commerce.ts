@@ -1,18 +1,9 @@
-import { readFileSync } from 'node:fs';
-import type { InquiryForm } from '@fionas/shared';
-
 /** Test-only SERVICE auth and immutable priced-command idempotency double.
  * Synthetic credentials below never belong in deployed configuration. */
 
 export const TEST_SERVICE_ID = '00000000-0000-4000-8000-0000000000aa';
 export const TEST_SERVICE_CREDENTIAL = 'test-only-service-credential-not-a-secret';
 export const TEST_BASE_URL = 'http://commerce.internal.test';
-
-/** Synthetic public projection used only by tests. */
-export const formFixture = (): InquiryForm =>
-	JSON.parse(
-		readFileSync(new URL('../../../../e2e/fixtures/inquiry-form.json', import.meta.url), 'utf8')
-	) as InquiryForm;
 
 export type RecordedCall = {
 	method: string;

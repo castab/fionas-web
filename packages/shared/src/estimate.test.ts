@@ -62,20 +62,6 @@ const form: InquiryForm = {
 					input: { type: 'BOOLEAN', defaultValue: false },
 					presentation: { control: 'CHECKBOX' }
 				},
-				{
-					key: 'durationMinutes',
-					label: 'Duration',
-					submissionPointer: '/serviceInputs/durationMinutes',
-					required: true,
-					input: {
-						type: 'INTEGER_CHOICE',
-						options: [
-							{ value: 120, label: '120 minutes' },
-							{ value: 150, label: '150 minutes' }
-						]
-					},
-					presentation: { control: 'SELECT' }
-				},
 				choice('soft-serve-flavor', 1, 2, [
 					offering('soft-serve-flavor', 'vanilla'),
 					offering('soft-serve-flavor', 'horchata', {
@@ -106,13 +92,7 @@ const form: InquiryForm = {
 						currency: 'USD',
 						dimension: 'guest'
 					}),
-					offering('cone-option', 'fancy', { kind: 'FIXED', amount: '20.00', currency: 'USD' }),
-					offering('cone-option', 'hourly', {
-						kind: 'PER_DURATION',
-						amount: '50.00',
-						currency: 'USD',
-						interval: 'PT1H'
-					})
+					offering('cone-option', 'fancy', { kind: 'FIXED', amount: '20.00', currency: 'USD' })
 				])
 			]
 		}
@@ -120,14 +100,7 @@ const form: InquiryForm = {
 	pricingPreview: {
 		currency: 'USD',
 		guestQuantityDimension: 'guest',
-		durationOptions: [
-			{
-				durationMinutes: 120,
-				baseServiceAmount: '250.00',
-				offeringContributions: [{ offeringKey: 'hourly', amount: '100.00' }]
-			},
-			{ durationMinutes: 150, baseServiceAmount: '275.000', offeringContributions: [] }
-		],
+		baseServiceAmount: '250.00',
 		perGuestAmount: '4.00',
 		toppingAdjustment: {
 			category: 'topping',
@@ -140,7 +113,6 @@ const form: InquiryForm = {
 function answered(toppings: string[], cone = 'waffle-cone') {
 	const answers = emptyAnswers(form);
 	answers.values.guestCount = '75';
-	answers.values.durationMinutes = '120';
 	answers.values['offering:soft-serve-flavor'] = ['vanilla', 'horchata'];
 	answers.values['offering:topping'] = toppings;
 	answers.values['offering:cone-option'] = [cone];
@@ -172,16 +144,16 @@ describe('computeAdvisoryEstimate', () => {
 		expect(estimate?.lines.some((l) => l.description.startsWith('Extra toppings'))).toBe(false);
 	});
 
-	it('adds FIXED once and PER_DURATION from the duration-specific contribution', () => {
+	it('adds a FIXED price once', () => {
 		expect(computeAdvisoryEstimate(form, answered(four, 'fancy'))?.total).toBe('607.50');
-		expect(computeAdvisoryEstimate(form, answered(four, 'hourly'))?.total).toBe('687.50');
 	});
 
-	it('uses the selected duration and keeps three-decimal amounts exact', () => {
+	it('keeps three-decimal amounts exact', () => {
+		const exact = JSON.parse(JSON.stringify(form)) as InquiryForm;
+		exact.pricingPreview.baseServiceAmount = '275.000';
 		const answers = answered(four, 'cup');
-		answers.values.durationMinutes = '150';
 		answers.values['offering:soft-serve-flavor'] = ['vanilla'];
-		expect(computeAdvisoryEstimate(form, answers)?.total).toBe('575.00');
+		expect(computeAdvisoryEstimate(exact, answers)?.total).toBe('575.00');
 	});
 
 	it('flags a minimum guest count as a starting price', () => {
@@ -190,10 +162,9 @@ describe('computeAdvisoryEstimate', () => {
 		expect(computeAdvisoryEstimate(form, answers)?.guestCountIsMinimum).toBe(true);
 	});
 
-	it('gives an estimate so far once guests and duration are known', () => {
+	it('gives an estimate so far once the guest count is known', () => {
 		const answers = emptyAnswers(form);
 		answers.values.guestCount = '25';
-		answers.values.durationMinutes = '120';
 		expect(computeAdvisoryEstimate(form, answers)?.total).toBe('350.00');
 
 		// Each pick adds its own line as it is chosen.
@@ -201,17 +172,16 @@ describe('computeAdvisoryEstimate', () => {
 		expect(computeAdvisoryEstimate(form, answers)?.total).toBe('362.50');
 	});
 
-	it('returns null without the basics or for a duration the preview does not price', () => {
+	it('returns null without a valid guest count', () => {
 		expect(computeAdvisoryEstimate(form, emptyAnswers(form))).toBeNull();
 		const answers = answered(four);
-		answers.values.durationMinutes = '90';
+		answers.values.guestCount = '0';
 		expect(computeAdvisoryEstimate(form, answers)).toBeNull();
 	});
 
 	it('itemises base service once and the per-guest service rate times guests', () => {
 		const answers = emptyAnswers(form);
 		answers.values.guestCount = '10';
-		answers.values.durationMinutes = '150';
 		expect(
 			computeAdvisoryEstimate(form, answers)?.lines.map((l) => [
 				l.description,
@@ -220,7 +190,7 @@ describe('computeAdvisoryEstimate', () => {
 				l.subtotal
 			])
 		).toEqual([
-			['Base service', undefined, '275.00', '275.00'],
+			['Base service', undefined, '250.00', '250.00'],
 			['Ice cream service', '10', '4.00', '40.00']
 		]);
 	});
@@ -240,10 +210,9 @@ describe('computeAdvisoryEstimate', () => {
 	it('adds money exactly where binary floating point would drift', () => {
 		const cents = JSON.parse(JSON.stringify(form)) as InquiryForm;
 		cents.pricingPreview.perGuestAmount = '0.20';
-		cents.pricingPreview.durationOptions[0]!.baseServiceAmount = '0.10';
+		cents.pricingPreview.baseServiceAmount = '0.10';
 		const answers = emptyAnswers(cents);
 		answers.values.guestCount = '1';
-		answers.values.durationMinutes = '120';
 		expect(0.1 + 0.2).not.toBe(0.3);
 		expect(computeAdvisoryEstimate(cents, answers)?.total).toBe('0.30');
 	});
@@ -251,7 +220,7 @@ describe('computeAdvisoryEstimate', () => {
 	it('multiplies per-guest offering prices exactly', () => {
 		const cents = JSON.parse(JSON.stringify(form)) as InquiryForm;
 		cents.pricingPreview.perGuestAmount = '0.00';
-		cents.pricingPreview.durationOptions[0]!.baseServiceAmount = '0.00';
+		cents.pricingPreview.baseServiceAmount = '0.00';
 		const flavors = cents.sections[0]!.fields.find((f) => f.key === 'offering:soft-serve-flavor')!;
 		if (flavors.input.type === 'OFFERING_CHOICE') {
 			flavors.input.options[1]!.price = {
@@ -263,7 +232,6 @@ describe('computeAdvisoryEstimate', () => {
 		}
 		const answers = emptyAnswers(cents);
 		answers.values.guestCount = '100';
-		answers.values.durationMinutes = '120';
 		answers.values['offering:soft-serve-flavor'] = ['horchata'];
 		expect(0.07 * 100).not.toBe(7);
 		const estimate = computeAdvisoryEstimate(cents, answers);
@@ -271,21 +239,11 @@ describe('computeAdvisoryEstimate', () => {
 		expect(estimate?.total).toBe('7.00');
 	});
 
-	it("labels the base service with the duration question's own label", () => {
+	it('prices the base service flat, with no service duration', () => {
 		const base = computeAdvisoryEstimate(form, answered(four))?.lines[0];
-		expect(base?.subDescription).toBe('120 minutes');
-
-		const fractional = JSON.parse(JSON.stringify(form)) as InquiryForm;
-		const duration = fractional.sections[0]!.fields.find((f) => f.key === 'durationMinutes')!;
-		if (duration.input.type === 'INTEGER_CHOICE') duration.input.options[0]!.label = '2 hours';
-		const answers = answered(four);
-		expect(computeAdvisoryEstimate(fractional, answers)?.lines[0]?.subDescription).toBe('2 hours');
-
-		// A duration asked as a plain number has no label: fall back to minutes.
-		duration.input = { type: 'INTEGER', minimum: 1 };
-		expect(computeAdvisoryEstimate(fractional, answers)?.lines[0]?.subDescription).toBe(
-			'120 minutes'
-		);
+		expect(base).toMatchObject({ description: 'Base service', unitPrice: '250.00' });
+		expect(base?.subDescription).toBeUndefined();
+		expect(base?.quantity).toBeUndefined();
 	});
 
 	it('prefers projected line wording, ignoring null or blank text', () => {
@@ -293,12 +251,12 @@ describe('computeAdvisoryEstimate', () => {
 		const preview = worded.pricingPreview;
 		preview.baseServiceDescription = 'Trailer visit';
 		preview.perGuestDescription = '   ';
-		preview.durationOptions[0]!.baseServiceSubDescription = '2 hours · setup & travel';
+		preview.baseServiceSubDescription = 'Setup & travel';
 		preview.toppingAdjustment.description = 'More toppings';
 		preview.toppingAdjustment.subDescription = null;
 		const estimate = computeAdvisoryEstimate(worded, answered([...four, 'gummy-bears']));
 		expect(estimate?.lines.map((l) => [l.description, l.subDescription])).toEqual([
-			['Trailer visit', '2 hours · setup & travel'],
+			['Trailer visit', 'Setup & travel'],
 			['Ice cream service', '75 guests'],
 			['horchata', undefined],
 			['waffle-cone', undefined],

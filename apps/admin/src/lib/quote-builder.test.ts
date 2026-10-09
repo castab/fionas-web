@@ -122,7 +122,6 @@ it.each(['EUR', 'JPY', 'usd', ''])(
 		for (const [k, value] of Object.entries({
 			planDescription: v.description,
 			planGuestCount: v.guestCount,
-			planDuration: v.durationMinutes,
 			planItems: v.items,
 			reviewToken: '',
 			reviewedFingerprint: ''
@@ -134,3 +133,21 @@ it.each(['EUR', 'JPY', 'usd', ''])(
 		expect(readQuoteForm(f)).toBeNull();
 	}
 );
+it('authors no service duration: the plan omits it and a posted duration is refused', () => {
+	const v = initialQuoteValues(requestFixtures()[mayaId]);
+	expect(buildCommand(v).servicePlan).not.toHaveProperty('durationMinutes');
+	const f = new FormData();
+	for (const [k, value] of Object.entries(v.deposit)) f.set(k, value);
+	for (const [k, value] of Object.entries({
+		planDescription: v.description,
+		planGuestCount: v.guestCount,
+		planItems: v.items,
+		reviewToken: '',
+		reviewedFingerprint: '',
+		reviewedCurrency: 'USD'
+	}))
+		f.set(k, value);
+	expect(readQuoteForm(f)).not.toBeNull();
+	f.set('planDuration', '90');
+	expect(readQuoteForm(f)).toBeNull();
+});

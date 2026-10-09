@@ -41,7 +41,6 @@ function form(): FormData {
 		eventDate: '2026-12-05',
 		eventType: 'BIRTHDAY',
 		guestCount: '75',
-		durationMinutes: '150',
 		message: 'Backyard birthday'
 	}))
 		f.set(key, value);
@@ -90,7 +89,7 @@ describe('trusted inquiry submission', () => {
 		expect(body).not.toHaveProperty('total');
 		expect(body.lines).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ unitPrice: '151.00' }),
+				expect.objectContaining({ unitPrice: '101.00' }),
 				expect.objectContaining({ quantity: '75', unitPrice: '7.00' })
 			])
 		);
@@ -112,7 +111,6 @@ describe('trusted inquiry submission', () => {
 		'eventDate',
 		'eventType',
 		'guestCount',
-		'durationMinutes',
 		'offering:hand-scooped-flavor',
 		'offering:topping',
 		'offering:cone-option'
@@ -121,6 +119,27 @@ describe('trusted inquiry submission', () => {
 		f.delete(key);
 		expect(await submitInquiry(f)).toMatchObject({ ok: false, status: 422 });
 		expect(backend.posts()).toHaveLength(0);
+	});
+	it('quotes up to 300 guests online and refuses more before any delivery', async () => {
+		const f = form();
+		f.set('guestCount', '301');
+		expect(await submitInquiry(f)).toMatchObject({
+			ok: false,
+			status: 422,
+			failure: { errors: { guestCount: expect.stringContaining('up to 300 online') } }
+		});
+		expect(backend.posts()).toHaveLength(0);
+		f.set('guestCount', '300');
+		expect(await submitInquiry(f)).toMatchObject({ ok: true });
+		expect(backend.posts()[0].body).toMatchObject({ requestedService: { guestCount: 300 } });
+	});
+	it('records no service duration, even when one is posted', async () => {
+		const f = form();
+		f.set('durationMinutes', '150');
+		expect(await submitInquiry(f)).toMatchObject({ ok: true });
+		const body = backend.posts()[0].body as { requestedService: object };
+		expect(body.requestedService).not.toHaveProperty('durationMinutes');
+		expect(JSON.stringify(body)).not.toMatch(/duration|hour/i);
 	});
 	it('requires exactly two soft-serve flavors for the swirl', async () => {
 		const f = form();
@@ -183,7 +202,8 @@ describe('trusted inquiry submission', () => {
 			if (mode === 'altered') {
 				const [payload, signature] = envelope.split('.');
 				const value = JSON.parse(Buffer.from(payload, 'base64url').toString());
-				value.command = value.command.replace('151.00', '0.01');
+				expect(value.command).toContain('"101.00"');
+				value.command = value.command.replace('"101.00"', '"0.01"');
 				envelope = Buffer.from(JSON.stringify(value)).toString('base64url') + '.' + signature;
 			}
 			if (mode === 'rebound') f.set('submissionToken', 'different-key');
@@ -233,7 +253,7 @@ describe('trusted inquiry submission', () => {
 		if (!intent.ok) throw new Error('Invalid');
 		const command = priceInquiry(intent.request, state.book!);
 		expect(command.lines.map((l) => [l.description, l.quantity, l.unitPrice])).toEqual([
-			['Base service', undefined, '151.00'],
+			['Base service', undefined, '101.00'],
 			['Ice cream service', '75', '7.00'],
 			['Horchata', '75', '1.10'],
 			['Waffle cone', '75', '1.20'],

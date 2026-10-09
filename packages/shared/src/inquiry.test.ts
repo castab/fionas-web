@@ -112,20 +112,6 @@ const form: InquiryForm = {
 					presentation: { control: 'CHECKBOX' }
 				},
 				{
-					key: 'durationMinutes',
-					label: 'How long would you like service?',
-					submissionPointer: '/serviceInputs/durationMinutes',
-					required: true,
-					input: {
-						type: 'INTEGER_CHOICE',
-						options: [
-							{ value: 90, label: '90 minutes' },
-							{ value: 120, label: '120 minutes' }
-						]
-					},
-					presentation: { control: 'SELECT' }
-				},
-				{
 					key: 'offering:soft-serve-flavor',
 					label: 'Choose your soft serve flavors',
 					submissionPointer: '/serviceInputs/selections',
@@ -165,7 +151,7 @@ const form: InquiryForm = {
 	pricingPreview: {
 		currency: 'USD',
 		guestQuantityDimension: 'guest',
-		durationOptions: [],
+		baseServiceAmount: '0.00',
 		perGuestAmount: '1.00',
 		toppingAdjustment: {
 			category: 'topping',
@@ -190,7 +176,6 @@ function answered() {
 	answers.values.name = '  Jane Doe ';
 	answers.values.email = 'jane@example.com';
 	answers.values.guestCount = '75';
-	answers.values.durationMinutes = '120';
 	answers.values['offering:soft-serve-flavor'] = ['vanilla', 'horchata'];
 	return answers;
 }
@@ -223,7 +208,6 @@ describe('validateAnswers', () => {
 	it('requires contact details and the whole service configuration', () => {
 		const errors = validateAnswers(form, emptyAnswers(form));
 		expect(Object.keys(errors).sort()).toEqual([
-			'durationMinutes',
 			'email',
 			'eventDate',
 			'eventType',
@@ -304,7 +288,6 @@ describe('prepareInquiry', () => {
 				priceRevision: '15',
 				guestCount: 75,
 				guestCountIsMinimum: false,
-				durationMinutes: 120,
 				selections: [{ category: 'soft-serve-flavor', offerings: ['vanilla', 'horchata'] }]
 			}
 		});
@@ -344,7 +327,6 @@ describe('prepareInquiry', () => {
 				reason: 'invalid',
 				errors: {
 					guestCount: 'This field is required.',
-					durationMinutes: 'Choose an option.',
 					'offering:soft-serve-flavor': 'Choose at least 1.'
 				}
 			});
@@ -365,10 +347,9 @@ describe('prepareInquiry', () => {
 
 		it.each([
 			['guest count', { guestCount: '' }],
-			['duration', { durationMinutes: '' }],
 			['required offering picks', { 'offering:soft-serve-flavor': [] }],
 			['a whole-number guest count', { guestCount: '12.5' }],
-			['a listed duration', { durationMinutes: '95' }]
+			['a plain-digit guest count', { guestCount: '1e2' }]
 		])('refuses a request missing %s', (_, change) => {
 			const answers = answered();
 			Object.assign(answers.values, change);
@@ -399,13 +380,10 @@ describe('prepareInquiry', () => {
 			const variants: InquiryAnswers[] = [answered(), contactOnly(), emptyAnswers(form)];
 			for (const picks of [[], ['vanilla'], ['chocolate', 'horchata'], ['mango']]) {
 				for (const guests of ['', '1', '75']) {
-					for (const minutes of ['', '90', '120']) {
-						const answers = answered();
-						answers.values.guestCount = guests;
-						answers.values.durationMinutes = minutes;
-						answers.values['offering:soft-serve-flavor'] = picks;
-						variants.push(answers);
-					}
+					const answers = answered();
+					answers.values.guestCount = guests;
+					answers.values['offering:soft-serve-flavor'] = picks;
+					variants.push(answers);
 				}
 			}
 			const built = variants.map((a) => prepareInquiry(form, a)).filter((c) => c.ok);
@@ -414,7 +392,7 @@ describe('prepareInquiry', () => {
 				const { serviceInputs } = requestOf(command);
 				expect(serviceInputs.priceRevision).toBe('15');
 				expect(serviceInputs.guestCount).toBeGreaterThanOrEqual(1);
-				expect([90, 120]).toContain(serviceInputs.durationMinutes);
+				expect(serviceInputs).not.toHaveProperty('durationMinutes');
 				expect(serviceInputs.selections[0]?.category).toBe('soft-serve-flavor');
 				expect(serviceInputs.selections[0]?.offerings.length).toBeGreaterThanOrEqual(1);
 			}
@@ -480,10 +458,17 @@ describe('pricingContractProblem', () => {
 		expect(pricingContractProblem(next)).toBeNull();
 	});
 
-	it('names a missing duration question', () => {
+	it('has no service duration: a duration question is an unsupported pointer', () => {
 		const next = clone();
-		next.sections[1]!.fields = next.sections[1]!.fields.filter((f) => f.key !== 'durationMinutes');
-		expect(pricingContractProblem(next)).toMatch(/durationMinutes/);
+		next.sections[1]!.fields.push({
+			key: 'durationMinutes',
+			label: 'Duration',
+			submissionPointer: '/serviceInputs/durationMinutes',
+			required: true,
+			input: { type: 'INTEGER_CHOICE', options: [{ value: 90, label: '90 minutes' }] },
+			presentation: { control: 'CHIPS' }
+		});
+		expect(pricingContractProblem(next)).toMatch(/unsupported pricing pointer/);
 	});
 
 	it('refuses a pricing pointer or input type it does not understand', () => {
@@ -594,12 +579,12 @@ describe('reconcileAnswers', () => {
 
 	it('clears a choice the new form no longer lists', () => {
 		const next = republished();
-		const duration = next.sections[1]!.fields.find((f) => f.key === 'durationMinutes')!;
-		if (duration.input.type === 'INTEGER_CHOICE')
-			duration.input.options = [{ value: 90, label: '90' }];
+		const type = next.sections.flatMap((s) => s.fields).find((f) => f.key === 'eventType')!;
+		if (type.input.type === 'STRING_CHOICE')
+			type.input.options = type.input.options.filter((o) => o.value !== 'BIRTHDAY');
 		const { answers, changed } = reconcileAnswers(next, answered());
-		expect(answers.values.durationMinutes).toBe('');
-		expect(changed).toContain('durationMinutes');
+		expect(answers.values.eventType).toBe('');
+		expect(changed).toContain('eventType');
 	});
 });
 
@@ -607,12 +592,9 @@ describe('estimates', () => {
 	it('is ready only when every pricing question is valid', () => {
 		const answers = answered();
 		expect(isEstimateReady(form, answers)).toBe(true);
-		answers.values.durationMinutes = '';
-		expect(isEstimateReady(form, answers)).toBe(false);
-		answers.values.durationMinutes = '120';
 		answers.values['offering:soft-serve-flavor'] = [];
 		expect(isEstimateReady(form, answers)).toBe(false);
-		// ...but guest count and duration are enough for an "estimate so far".
+		// ...but the guest count is enough for an "estimate so far".
 		expect(hasPricingBasics(form, answers)).toBe(true);
 		answers.values.guestCount = '';
 		expect(hasPricingBasics(form, answers)).toBe(false);
@@ -622,12 +604,10 @@ describe('estimates', () => {
 		const answers = emptyAnswers(form);
 		expect(draftServiceInputs(form, answers)).toBeNull();
 		answers.values.guestCount = '20';
-		answers.values.durationMinutes = '90';
 		expect(draftServiceInputs(form, answers)).toEqual({
 			priceRevision: '15',
 			guestCount: 20,
 			guestCountIsMinimum: false,
-			durationMinutes: 90,
 			selections: []
 		});
 		// Not enough for the server preview, which needs the complete configuration.
@@ -646,7 +626,6 @@ describe('answersFromFormData', () => {
 			['eventType', 'SCHOOL_EVENT'],
 			['guestCount', '50'],
 			['guestCountIsMinimum', 'on'],
-			['durationMinutes', '90'],
 			['offering:soft-serve-flavor', 'vanilla'],
 			['offering:soft-serve-flavor', 'chocolate']
 		];
@@ -672,13 +651,42 @@ describe('copy helpers', () => {
 			})
 		).toBe('+$0.50/guest');
 		expect(formatOfferingPrice({ kind: 'FIXED', amount: '120.00', currency: 'USD' })).toBe('+$120');
-		expect(
-			formatOfferingPrice({
-				kind: 'PER_DURATION',
-				amount: '50.00',
-				currency: 'USD',
-				interval: 'PT1H'
-			})
-		).toBe('+$50/hour');
+	});
+});
+
+describe('bounded guest count', () => {
+	const bounded = () => {
+		const next = clone();
+		const guests = next.sections[1]!.fields.find((f) => f.key === 'guestCount')!;
+		guests.input = { type: 'INTEGER', minimum: 1, maximum: 300, defaultValue: 50 };
+		guests.presentation = {
+			control: 'STEPPER',
+			messages: {
+				belowMinimum: 'Add a rough headcount.',
+				aboveMaximum: 'We quote up to 300 online.'
+			}
+		};
+		return next;
+	};
+
+	it('starts at the code-owned default', () => {
+		expect(emptyAnswers(bounded()).values.guestCount).toBe('50');
+	});
+
+	it('rejects counts above the maximum with the code-owned message, and accepts the maximum', () => {
+		const answers = answered();
+		answers.values.guestCount = '301';
+		expect(validateAnswers(bounded(), answers).guestCount).toBe('We quote up to 300 online.');
+		expect(prepareInquiry(bounded(), answers).ok).toBe(false);
+		answers.values.guestCount = '300';
+		expect(requestOf(prepareInquiry(bounded(), answers)).serviceInputs.guestCount).toBe(300);
+	});
+
+	it('asks for a headcount below the minimum or when blank', () => {
+		const answers = answered();
+		for (const guests of ['0', '']) {
+			answers.values.guestCount = guests;
+			expect(validateAnswers(bounded(), answers).guestCount).toBe('Add a rough headcount.');
+		}
 	});
 });

@@ -10,6 +10,7 @@
 		type OfferingOption
 	} from '@fionas/shared';
 	import type { FieldNote } from '$lib/booking-copy.js';
+	import GuestStepper from './guest-stepper.svelte';
 
 	/**
 	 * Renders one code-owned question. The control follows `presentation.control`
@@ -104,7 +105,9 @@
 	);
 </script>
 
-{#if control === 'CHECKBOX' && input.type === 'BOOLEAN'}
+{#if control === 'STEPPER' && input.type === 'INTEGER'}
+	<GuestStepper class={className} {field} value={text} {error} onchange={setText} />
+{:else if control === 'CHECKBOX' && input.type === 'BOOLEAN'}
 	<Checkbox
 		class={className}
 		name={field.key}

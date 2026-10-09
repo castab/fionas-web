@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 import { fillBasics, fillHandScooped, sendButton } from './form.js';
 test('code-owned controls, minimum picks and unavailable presentation', async ({ page }) => {
 	await page.goto('/book');
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('book the trailer');
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('bring fionas to your event');
+	await expect(page.getByText(/scoop for/i)).toHaveCount(0);
 	const soft = page.getByRole('group', { name: /Soft serve — pick 2/ });
 	expect(await soft.getByRole('checkbox').count()).toBe(3);
 	const hand = page.getByRole('group', { name: /Hand-scooped — pick 4/ });
@@ -43,4 +44,34 @@ test('an incomplete send lists what to add and focuses the first gap', async ({ 
 		'Please add: your name, email, event ZIP code'
 	);
 	await expect(page.getByLabel('Your name')).toBeFocused();
+});
+test('guest stepper starts at 50, steps by 5, offers presets and refuses over 300', async ({
+	page
+}) => {
+	await page.goto('/book');
+	const guests = page.getByLabel('About how many guests?');
+	await expect(guests).toHaveValue('50');
+	await expect(page.getByText('Estimated total')).toBeVisible();
+	await page.getByRole('button', { name: '5 more guests' }).click();
+	await expect(guests).toHaveValue('55');
+	await page.getByRole('button', { name: '5 fewer guests' }).click();
+	await page.getByRole('button', { name: '5 fewer guests' }).click();
+	await expect(guests).toHaveValue('45');
+	await page.getByRole('button', { name: '200 guests' }).click();
+	await expect(guests).toHaveValue('200');
+	await expect(page.getByRole('button', { name: '200 guests' })).toHaveAttribute(
+		'aria-pressed',
+		'true'
+	);
+	await guests.press('Shift+ArrowUp');
+	await expect(guests).toHaveValue('225');
+	await guests.fill('301');
+	await expect(guests).toHaveAccessibleDescription(/We quote up to 300 online/);
+	await expect(page.getByRole('button', { name: '5 more guests' })).toBeDisabled();
+	await sendButton(page).click();
+	await expect(page.getByRole('alert').filter({ hasText: 'Please add:' })).toContainText(
+		'an estimated guest count'
+	);
+	await guests.fill('300');
+	await expect(guests).toHaveAccessibleDescription(/A best guess is fine/);
 });

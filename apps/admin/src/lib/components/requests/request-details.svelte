@@ -2,12 +2,7 @@
 	import { Card, focusRing } from '@fionas/ui';
 	import type { InquiryResponse } from '$lib/request-contract.js';
 	import type { ServicePlanResponse } from '$lib/quote-contract.js';
-	import {
-		durationLabel,
-		eventDateLabel,
-		eventTypeLabel,
-		guestCountLabel
-	} from '$lib/presentation.js';
+	import { eventDateLabel, eventTypeLabel, guestCountLabel } from '$lib/presentation.js';
 	let {
 		inquiry,
 		servicePlan = null
@@ -39,14 +34,6 @@
 			</dd>
 		</div>
 		<div>
-			<dt class={caps}>Scooping time</dt>
-			<dd class="m-0 mt-1 text-sm font-semibold">
-				{inquiry.requestedService.durationMinutes
-					? durationLabel(inquiry.requestedService.durationMinutes)
-					: 'Not specified'}
-			</dd>
-		</div>
-		<div>
 			<dt class={caps}>Event ZIP</dt>
 			<dd class="m-0 mt-1 text-sm font-semibold">{inquiry.zipCode}</dd>
 		</div>
@@ -75,9 +62,7 @@
 		</p>
 		<p class="m-0 text-sm whitespace-pre-wrap">{servicePlan.description}</p>
 		{#if servicePlan.guestCount}<p class="m-0 text-sm">
-				{servicePlan.guestCount} guests{servicePlan.durationMinutes
-					? ` · ${servicePlan.durationMinutes} minutes`
-					: ''}
+				{servicePlan.guestCount} guests
 			</p>{/if}
 		<ul class="m-0 pl-5">
 			{#each servicePlan.items as item, i (i)}<li>{item}</li>{/each}

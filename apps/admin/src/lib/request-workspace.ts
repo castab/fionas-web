@@ -131,9 +131,6 @@ export function isCurrentStaffRequest(
 		!inquiry.requestedService.items.every(
 			(i) => i && typeof i.label === 'string' && !!i.label.trim()
 		) ||
-		(inquiry.requestedService.durationMinutes !== undefined &&
-			(!Number.isInteger(inquiry.requestedService.durationMinutes) ||
-				inquiry.requestedService.durationMinutes < 1)) ||
 		typeof inquiry.requestedService.guestCountIsMinimum !== 'boolean' ||
 		!financial.linesAuthoredBy ||
 		!['USER', 'SERVICE'].includes(financial.linesAuthoredBy.principalKind) ||

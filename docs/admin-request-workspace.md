@@ -8,7 +8,7 @@ via `/auth/me`. No browser-to-commerce calls or inquiry/document/catalog enrichm
 ## Presentation boundary
 
 The header and lifecycle strip use `inquiry.lifecycle.stage` exclusively. The workspace presents
-name/email, submission date, date-only event date, type, ZIP, guests/minimum flag, duration, and
+name/email, submission date, date-only event date, type, ZIP, guests/minimum flag, and
 escaped notes. The original requested service shows recorded human-readable item labels.
 Financial lines describe charges; the approved plan separately describes what Fiona will serve.
 
@@ -25,7 +25,7 @@ inconsistent document ownership is unavailable rather than an assumed zero balan
 
 Staff USER sessions flow through backend.ts with the host-only __Host-fionas_session cookie and trusted Origin. Issue quote requires commerce.financial-document.create, commerce.deposit-requirement.manage and fionas.financial-terms.manage. Public SERVICE credentials never author staff terms. The admin works without a public price book.
 
-The inline editor opens with a preview of complete existing financial lines under their immutable ids. Staff can override descriptions, quantity, unit price and whole-line tax; remove/reorder existing lines; add bespoke services or distinct signed charges/discounts/credits with stable draft keys. Negative adjustments are separate lines. Optional servicePlan descriptions, guest/duration counts, free-form items and identity-bound lineNotes preserve the approved service and negotiation reasons. There is no catalog dependency. requestedService displays the customer's recorded human-readable labels; linesAuthoredBy, issuedBy and approvedBy represent backend authorship.
+The inline editor opens with a preview of complete existing financial lines under their immutable ids. Staff can override descriptions, quantity, unit price and whole-line tax; remove/reorder existing lines; add bespoke services or distinct signed charges/discounts/credits with stable draft keys. Negative adjustments are separate lines. Optional servicePlan descriptions, guest counts, free-form items and identity-bound lineNotes preserve the approved service and negotiation reasons. There is no catalog dependency. requestedService displays the customer's recorded human-readable labels; linesAuthoredBy, issuedBy and approvedBy represent backend authorship.
 
 Preview posts expectedDocumentVersion, lines, optional servicePlan and terms without rereading the request. It is write-free and repeatable. The browser acknowledges edits but never calculates Quote totals or deposit. Native forms expose blank rows plus remove/reorder buttons and explicit Update preview; enhanced forms preview edits after a short delay. Exact input validation rejects unsupported precision and nonsettleable rate extensions without rounding.
 
@@ -137,7 +137,7 @@ The response fields actually used are:
 - Inquiry: `id`, `name`, `email`, `message`, `createdAt`, `zipCode`, `eventDate`, `eventType`,
   `lifecycle.documentId/stage`, and the descriptive original `requestedService`.
 - Proposal/deposit: latest issuance ownership/version, active deposit revision/approval version, approved terms, frozen money and current satisfaction; backend-supplied suggested terms.
-- Service plan: description, optional guests/duration, free-form items, final identity-bound lineNotes, document/reviewed versions and approvedBy/approvedAt.
+- Service plan: description, optional guests, free-form items, final identity-bound lineNotes, document/reviewed versions and approvedBy/approvedAt.
 - Quote preview: document/inquiry identity, reviewedDocumentVersion, estimateTotal, financialChange, quoteVersion, ordered lines with id/origin/key and exact money, deposit terms/requiredAmount, optional servicePlan and reviewToken.
 - Financial: `id`, `inquiryId`, `version`, `stage`, ordered line `id/description/subDescription/quantity/unitPrice/total/currency`,
   `subtotal`, `taxAmount`, `total`, `currency`, and `reconciliation.balance/currency`.

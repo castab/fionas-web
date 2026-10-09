@@ -37,7 +37,7 @@ const inquiry: CreateInquiryRequest & Record<string, unknown> = {
 	zipCode: '02134',
 	eventDate: '2026-12-05',
 	eventType: 'BIRTHDAY',
-	requestedService: { guestCount: 75, durationMinutes: 120 },
+	requestedService: { guestCount: 75 },
 	lines: [
 		{ description: 'Synthetic service', unitPrice: '101.00', taxAmount: '0.00', currency: 'USD' }
 	]

@@ -16,6 +16,7 @@ for (const native of [false, true])
 			await expect(page.getByRole('status')).toContainText('Request received');
 			const body = await submissionFor(page, email);
 			expect(body?.requestedService.guestCount).toBe(75);
+			expect(body?.requestedService).not.toHaveProperty('durationMinutes');
 			expect(body?.requestedService.items).toEqual(
 				expect.arrayContaining([
 					{ label: 'Horchata', group: 'Soft serve', key: 'horchata' },
@@ -25,7 +26,7 @@ for (const native of [false, true])
 			);
 			expect(body?.lines).toEqual(
 				expect.arrayContaining([
-					expect.objectContaining({ unitPrice: '141.00' }),
+					expect.objectContaining({ unitPrice: '101.00' }),
 					expect.objectContaining({ quantity: '75', unitPrice: '7.00' })
 				])
 			);

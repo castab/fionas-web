@@ -6,7 +6,6 @@ import type { QuoteCommand, ServicePlanResponse } from './quote-contract.js';
 export type RequestedService = {
 	guestCount: number;
 	guestCountIsMinimum: boolean;
-	durationMinutes?: number;
 	items: { label: string; group?: string; key?: string }[];
 	pricingReference?: string;
 };

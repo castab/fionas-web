@@ -24,7 +24,6 @@ export {
 	type ChoiceMetadata,
 	type ApiError,
 	type CreateInquiryRequest,
-	type DurationPricing,
 	type EstimateLine,
 	type EstimatePreview,
 	type FieldErrors,

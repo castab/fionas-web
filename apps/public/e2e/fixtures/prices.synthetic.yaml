@@ -2,7 +2,6 @@
 revision: 'synthetic-1'
 amounts:
   event.base: '101.00'
-  event.hourly: '20.00'
   event.per_guest: '7.00'
   topping.extra_per_guest: '0.30'
   soft-serve-flavor.vanilla: '0.00'

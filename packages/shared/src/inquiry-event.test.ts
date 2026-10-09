@@ -69,14 +69,6 @@ const form: InquiryForm = {
 				{
 					...field('guestCount', { type: 'INTEGER', minimum: 1 }, 'NUMBER'),
 					submissionPointer: '/serviceInputs/guestCount'
-				},
-				{
-					...field(
-						'durationMinutes',
-						{ type: 'INTEGER_CHOICE', options: [{ value: 90, label: '90 minutes' }] },
-						'SELECT'
-					),
-					submissionPointer: '/serviceInputs/durationMinutes'
 				}
 			]
 		}
@@ -84,7 +76,7 @@ const form: InquiryForm = {
 	pricingPreview: {
 		currency: 'USD',
 		guestQuantityDimension: 'guest',
-		durationOptions: [],
+		baseServiceAmount: '0.00',
 		perGuestAmount: '0.00',
 		toppingAdjustment: {
 			category: 'topping',
@@ -102,7 +94,6 @@ function answered() {
 	answers.values.eventDate = '2026-12-05';
 	answers.values.eventType = 'BIRTHDAY';
 	answers.values.guestCount = '40';
-	answers.values.durationMinutes = '90';
 	return answers;
 }
 
@@ -119,8 +110,7 @@ describe('event questions', () => {
 			'zipCode',
 			'eventDate',
 			'eventType',
-			'guestCount',
-			'durationMinutes'
+			'guestCount'
 		]);
 	});
 
@@ -165,7 +155,6 @@ describe('event questions', () => {
 					priceRevision: '1',
 					guestCount: 40,
 					guestCountIsMinimum: false,
-					durationMinutes: 90,
 					selections: []
 				}
 			}

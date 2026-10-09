@@ -35,7 +35,6 @@ function event(
 	for (const [k, v] of Object.entries({
 		planDescription: values.description,
 		planGuestCount: values.guestCount,
-		planDuration: values.durationMinutes,
 		planItems: values.items,
 		reviewedCurrency: values.reviewedCurrency,
 		reviewToken: values.reviewToken,

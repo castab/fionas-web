@@ -39,10 +39,9 @@ export async function fillContact(page: Page, email: string) {
 	await page.getByLabel('Event type').selectOption('BIRTHDAY');
 }
 
-/** Guest count and service length: enough for an "estimate so far". */
+/** The guest count: enough for an "estimate so far". There is no service duration. */
 export async function fillBasics(page: Page, guests = '75') {
-	await page.getByLabel('How many guests?').fill(guests);
-	await page.getByRole('radio', { name: '2 hours' }).check();
+	await page.getByLabel('About how many guests?').fill(guests);
 }
 
 export async function fillHandScooped(page: Page) {

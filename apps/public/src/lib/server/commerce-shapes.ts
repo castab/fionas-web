@@ -19,10 +19,8 @@ export function isCreateInquiryRequest(value: unknown): value is CreateInquiryRe
 		v.requestedService.guestCount <= 100000 &&
 		(v.requestedService.guestCountIsMinimum === undefined ||
 			typeof v.requestedService.guestCountIsMinimum === 'boolean') &&
-		(v.requestedService.durationMinutes === undefined ||
-			(Number.isInteger(v.requestedService.durationMinutes) &&
-				v.requestedService.durationMinutes > 0 &&
-				v.requestedService.durationMinutes <= 1440)) &&
+		// There is no service duration: a command carrying one was not built by this server.
+		!Object.hasOwn(v.requestedService, 'durationMinutes') &&
 		Array.isArray(v.lines) &&
 		v.lines.length > 0 &&
 		v.lines.length <= 100 &&

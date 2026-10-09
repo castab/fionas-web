@@ -186,7 +186,7 @@
 </script>
 
 <svelte:head>
-	<title>Book the trailer · {site.name}</title>
+	<title>Bring fionas to your event · {site.name}</title>
 	<meta name="description" content="Tell us about your event and build your ice cream service." />
 </svelte:head>
 
@@ -224,11 +224,11 @@
 			<h1
 				class="m-0 font-sans text-[34px] leading-[1.15] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]"
 			>
-				book the trailer
+				bring fionas to your event
 			</h1>
 			<p class="m-0 text-(--text-body) [font:var(--type-body)]">
-				Pick your flavors, tell us about your event, and check your estimate at the bottom — we'll
-				follow up within a day with a firm quote.
+				Pick your flavors, tell us about your event, and check your estimate at the bottom. We'll
+				follow up with a firm quote.
 			</p>
 		</div>
 

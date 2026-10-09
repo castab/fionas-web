@@ -3,8 +3,7 @@
 
 export type OfferingPrice =
 	| { kind: 'FIXED'; amount: string; currency: string }
-	| { kind: 'PER_QUANTITY'; amount: string; currency: string; dimension: string }
-	| { kind: 'PER_DURATION'; amount: string; currency: string; interval: string };
+	| { kind: 'PER_QUANTITY'; amount: string; currency: string; dimension: string };
 
 /**
  * One code-owned choice in an OFFERING_CHOICE question. The public form only
@@ -14,7 +13,7 @@ export type OfferingPrice =
  */
 export type OfferingOption = {
 	priceKey?: string;
-	pricingKind?: 'FIXED' | 'PER_GUEST' | 'PER_DURATION';
+	pricingKind?: 'FIXED' | 'PER_GUEST';
 	key: string;
 	category: string;
 	displayName: string;
@@ -40,7 +39,7 @@ export type InquiryInput =
 	| { type: 'DATE'; format: string }
 	| { type: 'STRING_CHOICE'; options: ({ value: string; label: string } & ChoiceMetadata)[] }
 	| { type: 'EMAIL'; maxLength: number }
-	| { type: 'INTEGER'; minimum: number }
+	| { type: 'INTEGER'; minimum: number; maximum?: number; defaultValue?: number }
 	| { type: 'BOOLEAN'; defaultValue: boolean }
 	| { type: 'INTEGER_CHOICE'; options: ({ value: number; label: string } & ChoiceMetadata)[] }
 	| {
@@ -60,7 +59,8 @@ export type InquiryControl =
 	| 'CARDS'
 	| 'CHECKBOXES'
 	| 'DATE'
-	| 'CHIPS';
+	| 'CHIPS'
+	| 'STEPPER';
 
 export type InquiryFormField = {
 	key: string;
@@ -74,6 +74,11 @@ export type InquiryFormField = {
 		placeholder?: string;
 		/** The noun for a "Please add: …" summary, e.g. "event date" or "4 hand-scooped flavors". */
 		summaryLabel?: string;
+		/** STEPPER: the −/+ increment and the quick-pick values. */
+		step?: number;
+		presets?: number[];
+		/** Code-owned wording for an INTEGER answer outside its bounds. */
+		messages?: { belowMinimum?: string; aboveMaximum?: string };
 	};
 };
 
@@ -87,23 +92,13 @@ export type InquiryFormSection = {
 	fields: InquiryFormField[];
 };
 
-/** Pricing facts for one allowed service duration (from the private price projection). */
-export type DurationPricing = {
-	durationMinutes: number;
-	/** Exact decimal base-service amount at this duration; added once. */
-	baseServiceAmount: string;
-	/** Flat amounts for PER_DURATION offerings at this duration; add only the selected ones. */
-	offeringContributions: { offeringKey: string; amount: string }[];
-	/** Presentation only: the base-service line's subtext at this duration. */
-	baseServiceSubDescription?: string | null;
-};
-
 /** Facts for instant, advisory browser arithmetic. Never submitted; the server prices for real. */
 export type InquiryPricingPreview = {
 	currency: string;
 	/** PER_QUANTITY options use this dimension; its quantity is the guest count. */
 	guestQuantityDimension: string;
-	durationOptions: DurationPricing[];
+	/** Exact decimal base-service amount, added once. There is no service duration. */
+	baseServiceAmount: string;
 	/** Exact decimal ice cream service amount per guest. */
 	perGuestAmount: string;
 	toppingAdjustment: {
@@ -115,8 +110,9 @@ export type InquiryPricingPreview = {
 		/** Presentation only: the extra-toppings line's subtext. */
 		subDescription?: string | null;
 	};
-	/** Presentation only: the base-service line's name. */
+	/** Presentation only: the base-service line's name and subtext. */
 	baseServiceDescription?: string | null;
+	baseServiceSubDescription?: string | null;
 	/** Presentation only: the per-guest ice cream service line's name. */
 	perGuestDescription?: string | null;
 };
@@ -142,7 +138,6 @@ export type ServiceInputs = {
 	priceRevision: string;
 	guestCount: number;
 	guestCountIsMinimum: boolean;
-	durationMinutes: number;
 	selections: PricingSelection[];
 };
 
@@ -185,7 +180,6 @@ export type PricedLine = {
 export type RequestedService = {
 	guestCount: number;
 	guestCountIsMinimum?: boolean;
-	durationMinutes?: number;
 	items?: { label: string; group?: string; key?: string }[];
 	pricingReference?: string;
 };
@@ -230,6 +224,8 @@ export function emptyAnswers(form: InquiryForm): InquiryAnswers {
 		for (const field of section.fields) {
 			values[field.key] =
 				field.input.type === 'BOOLEAN' ? field.input.defaultValue : initial(field);
+			if (field.input.type === 'INTEGER' && field.input.defaultValue !== undefined)
+				values[field.key] = String(field.input.defaultValue);
 		}
 	}
 	return { values };
@@ -345,10 +341,14 @@ function validateField(
 		}
 		case 'INTEGER': {
 			const raw = typeof value === 'string' ? value.trim() : '';
-			if (raw.length === 0) return field.required ? 'This field is required.' : null;
+			const messages = field.presentation.messages;
+			if (raw.length === 0)
+				return field.required ? (messages?.belowMinimum ?? 'This field is required.') : null;
+			if (!/^\d{1,9}$/.test(raw)) return 'Enter a whole number.';
 			const n = Number(raw);
-			if (!Number.isInteger(n) || n > 100_000) return 'Enter a whole number.';
-			if (n < input.minimum) return `Enter ${input.minimum} or more.`;
+			if (n < input.minimum) return messages?.belowMinimum ?? `Enter ${input.minimum} or more.`;
+			const maximum = Math.min(input.maximum ?? 100_000, 100_000);
+			if (n > maximum) return messages?.aboveMaximum ?? `Enter ${maximum} or fewer.`;
 			return null;
 		}
 		case 'INTEGER_CHOICE': {
@@ -390,7 +390,7 @@ function hasAnswer(field: InquiryFormField, value: AnswerValue | undefined): boo
 
 const PRICING_POINTER = '/serviceInputs/';
 
-/** A question whose answer belongs in `serviceInputs` (guest count, duration, offering picks). */
+/** A question whose answer belongs in `serviceInputs` (guest count, offering picks). */
 export function isPricingField(field: InquiryFormField): boolean {
 	return field.submissionPointer.startsWith(PRICING_POINTER);
 }
@@ -500,16 +500,15 @@ export function reconcileAnswers(
 const PRICING_PROPERTIES: Record<string, InquiryInput['type'][]> = {
 	guestCount: ['INTEGER', 'INTEGER_CHOICE'],
 	guestCountIsMinimum: ['BOOLEAN'],
-	durationMinutes: ['INTEGER', 'INTEGER_CHOICE'],
 	selections: ['OFFERING_CHOICE']
 };
 
 /** `serviceInputs` properties the request cannot do without; the form must ask for each. */
-const REQUIRED_PRICING = ['guestCount', 'durationMinutes'] as const;
+const REQUIRED_PRICING = ['guestCount'] as const;
 
 /**
  * Why this form definition is incompatible with POST /inquiries, or null when it isn't: a pricing
- * section marked optional, no guest count or duration question, or a pricing pointer this UI doesn't
+ * section marked optional, no guest count question, or a pricing pointer this UI doesn't
  * understand. Such a form can't reliably produce an inquiry, so the page must not offer it: the
  * caller fails closed.
  */
@@ -579,15 +578,13 @@ const isCount = (n: unknown, minimum: number) =>
 	typeof n === 'number' && Number.isInteger(n) && n >= minimum && n <= INT32_MAX;
 
 /**
- * The transport-level floor under every inquiry: a revision, a guest count, a duration and a
+ * The transport-level floor under every inquiry: a revision, a guest count and a
  * selection block meeting every category's minimum. Checked again after validation so that no
  * future change to validation can let a contact-only or partial request through.
  */
 function isCompletePricing(form: InquiryForm, pricing: ServiceInputs): boolean {
 	if (!pricing.priceRevision || !isCount(pricing.guestCount, 1)) return false;
-	if (!isCount(pricing.durationMinutes, 1) || typeof pricing.guestCountIsMinimum !== 'boolean') {
-		return false;
-	}
+	if (typeof pricing.guestCountIsMinimum !== 'boolean') return false;
 	return allFields(form).every((field) => {
 		if (field.input.type !== 'OFFERING_CHOICE' || field.input.minSelections === 0) return true;
 		const { category, minSelections } = field.input;
@@ -597,7 +594,7 @@ function isCompletePricing(form: InquiryForm, pricing: ServiceInputs): boolean {
 }
 
 /**
- * True once the answers that set the base price (guest count, service length) are valid. That is
+ * True once the answers that set the base price (the guest count) are valid. That is
  * enough for an instant "estimate so far" even before every offering has been chosen.
  */
 export function hasPricingBasics(form: InquiryForm, answers: InquiryAnswers): boolean {
@@ -608,8 +605,8 @@ export function hasPricingBasics(form: InquiryForm, answers: InquiryAnswers): bo
 }
 
 /**
- * The service configured so far, for the advisory "estimate so far": null until guest count and
- * service length are valid. Presentation only, never submitted.
+ * The service configured so far, for the advisory "estimate so far": null until the guest count
+ * is valid. Presentation only, never submitted.
  */
 export function draftServiceInputs(
 	form: InquiryForm,
@@ -712,14 +709,6 @@ export function formatMoney(amount: string, currency: string): string {
 	}).format(n);
 }
 
-function formatInterval(interval: string): string {
-	const hours = /^PT(\d+)H$/.exec(interval);
-	if (hours) return hours[1] === '1' ? 'hour' : `${hours[1]} hours`;
-	const minutes = /^PT(\d+)M$/.exec(interval);
-	if (minutes) return `${minutes[1]} min`;
-	return 'event';
-}
-
 /** "+$0.50/guest" style label for an offering's descriptive price. */
 export function formatOfferingPrice(price: OfferingPrice): string {
 	const money = formatMoney(price.amount, price.currency);
@@ -728,7 +717,5 @@ export function formatOfferingPrice(price: OfferingPrice): string {
 			return `+${money}`;
 		case 'PER_QUANTITY':
 			return `+${money}/${price.dimension}`;
-		case 'PER_DURATION':
-			return `+${money}/${formatInterval(price.interval)}`;
 	}
 }

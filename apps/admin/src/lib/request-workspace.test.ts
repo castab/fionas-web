@@ -11,7 +11,6 @@ import {
 	requestSummary
 } from './request-workspace.js';
 import {
-	durationLabel,
 	eventDateLabel,
 	eventTypeLabel,
 	guestCountLabel,
@@ -190,10 +189,7 @@ describe('request workspace presentation', () => {
 		expect(submittedDateLabel('2026-07-15T03:00:00Z')).toBe('Jul 14');
 		expect(eventTypeLabel('CORPORATE')).toBe('Corporate event');
 	});
-	it('formats requested duration and minimum guests without repricing', () => {
-		expect(durationLabel(90)).toBe('90 minutes');
-		expect(durationLabel(60)).toBe('1 hour');
-		expect(durationLabel(180)).toBe('3 hours');
+	it('formats minimum guests without repricing', () => {
 		expect(guestCountLabel(40, false)).toBe('40 guests');
 		expect(guestCountLabel(120, true)).toBe('120+ guests (minimum)');
 	});

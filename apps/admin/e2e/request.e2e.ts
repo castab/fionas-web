@@ -53,7 +53,7 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page.getByTestId('event-card')).toContainText('Saturday, July 25');
 	await expect(page.getByTestId('event-card')).toContainText('Birthday party');
 	await expect(page.getByTestId('event-card')).toContainText('40 guests');
-	await expect(page.getByTestId('event-card')).toContainText('90 minutes');
+	await expect(page.getByTestId('event-card')).not.toContainText(/minutes|hours|scooping/i);
 	await expect(page.getByTestId('event-card')).toContainText('93720');
 	await expect(page.getByText('Collected when booking', { exact: true })).toHaveCount(2);
 	await expect(page.getByTestId('original-request')).toContainText('My daughter loves strawberry!');
@@ -61,7 +61,7 @@ test('dashboard navigation renders the original request, financial facts and cur
 	const financial = page.getByTestId('financial-document');
 	await expect(financial).toContainText('Current estimate · Version 1 · USD');
 	await expect(financial.getByRole('listitem')).toHaveText([
-		/Base service.*\$205.*90 minutes.*Flat charge/s,
+		/Base service.*\$205.*Setup, staff & local travel.*Flat charge/s,
 		/Ice cream service.*\$180.*40 × \$4.50/s,
 		/Waffle cone upgrade.*\$30.*40 × \$0.75/s
 	]);

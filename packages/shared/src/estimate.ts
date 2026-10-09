@@ -74,24 +74,9 @@ function findOffering(
 /** Code-owned wording, or undefined when it is absent, null or blank. */
 const text = (value: string | null | undefined): string | undefined => value?.trim() || undefined;
 
-/** The duration question's own label for this choice (e.g. "1½ hours"), as the chips show it. */
-function durationLabel(form: InquiryForm, minutes: number): string | undefined {
-	for (const section of form.sections) {
-		for (const field of section.fields) {
-			if (
-				field.submissionPointer === '/serviceInputs/durationMinutes' &&
-				field.input.type === 'INTEGER_CHOICE'
-			) {
-				return text(field.input.options.find((o) => o.value === minutes)?.label);
-			}
-		}
-	}
-	return undefined;
-}
-
 /**
- * The advisory estimate for the current answers, or null until guest count and service length are
- * known. Offerings not yet chosen simply contribute nothing, giving an "estimate so far".
+ * The advisory estimate for the current answers, or null until the guest count is known. Offerings
+ * not yet chosen simply contribute nothing, giving an "estimate so far".
  */
 export function computeAdvisoryEstimate(
 	form: InquiryForm,
@@ -102,22 +87,15 @@ export function computeAdvisoryEstimate(
 	const inputs = draftServiceInputs(form, answers);
 	if (!inputs) return null;
 
-	const duration = preview.durationOptions.find(
-		(d) => d.durationMinutes === inputs.durationMinutes
-	);
-	if (!duration) return null;
-
 	const { currency } = preview;
 	const guests = inputs.guestCount;
 	const lines: { line: EstimateLine; subtotal: bigint }[] = [
 		line(
 			currency,
 			text(preview.baseServiceDescription) ?? 'Base service',
-			toUnits(duration.baseServiceAmount),
+			toUnits(preview.baseServiceAmount),
 			null,
-			text(duration.baseServiceSubDescription) ??
-				durationLabel(form, duration.durationMinutes) ??
-				`${duration.durationMinutes} minutes`
+			text(preview.baseServiceSubDescription)
 		),
 		line(
 			currency,
@@ -142,11 +120,6 @@ export function computeAdvisoryEstimate(
 				case 'PER_QUANTITY':
 					lines.push(line(currency, option.displayName, toUnits(price.amount), guests, sub));
 					break;
-				case 'PER_DURATION': {
-					const flat = duration.offeringContributions.find((c) => c.offeringKey === key);
-					if (flat) lines.push(line(currency, option.displayName, toUnits(flat.amount), null, sub));
-					break;
-				}
 			}
 		}
 	}

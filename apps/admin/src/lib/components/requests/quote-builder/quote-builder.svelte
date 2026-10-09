@@ -296,13 +296,6 @@
 						bind:value={values.guestCount}
 						inputmode="numeric"
 					/></label
-				><label class="text-xs"
-					>Duration in minutes<input
-						class={input}
-						name="planDuration"
-						bind:value={values.durationMinutes}
-						inputmode="numeric"
-					/></label
 				>
 			</div>
 			<label class="block text-xs"

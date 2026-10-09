@@ -14,7 +14,6 @@ export type QuoteFormValues = {
 	lines: LineDraft[];
 	description: string;
 	guestCount: string;
-	durationMinutes: string;
 	items: string;
 	/** The reviewed document's currency, echoed by the page. Only USD is accepted. */
 	reviewedCurrency: typeof CURRENCY;
@@ -53,7 +52,6 @@ export function initialQuoteValues(data: CurrentStaffRequest): QuoteFormValues {
 		})),
 		description: 'Ice cream service',
 		guestCount: String(service.guestCount),
-		durationMinutes: String(service.durationMinutes ?? ''),
 		items: service.items.map((i) => i.label).join('\n'),
 		reviewedCurrency: CURRENCY,
 		reviewToken: '',
@@ -131,7 +129,6 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 	const other = [
 		'planDescription',
 		'planGuestCount',
-		'planDuration',
 		'planItems',
 		'reviewToken',
 		'reviewedFingerprint'
@@ -164,10 +161,9 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 		lines,
 		description: vals[0]!,
 		guestCount: vals[1]!,
-		durationMinutes: vals[2]!,
-		items: vals[3]!,
-		reviewToken: vals[4]!,
-		reviewedFingerprint: vals[5]!,
+		items: vals[2]!,
+		reviewToken: vals[3]!,
+		reviewedFingerprint: vals[4]!,
 		reviewedCurrency: CURRENCY
 	};
 }
@@ -216,7 +212,6 @@ export function quoteInputErrors(values: QuoteFormValues): Record<string, string
 	if (
 		values.description.length > 2000 ||
 		!count(values.guestCount, 100000) ||
-		!count(values.durationMinutes, 1440) ||
 		values.items.split('\n').filter(Boolean).length > 50 ||
 		values.items.split('\n').some((s) => s.length > 200)
 	)
@@ -240,7 +235,6 @@ export function buildCommand(values: QuoteFormValues): QuoteCommand {
 					servicePlan: {
 						description,
 						...(values.guestCount ? { guestCount: Number(values.guestCount) } : {}),
-						...(values.durationMinutes ? { durationMinutes: Number(values.durationMinutes) } : {}),
 						items: values.items
 							.split('\n')
 							.map((s) => s.trim())

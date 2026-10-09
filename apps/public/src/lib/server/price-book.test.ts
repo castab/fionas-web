@@ -16,6 +16,8 @@ describe('restricted private price book', () => {
 		expect(Object.keys(book.amounts).sort()).toEqual([...PRICE_KEYS].sort());
 		expect(Object.isFrozen(book.amounts)).toBe(true);
 		expect(projectForm(book).priceRevision).toBe('synthetic-1');
+		expect(projectForm(book).pricingPreview.baseServiceAmount).toBe('101.00');
+		expect(PRICE_KEYS).not.toContain('event.hourly');
 	});
 	it('fails without configured file instead of using demo prices', () =>
 		expect(() => getPriceBook()).toThrow());
@@ -51,7 +53,8 @@ describe('restricted private price book', () => {
 		source + 'amounts:\n',
 		source + '  <<: *prices\n',
 		source + "other: 'value'\n",
-		source.replace("'20.00'", "'19.01'")
+		// There is no service duration, so an hourly rate is an unknown key.
+		source + "  event.hourly: '20.00'\n"
 	])('rejects invalid schema, ambiguity or unsupported arithmetic %#', (invalid) =>
 		expect(() => parsePriceBook(invalid)).toThrow()
 	);
@@ -66,6 +69,13 @@ describe('restricted private price book', () => {
 			presentation: { control: 'TEXTAREA' }
 		});
 		expect(JSON.stringify(MENU_SECTIONS)).not.toMatch(/"(?:amount|unitPrice|taxAmount|total)":/);
+		expect(fields.map((f) => f.key)).not.toContain('durationMinutes');
+		expect(fields.find((f) => f.key === 'guestCount')?.input).toEqual({
+			type: 'INTEGER',
+			minimum: 1,
+			maximum: 300,
+			defaultValue: 50
+		});
 	});
 });
 describe('signed replay integrity', () => {

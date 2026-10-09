@@ -84,7 +84,7 @@ export function requestFixtures() {
 							{
 								id: '20000000-0000-0000-0000-000000000001',
 								description: 'Base service',
-								subDescription: '90 minutes · setup, staff & local travel',
+								subDescription: 'Setup, staff & local travel',
 								unitPrice: '205.00',
 								subtotal: '205.00',
 								taxAmount: '0.00',
@@ -150,7 +150,6 @@ export function requestFixtures() {
 							requestedService: {
 								guestCount: dan ? 120 : 40,
 								guestCountIsMinimum: dan,
-								durationMinutes: dan ? 180 : 90,
 								items: [
 									{ label: 'Vanilla', group: 'Soft serve', key: 'vanilla' },
 									{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' }

@@ -40,15 +40,12 @@ export function parsePriceBook(source: string): PriceBook {
 		if (!/^[0-9]{1,9}(\.[0-9]{1,12})?$/.test(amount)) throw new Error('Invalid price precision');
 		const [whole, fraction = ''] = amount.split('.');
 		const units = BigInt(whole) * 10n ** 12n + BigInt(fraction.padEnd(12, '0'));
-		// Any integer guest count is offered. Hourly charges support half-hour quantities.
-		if (units % (key === 'event.hourly' ? 20_000_000_000n : 10_000_000_000n) !== 0n)
-			throw new Error('Nonsettleable public price');
+		// Any integer guest count is offered, so every amount must settle to whole cents.
+		if (units % 10_000_000_000n !== 0n) throw new Error('Nonsettleable public price');
 		amounts[key] = amount;
 	}
 	if (!revision || !inAmounts || PRICE_KEYS.some((key) => !Object.hasOwn(amounts, key)))
 		throw new Error('Incomplete price book');
-	if (cents(amounts['event.base']) + 3n * cents(amounts['event.hourly']) > 99_999_999_999n)
-		throw new Error('Combined public base exceeds supported precision');
 	return Object.freeze({ revision, amounts: Object.freeze(amounts) });
 }
 
@@ -64,9 +61,6 @@ function cents(amount: string): bigint {
 	const [whole, fraction = ''] = amount.split('.');
 	if (/[1-9]/.test(fraction.substring(2))) throw new Error('Nonsettleable price');
 	return BigInt(whole) * 100n + BigInt(fraction.substring(0, 2).padEnd(2, '0'));
-}
-function money(amount: bigint): string {
-	return `${amount / 100n}.${(amount % 100n).toString().padStart(2, '0')}`;
 }
 
 /** Selective public presentation, no file path, private keys or whole price document. */
@@ -90,14 +84,7 @@ export function projectForm(book: PriceBook): InquiryForm {
 		pricingPreview: {
 			currency: 'USD',
 			guestQuantityDimension: 'guest',
-			durationOptions: [90, 120, 150, 180].map((durationMinutes) => ({
-				durationMinutes,
-				baseServiceAmount: money(
-					cents(book.amounts['event.base']) +
-						(cents(book.amounts['event.hourly']) * BigInt(durationMinutes)) / 60n
-				),
-				offeringContributions: []
-			})),
+			baseServiceAmount: book.amounts['event.base'],
 			perGuestAmount: book.amounts['event.per_guest'],
 			toppingAdjustment: {
 				category: 'topping',
@@ -156,7 +143,6 @@ export function priceInquiry(intent: InquiryIntent, book: PriceBook): CreateInqu
 		requestedService: {
 			guestCount: serviceInputs.guestCount,
 			guestCountIsMinimum: serviceInputs.guestCountIsMinimum,
-			durationMinutes: serviceInputs.durationMinutes,
 			items,
 			pricingReference: `web-menu-1:${book.revision}`
 		},
