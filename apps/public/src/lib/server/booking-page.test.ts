@@ -13,6 +13,7 @@ import { fakeJetStream, type FakeJetStream } from '$lib/server/testing/fake-jets
 const state = vi.hoisted(() => ({
 	env: {} as Record<string, string>,
 	book: null as PriceBook | null,
+	natsReady: true,
 	stream: null as FakeJetStream | null
 }));
 vi.mock('$env/dynamic/private', () => ({ env: state.env }));
@@ -27,7 +28,8 @@ vi.mock('$lib/server/price-book.js', async (importOriginal) => ({
 vi.mock('$lib/server/nats.js', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/server/nats.js')>()),
 	publishToJetStream: (...args: Parameters<FakeJetStream['publish']>) =>
-		state.stream!.publish(...args)
+		state.stream!.publish(...args),
+	isNatsReady: async () => state.natsReady
 }));
 const { submitInquiry } = await import('$lib/server/inquiry-submission.js');
 const { load } = await import('../../routes/book/+page.server.js');
@@ -74,6 +76,7 @@ beforeEach(() => {
 		readFileSync(new URL('../../../e2e/fixtures/prices.synthetic.yaml', import.meta.url), 'utf8')
 	);
 	stream = state.stream = fakeJetStream();
+	state.natsReady = true;
 	vi.spyOn(console, 'warn').mockImplementation(() => {});
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -327,6 +330,15 @@ describe('trusted inquiry submission', () => {
 		expect(stream.deliveries).toHaveLength(0);
 		state.env.BOOKING_ENABLED = 'false';
 		await expect(load({ setHeaders: () => {} } as never)).rejects.toMatchObject({ status: 404 });
+	});
+	it('offers the form only while NATS can take a submission', async () => {
+		const page = () => load({ setHeaders: () => {} } as never) as Promise<{ form: unknown }>;
+		expect((await page()).form).not.toBeNull();
+		state.natsReady = false;
+		expect((await page()).form).toBeNull();
+		state.natsReady = true;
+		state.book = null;
+		expect((await page()).form).toBeNull();
 	});
 	it('returns private no-store form data without configuration or credentials', async () => {
 		const headers: Record<string, string> = {};

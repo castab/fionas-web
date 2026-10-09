@@ -41,7 +41,7 @@ npm run nats:up      # local NATS + JetStream for /book (needs Docker)
 
 ## Booking form & events
 
-The public app owns the menu, form and rules in code. Server pricing reads only private monetary values from FIONAS_PRICES_FILE, and FIONAS_REPLAY_SECRET protects immutable retries. Every accepted /book request is published as a versioned **InquirySubmitted** event to NATS JetStream; the public site never calls a backend API. Other applications (fionas-commerce among them) consume the event. Missing or invalid prices or replay secret make /book show an unavailable page. If NATS is unconfigured or unreachable, submissions fail with an "unavailable" message and nothing is stored. See [public submission and deployment setup](docs/public-inquiry-submission.md) for required keys, price rotation, synthetic local setup, replica coordination and NATS permissions.
+The public app owns the menu, form and rules in code. Server pricing reads only private monetary values from FIONAS_PRICES_FILE, and FIONAS_REPLAY_SECRET protects immutable retries. Every accepted /book request is published as a versioned **InquirySubmitted** event to NATS JetStream; the public site never calls a backend API. Other applications (fionas-commerce among them) consume the event. Missing or invalid prices or replay secret make /book show an unavailable page. While NATS is unconfigured, unreachable or reconnecting, /book shows that same unavailable card, so customers never fill in a form that can't be sent. The server logs NATS connection changes as `[nats] …`. See [public submission and deployment setup](docs/public-inquiry-submission.md) for required keys, price rotation, synthetic local setup, replica coordination and NATS permissions.
 
 ## Events & local NATS
 

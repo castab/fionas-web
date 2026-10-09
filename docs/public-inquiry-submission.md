@@ -4,7 +4,9 @@ The web app owns Fiona's menu, input descriptors, availability, selection limits
 
 ## Local and deployment setup
 
-Set BOOKING_ENABLED=true and NATS_URL in the public app's private environment. For authentication, set either NATS_CREDS_FILE (an absolute path to a `.creds` file, preferred in production) or NATS_USER and NATS_PASSWORD. Booking stays gated with a 404 while disabled, and the marketing site starts without NATS. The connection opens lazily on the first submission, reconnects on its own and drains on shutdown. Its URL, user, password and creds path are never logged or sent to the browser.
+Set BOOKING_ENABLED=true and NATS_URL in the public app's private environment. For authentication, set either NATS_CREDS_FILE (an absolute path to a `.creds` file, preferred in production) or NATS_USER and NATS_PASSWORD. Booking stays gated with a 404 while disabled, and the marketing site starts without NATS. The connection opens lazily when /book first loads, reconnects on its own and drains on shutdown. Its URL, user, password and creds path are never logged or sent to the browser.
+
+While NATS is unconfigured, unreachable or reconnecting, /book shows its "request form isn't available right now" card instead of a form the customer couldn't send. The page load waits at most 1.5 s for a connection. The web user can't inspect streams, so a missing stream or a denied publish still surfaces only on submission. The server logs connection changes as `[nats] Connected`, `Disconnected; reconnecting`, `Reconnected`, `Connection closed`, and server errors, naming only what happened. A failure to connect, or a missing NATS_URL, is logged once per outage rather than on every page view.
 
 Locally, `npm run nats:up` starts NATS + JetStream from compose.yaml (Docker) and creates the stream. apps/public/.env.example already points at it as the dev-only `fionas-web` user. In any other environment, create or verify the stream once with `npm run nats:setup -- --server <url> --creds <admin.creds> [--replicas 3] [--max-age 0|90d…]`. It refuses to change an existing stream that differs unless `--update` is given.
 
