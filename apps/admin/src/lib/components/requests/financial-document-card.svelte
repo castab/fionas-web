@@ -2,7 +2,6 @@
 	import { Badge, Card } from '@fionas/ui';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
 	import type { ServicePlanResponse } from '$lib/quote-contract.js';
-	import { adjustmentKindLabel } from '$lib/quote-builder.js';
 	import { formatMoney } from '$lib/presentation.js';
 	import { financialStageLabel } from '$lib/request-workspace.js';
 	let {
@@ -16,15 +15,7 @@
 	const provenance = $derived(
 		new Map(
 			servicePlan && servicePlan.documentVersion === financial.version
-				? servicePlan.lines.flatMap((line) => {
-						const note =
-							line.origin.type === 'ADJUSTMENT'
-								? `${adjustmentKindLabel(line.origin.kind)} · ${line.origin.reason}`
-								: line.overrideReason
-									? `Negotiated · ${line.overrideReason}`
-									: null;
-						return note ? [[line.lineItemId, note] as const] : [];
-					})
+				? servicePlan.lineNotes.map((line) => [line.lineItemId, line.note])
 				: []
 		)
 	);

@@ -25,27 +25,11 @@ function quotedWithPlan() {
 		documentId: data.financial.id,
 		documentVersion: data.proposal!.documentVersion,
 		reviewedDocumentVersion: 1,
-		pricingBasis: 'KEEP_ESTIMATE',
-		catalogRevision: 15,
+		description: 'Bespoke service',
+		items: ['Churros'],
+		lineNotes: [{ lineItemId: data.financial.lines[0].id, note: 'Negotiated' }],
 		approvedAt: '2026-07-16T19:01:00Z',
-		principalKind: 'USER',
-		principalId: '00000000-0000-0000-0000-000000000001',
-		service: {
-			guestCount: 40,
-			guestCountIsMinimum: false,
-			durationMinutes: 90,
-			selections: [
-				{
-					category: 'cone-option',
-					displayName: 'Cones & cups',
-					offerings: [{ offering: 'waffle-cone', displayName: 'Waffle cones' }]
-				}
-			]
-		},
-		lines: data.financial.lines.map((line) => ({
-			lineItemId: line.id,
-			origin: { type: 'ESTIMATE_LINE' as const }
-		}))
+		approvedBy: '00000000-0000-0000-0000-000000000001'
 	};
 	return data;
 }
@@ -61,9 +45,9 @@ describe('approved service plans', () => {
 		for (const corrupt of [
 			(data: ReturnType<typeof quotedWithPlan>) => (data.servicePlan!.documentId = 'other'),
 			(data: ReturnType<typeof quotedWithPlan>) => data.servicePlan!.documentVersion++,
-			(data: ReturnType<typeof quotedWithPlan>) => data.servicePlan!.lines.pop(),
+			(data: ReturnType<typeof quotedWithPlan>) => (data.servicePlan!.description = ''),
 			(data: ReturnType<typeof quotedWithPlan>) =>
-				(data.servicePlan!.lines[0].lineItemId = '99999999-0000-0000-0000-000000000000')
+				(data.servicePlan!.lineNotes[0].lineItemId = '99999999-0000-0000-0000-000000000000')
 		]) {
 			const data = quotedWithPlan();
 			corrupt(data);
@@ -78,7 +62,7 @@ describe('approved service plans', () => {
 		data.inquiry.lifecycle.stage = 'BOOKED';
 		data.financial.stage = 'INVOICE';
 		data.financial.version = 3;
-		data.financial.lines = [];
+		data.financial.lines = data.financial.lines.map((l) => ({ ...l, id: `9${l.id.substring(1)}` }));
 		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
 	});
 });

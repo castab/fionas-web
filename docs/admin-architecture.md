@@ -7,7 +7,7 @@ commerce API. Read this before adding a feature.
 
 **Every HTTP call to the commerce backend goes through the SvelteKit server.** That covers every
 endpoint in `fionas-commerce-openapi.json`: auth, inquiries, financial documents, payments, the
-offering catalog, `/admin/access/*`, all of it. The browser only ever talks to the admin origin
+Quote previews and proposals, `/admin/access/*`, all of it. The browser only ever talks to the admin origin
 (`admin.fionasicecream.com`, `admin-dev.fionasicecream.com`, `localhost:5174`). No backend URL, key or
 cookie handling exists in client code.
 

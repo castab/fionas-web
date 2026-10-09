@@ -1,15 +1,14 @@
 import type { StaffDashboardItem } from './dashboard-contract.js';
 import type { PaymentHistoryResponse } from './payment-contract.js';
-import type { QuoteCompositionRequest, ServicePlanResponse } from './quote-contract.js';
+import type { QuoteCommand, ServicePlanResponse } from './quote-contract.js';
 
 /** Transport shapes from the supplied fionas-commerce OpenAPI staff-request schemas. */
-export type PricingSelection = { category: string; offerings: string[] };
-export type InquiryRequestedPricing = {
-	catalogRevision: number;
+export type RequestedService = {
 	guestCount: number;
 	guestCountIsMinimum: boolean;
-	durationMinutes: number;
-	selections: PricingSelection[];
+	durationMinutes?: number;
+	items: { label: string; group?: string; key?: string }[];
+	pricingReference?: string;
 };
 export type InquiryMilestone = {
 	occurredAt: string;
@@ -29,7 +28,7 @@ export type InquiryResponse = {
 	email: string;
 	message?: string;
 	createdAt: string;
-	pricingInputs: InquiryRequestedPricing;
+	requestedService: RequestedService;
 	zipCode: string;
 	eventDate: string;
 	eventType: StaffDashboardItem['eventType'];
@@ -60,7 +59,7 @@ export type FinancialDocumentResponse = {
 	/** OpenAPI describes the known stages but leaves this transport property a string. */
 	stage: string;
 	inquiryId: string;
-	pricing?: InquiryRequestedPricing;
+	linesAuthoredBy: { principalKind: 'USER' | 'SERVICE'; principalId: string; recordedAt: string };
 	lines: FinancialDocumentLine[];
 	subtotal: string;
 	taxAmount: string;
@@ -110,16 +109,15 @@ export type InquiryProposalResponse = {
 	documentVersion: number;
 	depositRequirementRevision: number;
 	issuedAt: string;
-	/** These properties are strings, not enums, in the supplied schema. */
-	principalKind: string;
-	principalId: string;
+	issuedBy: string;
 	issuanceKind: string;
 };
 export type IssueInquiryProposalRequest = {
 	expectedDocumentVersion: number;
 	terms: DepositTermsRequest;
 	/** Both or neither: the composition exactly as previewed, with that preview's token. */
-	composition?: QuoteCompositionRequest;
+	lines?: QuoteCommand['lines'];
+	servicePlan?: QuoteCommand['servicePlan'];
 	reviewToken?: string;
 };
 export type IssuedInquiryProposalResponse = {

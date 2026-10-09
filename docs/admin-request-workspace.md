@@ -9,9 +9,8 @@ via `/auth/me`. No browser-to-commerce calls or inquiry/document/catalog enrichm
 
 The header and lifecycle strip use `inquiry.lifecycle.stage` exclusively. The workspace presents
 name/email, submission date, date-only event date, type, ZIP, guests/minimum flag, duration, and
-escaped notes. Original category/offering keys and catalog revision remain secondary in the
-collapsed **Original selection details** disclosure. They are identifiers, not historical product
-names. Financial lines do not enumerate included/no-charge selections.
+escaped notes. The original requested service shows recorded human-readable item labels.
+Financial lines describe charges; the approved plan separately describes what Fiona will serve.
 
 Full event address and event-contact details are intentionally collected later when booking.
 Their rows say **Collected when booking**: workflow copy, not a missing-data error or placeholder
@@ -24,83 +23,15 @@ inconsistent document ownership is unavailable rather than an assumed zero balan
 
 ## Issue Quote (quote builder)
 
-Issue Quote is one atomic approval: Quote + explicit deposit requirement + durable proposal issuance
-(+ the Quote's immutable service plan). It requires REQUESTED + ESTIMATE, no proposal, a NONE deposit
-and BOTH effective `commerce.financial-document.create` and `commerce.deposit-requirement.manage`
-permissions. Roles never authorize it; Commerce remains authoritative.
+Staff USER sessions flow through backend.ts with the host-only __Host-fionas_session cookie and trusted Origin. Issue quote requires commerce.financial-document.create, commerce.deposit-requirement.manage and fionas.financial-terms.manage. Public SERVICE credentials never author staff terms. The admin works without a public price book.
 
-**Build quote** in the Right-now card opens the **Formal quote** panel inline (`?quote`, so it survives
-reload and works without JavaScript). Only then does `load` read the selection choices: names, limits
-and availability from `GET /offering-catalog` (DISABLED offerings dropped, UNAVAILABLE shown but not
-selectable) and service durations plus the guest minimum from `GET /inquiry-form`, found by submission
-pointer. If either read fails the service stays read-only and only the Estimate's lines can be adjusted.
-The same GET also previews the untouched Estimate with the suggested deposit, in parallel with those
-reads, so the panel opens with its total and deposit already shown (its fingerprint matches the untouched
-form, so it can be issued as is). A failed opening preview just leaves the browser to preview after
-mounting; POST re-renders never repeat it.
-No offering, price or limit is named in code (`src/catalog-hardcoding.test.ts`).
+The inline editor opens with a preview of complete existing financial lines under their immutable ids. Staff can override descriptions, quantity, unit price and whole-line tax; remove/reorder existing lines; add bespoke services or distinct signed charges/discounts/credits with stable draft keys. Negative adjustments are separate lines. Optional servicePlan descriptions, guest/duration counts, free-form items and identity-bound lineNotes preserve the approved service and negotiation reasons. There is no catalog dependency. requestedService displays the customer's recorded human-readable labels; linesAuthoredBy, issuedBy and approvedBy represent backend authorship.
 
-Staff compose **intent**, never amounts:
+Preview posts expectedDocumentVersion, lines, optional servicePlan and terms without rereading the request. It is write-free and repeatable. The browser acknowledges edits but never calculates Quote totals or deposit. Native forms expose blank rows plus remove/reorder buttons and explicit Update preview; enhanced forms preview edits after a short delay. Exact input validation rejects unsupported precision and nonsettleable rate extensions without rounding.
 
-- **What you'll serve**: guests, minimum flag, scooping time and catalog pick chips. Unchanged service
-  keeps the Estimate (`KEEP_ESTIMATE`). Guests, minimum or duration changes reprice the whole quote from
-  today's catalog (`REPRICE_CONFIGURATION`). Pick-only changes preview as `REVISE_SERVICE_SELECTIONS`;
-  if Commerce answers `SERVICE_SELECTIONS_CHANGE_PRICING` the action previews once more as a reprice and
-  says so. Once a preview has repriced, later pick-only edits reprice directly instead of failing a
-  revision first. The effective configuration is `financial.pricing`, else the inquiry's requested inputs for
-  Estimate v1; otherwise the service is not editable. Write-ins do not exist.
-- **Lines**: each service line's amount is an override of its final flat amount with a required reason.
-  Targets come from the preview line's provenance: the persisted line id while the Estimate is kept, the
-  generated source (base service, ice cream service, extra toppings, selected offering) when repricing.
-  Overrides that no longer fit the mode are dropped and staff are told. Estimate lines cannot be renamed
-  or removed.
-- **+ Add line**: CHARGE, DISCOUNT or CREDIT adjustments (name, positive amount, optional detail, reason)
-  with a request-local `clientKey`. Without JavaScript one blank row is always offered; blank rows are
-  ignored.
-- **Deposit**: the existing suggested / custom percentage / fixed choice. Fixed currency is the reviewed
-  Estimate's; issuance uses the projection's currency and suggestion.
+Issuance rereads the coherent authoritative request, checks its version/currency/deposit suggestion and permission intersection, and compares a SHA-256 fingerprint of the full ordered command/plan/terms with the reviewed form. A changed input or QUOTE_REVIEW_STALE previews again and requires another click. It sends the same lines/plan/terms and reviewToken once, never retries a mutation, and requires reload after an ambiguous outcome. A 303 to the clean path lets the authoritative GET confirm Quote, deposit and approved service plan. Issuance does not imply delivery or booking.
 
-`?/previewQuote` checks permissions and strictly parses the envelope, then calls the write-free
-`POST /staff/requests/{inquiryId}/quote-preview` with the reviewed `expectedDocumentVersion`. Because a
-preview writes nothing, it does not re-read the request: it uses the reviewed snapshot the page posts
-(`reviewedCurrency`, `reviewedConfiguration` as JSON, and the reviewed deposit suggestion), and Commerce
-validates every value. Issuing still re-reads everything (below). The panel renders only the preview:
-lines with their provenance and "Was $X" originals, total (with the Estimate's for comparison),
-pricing-basis note and the resolved deposit. Nothing is summed in the browser.
-
-With JavaScript, edits are acknowledged at once ("Updating…"). Clicks, picks, selects and radios preview
-after ~40 ms and typing after ~300 ms. A click or blur that changes nothing never delays a scheduled
-preview, newer previews abort older ones, and edits made while one is in flight preview next. An added
-line echoes its typed amount with its kind's sign immediately; that is the input shown back, not
-arithmetic. Totals and deposits still come only from the preview. Without JavaScript, **Update preview**
-posts the same form. Violation codes map to builder sections with staff copy. A refused snapshot is not
-re-sent until it changes or staff choose **Preview again**. `CATALOG_REVISION_STALE` reloads the choices;
-the refreshed revision then previews on its own, and a note asks staff to check the picks. A 5xx may be
-retried because nothing was written.
-
-`?/issueQuote` rebuilds the command from the posted form and requires it to be exactly what was
-previewed: same pricing basis (a REVISE previewed as REPRICE stays REPRICE) and the same SHA-256
-fingerprint of version, composition and terms. Anything else previews again and needs a new explicit
-click, so an edit made after the preview can never be issued silently. It then calls
-`POST /staff/requests/{inquiryId}/proposals` once with `expectedDocumentVersion`, `terms`, `composition`
-and the preview's `reviewToken`. `QUOTE_REVIEW_STALE` shows the new preview and requires another
-approval; a 422 or stale catalog is correctable; conflicts and refusals require reload/review; timeouts,
-network failures and 5xx are ambiguous (commit may have happened) and block further attempts until a
-clean GET. There are no retries. With JavaScript, **Issue quote** stays disabled until the current edits
-have a fresh preview. Backend messages never appear in user copy.
-
-Success uses **303 to the same clean request pathname**. The authoritative GET confirms QUOTED, the new
-Quote version, the exact proposal pair, the frozen required deposit and the `servicePlan`. The plan's
-service (reviewed catalog names) is shown as **What you'll serve**, and each Quote line notes
-"Negotiated · reason" or "Charge/Discount/Credit · reason". A contradictory plan makes the workspace
-unavailable; an absent plan (deposit-only issuance) is legitimate. Issuance does not imply communication
-delivery, customer acceptance or a payment link: there is no expiry, message or "Send" yet.
-
-QUOTED shows the authoritative frozen amount, approved terms and current deposit status. Later
-BOOKED/SERVED/CLOSED Invoices retain the historical accepted proposal/deposit pair as **Booking
-deposit**; a refund making current satisfaction false does not undo booking or invalidate presentation.
-Lifecycle remains exclusively driven by the inquiry. Missing or contradictory proposal/deposit fields
-make the workspace unavailable. Quote/deposit revisions are not implemented.
+Quote/deposit revision controls remain outside the current UI, as before this migration; the backend's corresponding identity-bearing endpoints are not emulated. Manual payments and served/closed workflows below are retained. Current read validators reject absent/corrupt requested service, line identities/amounts/authorship, reconciliation, proposal/deposit pairs and plan notes instead of substituting zero or success.
 
 ## Manual payments and booking
 
@@ -184,8 +115,8 @@ no longer current there; Back to dashboard and sign-out remain available. The in
 Decline, quote revisions, quote expiry and messages, the phone/in-person New quote screen, communications, refunds/allocation management, electronic payment flows,
 backdating and payment notes are outside this slice.
 
-Historical selection display names remain identifiers for the original request; an issued composed
-Quote shows its service plan's reviewed names. A later booking-details slice can replace intentional booking-detail copy
+The original request retains its recorded human-readable selection labels; an issued
+Quote shows the approved free-form service plan. A later booking-details slice can replace intentional booking-detail copy
 with authoritative values.
 
 ## Coverage
@@ -195,26 +126,17 @@ failures, and presentation. Desktop/mobile E2E has session-isolated projections 
 including stale versions/proposals and deposit/Invoice commit followed by 500. Native and enhanced
 forms verify PRG, blocked conflicts, fixed deposit amount, the separate deposit/additional-payment
 workflow, partial Invoice payments, permission-aware controls and refunded historical receipts.
-The quote builder's E2E stub (`e2e/quote-stub.mjs`, `e2e/catalog-fixture.mjs`) mirrors the preview and
-composed issuance contracts with fixture-only arithmetic; specs cover overrides with reasons, added
-discounts, priced and unpriced pick swaps, guest repricing with source overrides, stale reviews, failed
-and stale-catalog previews, a read-only menu outage and the native form path.
+The quote builder's E2E stub resolves complete ordered lines and money-free service plans, preserves existing ids and derives new ids from stable keys. Desktop/mobile tests cover overrides, removals, reordering, bespoke services, credits, native and enhanced preview/issuance, permissions, stale reviews and ambiguous outcomes.
 
 ## Implementation and validation
 
 The response fields actually used are:
 
 - Inquiry: `id`, `name`, `email`, `message`, `createdAt`, `zipCode`, `eventDate`, `eventType`,
-  `lifecycle.documentId/stage`, and all original `pricingInputs` fields.
+  `lifecycle.documentId/stage`, and the descriptive original `requestedService`.
 - Proposal/deposit: latest issuance ownership/version, active deposit revision/approval version, approved terms, frozen money and current satisfaction; backend-supplied suggested terms.
-- Service plan: `documentId/documentVersion`, `service` (guests, duration, selection names) and
-  `lines.lineItemId/origin/overrideReason`.
-- Quote preview: identity, `reviewedDocumentVersion`, `pricingBasis`, `estimateTotal`, `service`, ordered
-  lines with `lineItemId/origin/override/description/subDescription/quantity/unitPrice/total`, `total`,
-  `deposit.terms/requiredAmount` and `reviewToken`.
-- Choices: catalog `revision` and categories (`key/displayName/minimumSelections/maximumSelections`, offering
-  `key/displayName/selectionState/availability/badge/statusNote`); inquiry-form guest minimum and duration
-  options.
+- Service plan: description, optional guests/duration, free-form items, final identity-bound lineNotes, document/reviewed versions and approvedBy/approvedAt.
+- Quote preview: document/inquiry identity, reviewedDocumentVersion, estimateTotal, financialChange, quoteVersion, ordered lines with id/origin/key and exact money, deposit terms/requiredAmount, optional servicePlan and reviewToken.
 - Financial: `id`, `inquiryId`, `version`, `stage`, ordered line `id/description/subDescription/quantity/unitPrice/total/currency`,
   `subtotal`, `taxAmount`, `total`, `currency`, and `reconciliation.balance/currency`.
 - Payments: `payment.paymentId/method/amount/currency/receivedAt`,
