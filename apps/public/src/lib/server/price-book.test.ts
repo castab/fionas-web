@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({ env: {} as Record<string, string> }));
 vi.mock('$env/dynamic/private', () => ({ env: state.env }));
 import { parsePriceBook, getPriceBook, projectForm } from './price-book.js';
 import { sealReplay, openReplay } from './inquiry-replay.js';
+import { buildInquiryEvent } from './inquiry-event.js';
 const source = readFileSync(
 	new URL('../../../e2e/fixtures/prices.synthetic.yaml', import.meta.url),
 	'utf8'
@@ -87,24 +88,28 @@ describe('restricted private price book', () => {
 });
 describe('signed replay integrity', () => {
 	const secret = 'synthetic-only-signing-secret-32-bytes';
-	const command = {
-		name: 'Jane',
-		email: 'jane@example.com',
-		zipCode: '02134',
-		eventDate: '2026-12-05',
-		eventType: 'BIRTHDAY' as const,
-		requestedService: { guestCount: 8 },
-		lines: [
-			{
-				description: 'Synthetic service',
-				quantity: '8',
-				unitPrice: '0.125',
-				taxAmount: '0.00',
-				currency: 'USD'
-			}
-		]
-	};
-	it('roundtrips the identical priced command', () =>
+	const command = buildInquiryEvent(
+		{
+			name: 'Jane',
+			email: 'jane@example.com',
+			zipCode: '02134',
+			eventDate: '2026-12-05',
+			eventType: 'BIRTHDAY',
+			requestedService: { guestCount: 8 },
+			lines: [
+				{
+					description: 'Synthetic service',
+					quantity: '8',
+					unitPrice: '0.125',
+					taxAmount: '0.00',
+					currency: 'USD'
+				}
+			]
+		},
+		'synthetic-1',
+		{ id: '0f8b5a3e-6c2d-4f1a-9b7e-3d4c5b6a7e8f', now: 50 }
+	);
+	it('roundtrips the identical priced event', () =>
 		expect(openReplay(sealReplay(command, 'key', secret, 100), 'key', secret, 200)).toEqual(
 			command
 		));

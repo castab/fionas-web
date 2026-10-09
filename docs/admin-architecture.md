@@ -117,9 +117,10 @@ Because the cookie is `Secure`, SvelteKit sets it with `Secure` too; browsers ac
 | `ADMIN_ORIGIN`     | in prod  | The admin site's public origin, sent as `Origin`. Must be trusted by the API. Falls back to the request's own origin. |
 
 Both are read per request with `$env/dynamic/private`. See `apps/admin/.env.example`. The admin app
-acts only as the signed-in staff member (a USER session). It never uses the public site's
-`SERVICE:fionas-web` credential or tokens, and never sends a service bearer token; calling the backend
-as a service on a user's behalf (caller + actor delegation) would be designed separately.
+acts only as the signed-in staff member (a USER session) and never sends a service bearer token;
+calling the backend as a service on a user's behalf (caller + actor delegation) would be designed
+separately. (The public site no longer calls the backend at all: it publishes inquiry events to NATS,
+see `docs/public-inquiry-submission.md`.)
 
 The API must list every admin origin as trusted: `http://localhost:5174`,
 `https://admin-dev.fionasicecream.com`, `https://admin.fionasicecream.com`. Otherwise login returns 403
@@ -144,13 +145,14 @@ and the server logs `[backend] POST /auth/login → 403 forbidden; is "<origin>"
 cp apps/admin/.env.example apps/admin/.env   # point COMMERCE_API_URL at a running API
 npm run dev:admin                            # http://localhost:5174
 npm run test:unit -- --run                   # includes apps/admin (vitest, fake fetch)
-npm run test:e2e                             # builds admin and runs it against a stub API
+npm run test:e2e                             # admin against a stub API (public also needs Docker for NATS)
 ```
 
 E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `/auth/login`, `/auth/me`,
-`/auth/logout`, `/staff/dashboard`, `/staff/requests/{inquiryId}`, and
-`POST /staff/requests/{inquiryId}/proposals` for atomic Quote + deposit + proposal issuance
-(Origin check, `Secure; HttpOnly` cookie, plus the usernames
+`/auth/logout`, `/staff/dashboard`, `/staff/requests/{inquiryId}`,
+`POST /staff/requests/{inquiryId}/quote-preview`, `POST /staff/requests/{inquiryId}/proposals` for atomic
+Quote + deposit + proposal issuance, `POST /financial-documents/{documentId}/payments`, and
+`POST /inquiries/{inquiryId}/served` and `/close` (Origin check, `Secure; HttpOnly` cookie, plus the usernames
 `ratelimited` and `outage` to simulate login 429 and 500). Dashboard scenarios and read counters are
 session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
 Request projections and atomic proposal mutations also have session-isolated state, including stale and

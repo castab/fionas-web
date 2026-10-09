@@ -1,26 +1,28 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
-import { E2E_SERVICE_CREDENTIAL, E2E_SERVICE_ID } from './e2e/test-service.js';
+import { NATS_URL, WEB_USER } from './e2e/nats.js';
 
-// Two previews of one build: "gated" (BOOKING_ENABLED off, the default) and "booking" (on).
+// Previews of one build: "gated" (BOOKING_ENABLED off, the default), "booking" (on) and "offline".
 const gatedPort = process.env.PUBLIC_PLAYWRIGHT_PORT ?? '4173';
 const bookingPort = process.env.PUBLIC_PLAYWRIGHT_BOOKING_PORT ?? '4175';
-// Stand-in for the fionas-commerce API (see e2e/stub-commerce.mjs); the app reaches it server-side.
-const stubPort = process.env.COMMERCE_STUB_PORT ?? '4174';
-// The stub only issues access tokens to this test-only SERVICE credential, and only answers the
-// three public endpoints to those tokens, so the booking app must authenticate as a SERVICE.
-const service = {
+// A third preview with booking on but NATS unreachable (nothing listens on its port).
+const offlinePort = process.env.PUBLIC_PLAYWRIGHT_OFFLINE_PORT ?? '4176';
+// The booking preview publishes to a real NATS + JetStream (see e2e/global-setup.ts) as the
+// least-privileged web user, with synthetic prices and a test-only replay secret.
+const booking = {
 	FIONAS_PRICES_FILE: fileURLToPath(
 		new URL('./e2e/fixtures/prices.synthetic.yaml', import.meta.url)
 	),
 	FIONAS_REPLAY_SECRET: 'synthetic-test-only-replay-secret-32-bytes',
-	COMMERCE_SERVICE_ID: E2E_SERVICE_ID,
-	COMMERCE_SERVICE_CREDENTIAL: E2E_SERVICE_CREDENTIAL
+	NATS_URL,
+	...WEB_USER
 };
 
 const gatedUrl = `http://127.0.0.1:${gatedPort}`;
 const bookingUrl = `http://127.0.0.1:${bookingPort}`;
+const offlineUrl = `http://127.0.0.1:${offlinePort}`;
 const bookingTests = '**/booking/**/*.e2e.{ts,js}';
+const offlineTests = '**/booking-offline/**/*.e2e.{ts,js}';
 
 const devices_ = {
 	desktop: devices['Desktop Chrome'],
@@ -30,6 +32,7 @@ const devices_ = {
 export default defineConfig({
 	testDir: './e2e',
 	testMatch: '**/*.e2e.{ts,js}',
+	globalSetup: './e2e/global-setup.ts',
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
@@ -38,7 +41,7 @@ export default defineConfig({
 		// Booking off: the landing page and the gated /book.
 		...Object.entries(devices_).map(([name, device]) => ({
 			name: `${name}-chromium`,
-			testIgnore: bookingTests,
+			testIgnore: [bookingTests, offlineTests],
 			use: { ...device, baseURL: gatedUrl }
 		})),
 		// Booking on: the form and the live CTAs.
@@ -46,34 +49,34 @@ export default defineConfig({
 			name: `${name}-chromium-booking`,
 			testMatch: bookingTests,
 			use: { ...device, baseURL: bookingUrl }
-		}))
+		})),
+		// Booking on, NATS unreachable: no form a customer can't send.
+		{
+			name: 'desktop-chromium-booking-offline',
+			testMatch: offlineTests,
+			use: { ...devices_.desktop, baseURL: offlineUrl }
+		}
 	],
 	webServer: [
 		{
-			command: 'node e2e/stub-commerce.mjs',
-			url: `http://127.0.0.1:${stubPort}/ready`,
-			env: {
-				COMMERCE_STUB_PORT: stubPort,
-				COMMERCE_STUB_SERVICE_ID: E2E_SERVICE_ID,
-				COMMERCE_STUB_SERVICE_CREDENTIAL: E2E_SERVICE_CREDENTIAL
-			},
-			reuseExistingServer: !process.env.CI
-		},
-		{
 			command: `npm run build && npm run preview -- --port ${gatedPort} --host 127.0.0.1`,
 			url: gatedUrl,
-			// No service credentials: the marketing site must run without them while booking is off.
-			env: {
-				COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`,
-				BOOKING_ENABLED: 'false'
-			},
+			// No NATS settings: the marketing site must run without them while booking is off.
+			env: { BOOKING_ENABLED: 'false' },
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		},
 		{
 			command: `node e2e/start-booking-preview.mjs ${gatedUrl} ${bookingPort}`,
 			url: bookingUrl,
-			env: { COMMERCE_API_URL: `http://127.0.0.1:${stubPort}`, ...service },
+			env: booking,
+			reuseExistingServer: !process.env.CI,
+			timeout: 180_000
+		},
+		{
+			command: `node e2e/start-booking-preview.mjs ${gatedUrl} ${offlinePort}`,
+			url: offlineUrl,
+			env: { ...booking, NATS_URL: 'nats://127.0.0.1:4299' },
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		}

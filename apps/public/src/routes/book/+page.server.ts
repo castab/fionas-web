@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { getPriceBook, projectForm } from '$lib/server/price-book.js';
 import { replaySecret } from '$lib/server/inquiry-replay.js';
 import { assertBookingEnabled } from '$lib/server/booking.js';
+import { isNatsReady } from '$lib/server/nats.js';
 
 import { newSubmissionToken, storeReceipt, submitInquiry } from '$lib/server/inquiry-submission.js';
 import type { Actions, PageServerLoad } from './$types';
@@ -17,6 +18,8 @@ export const load: PageServerLoad = async ({ setHeaders }) => {
 	} catch {
 		console.error('[booking] Private pricing or replay configuration unavailable');
 	}
+	// Don't let a customer fill in a form that can't be sent. nats.ts logs why, once per outage.
+	if (form && !(await isNatsReady())) form = null;
 	return { form, submissionToken: newSubmissionToken() };
 };
 

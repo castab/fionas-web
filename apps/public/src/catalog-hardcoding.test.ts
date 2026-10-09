@@ -5,11 +5,11 @@ const files = (p: string): string[] =>
 	readdirSync(p, { withFileTypes: true }).flatMap((e) =>
 		e.isDirectory() ? files(join(p, e.name)) : e.name.endsWith('.test.ts') ? [] : [join(p, e.name)]
 	);
-it('never calls removed backend catalog APIs', () => {
+it('never calls fionas-commerce: no removed catalog APIs, no direct inquiry or service-token calls', () => {
 	const offenders = files(join(import.meta.dirname, 'lib'))
 		.filter((p) => /\.(ts|svelte)$/.test(p) && !p.includes('testing'))
 		.filter((p) =>
-			/(?:request|fetch)\([^\n]*(?:\/inquiry-form|\/offering-catalog|\/estimate-preview)/.test(
+			/(?:request|fetch)\([^\n]*(?:\/inquiry-form|\/offering-catalog|\/estimate-preview|\/inquiries\b|\/auth\/service)/.test(
 				readFileSync(p, 'utf8')
 			)
 		);

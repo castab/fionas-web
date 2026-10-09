@@ -1,8 +1,9 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '$env/dynamic/private';
-import type { CreateInquiryRequest } from '@fionas/shared';
-import { isCreateInquiryRequest } from './commerce-shapes.js';
+import { isInquirySubmittedEvent, type InquirySubmittedEvent } from './inquiry-event.js';
 
+/** Version 1 envelopes held commerce POST bodies; they are refused like any other unusable one. */
+const ENVELOPE_VERSION = 2;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 export function replaySecret(): string {
 	const secret = env.FIONAS_REPLAY_SECRET;
@@ -11,14 +12,14 @@ export function replaySecret(): string {
 }
 const digest = (command: string) => createHash('sha256').update(command).digest('hex');
 export function sealReplay(
-	request: CreateInquiryRequest,
+	event: InquirySubmittedEvent,
 	key: string,
 	secret = replaySecret(),
 	now = Date.now()
 ): string {
-	const command = JSON.stringify(request);
+	const command = JSON.stringify(event);
 	const payload = Buffer.from(
-		JSON.stringify({ v: 1, key, issuedAt: now, digest: digest(command), command })
+		JSON.stringify({ v: ENVELOPE_VERSION, key, issuedAt: now, digest: digest(command), command })
 	).toString('base64url');
 	return `${payload}.${createHmac('sha256', secret).update(payload).digest('base64url')}`;
 }
@@ -27,7 +28,7 @@ export function openReplay(
 	key: string,
 	secret = replaySecret(),
 	now = Date.now()
-): CreateInquiryRequest | null {
+): InquirySubmittedEvent | null {
 	if (typeof envelope !== 'string' || envelope.length > 65_536) return null;
 	try {
 		const parts = envelope.split('.');
@@ -47,7 +48,7 @@ export function openReplay(
 			return null;
 		const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
 		if (
-			payload.v !== 1 ||
+			payload.v !== ENVELOPE_VERSION ||
 			payload.key !== key ||
 			!Number.isSafeInteger(payload.issuedAt) ||
 			payload.issuedAt > now ||
@@ -57,7 +58,7 @@ export function openReplay(
 		)
 			return null;
 		const command: unknown = JSON.parse(payload.command);
-		return isCreateInquiryRequest(command) ? command : null;
+		return isInquirySubmittedEvent(command) ? command : null;
 	} catch {
 		return null;
 	}

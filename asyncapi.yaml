@@ -1,0 +1,285 @@
+asyncapi: 3.1.0
+info:
+  title: Fiona's web events
+  version: 1.0.0
+  description: |
+    Events the Fiona's Ice Cream websites publish to NATS JetStream for other applications to
+    consume. `apps/public` publishes one `InquirySubmitted` event for every booking request it
+    accepts at /book.
+
+    ## Versioning
+
+    - The major version is part of the subject (`fionas.inquiries.submitted.v1`) and of the payload
+      (`schemaVersion`). Removing, renaming or retyping a field, or tightening a constraint, needs a
+      new subject (`.v2`) and a new message here; the old one keeps being described until nothing
+      publishes it.
+    - Adding an optional field is backwards compatible and bumps `info.version`'s minor version.
+      Consumers must ignore fields they don't know.
+    - The payload schemas below are what the producer guarantees, and the producer's tests validate
+      against them (`additionalProperties: false`).
+
+    ## Delivery
+
+    Messages land in the `FIONAS_INQUIRIES` stream (subjects `fionas.inquiries.>`, 24-hour
+    duplicate window). Every message carries `Nats-Msg-Id`, the logical submission key: a retry
+    or a customer's "Try sending again" republishes the identical bytes under the same key, so
+    JetStream stores it once inside the window. Consumers deduplicate on the payload `id`, which
+    is the same for every delivery of one submission.
+
+    Amounts are exact decimal strings (no floats), in USD. The web server prices every line from
+    its private price book; the browser never supplies an amount. Events carry no totals:
+    consumers that need them sum `lines` exactly.
+  license:
+    name: Proprietary
+defaultContentType: application/json
+
+servers:
+  local:
+    host: localhost:4222
+    protocol: nats
+    description: |
+      The local development server from this repository's compose.yaml (`npm run nats:up`).
+      Users and their dev-only passwords are in infra/nats/nats-server.conf.
+
+channels:
+  inquirySubmittedV1:
+    address: fionas.inquiries.submitted.v1
+    title: Inquiry submitted (v1)
+    description: A customer asked for ice cream service through the public booking form.
+    messages:
+      inquirySubmitted:
+        $ref: '#/components/messages/InquirySubmittedV1'
+
+operations:
+  publishInquirySubmitted:
+    action: send
+    title: Publish a submitted inquiry
+    summary: apps/public publishes one event per accepted /book submission.
+    description: |
+      Published with a JetStream PubAck (`expect: { streamName: FIONAS_INQUIRIES }`). The public
+      site's NATS user may publish only to this subject.
+    channel:
+      $ref: '#/channels/inquirySubmittedV1'
+    messages:
+      - $ref: '#/channels/inquirySubmittedV1/messages/inquirySubmitted'
+
+components:
+  messages:
+    InquirySubmittedV1:
+      name: InquirySubmitted
+      title: Inquiry submitted
+      summary: A priced request for ice cream service. It neither books a date nor takes payment.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/InquirySubmittedHeaders'
+      payload:
+        $ref: '#/components/schemas/InquirySubmittedV1'
+      examples:
+        - name: birthday
+          summary: Synthetic example (fictional customer and prices)
+          headers:
+            Nats-Msg-Id: 2f7c1f5e-8a5b-4c1e-9d2f-1a2b3c4d5e6f
+            Nats-Expected-Stream: FIONAS_INQUIRIES
+            Content-Type: application/json
+            Fionas-Event-Type: fionas.inquiry.submitted
+            Fionas-Schema-Version: '1'
+          payload:
+            schemaVersion: 1
+            type: fionas.inquiry.submitted
+            id: 0f8b5a3e-6c2d-4f1a-9b7e-3d4c5b6a7e8f
+            occurredAt: '2026-10-09T18:22:03.123Z'
+            source: fionas-web
+            data:
+              name: Jane Doe
+              email: jane@example.com
+              message: Backyard birthday
+              zipCode: '93720'
+              eventDate: '2026-12-05'
+              eventType: BIRTHDAY
+              requestedService:
+                guestCount: 75
+                guestCountIsMinimum: false
+                items:
+                  - label: Chocolate Chip
+                    group: Hand-scooped
+                    key: hand-scooped-chocolate-chip
+                  - label: Rainbow Sprinkles
+                    group: Toppings
+                    key: rainbow-sprinkles
+                  - label: Sugar Cones
+                    group: Cones & cups
+                    key: sugar-cone
+                pricingReference: 'web-menu-1:synthetic-1'
+              priceRevision: synthetic-1
+              lines:
+                - description: Base service
+                  unitPrice: '101.00'
+                  taxAmount: '0.00'
+                  currency: USD
+                - description: Ice cream service
+                  quantity: '75'
+                  unitPrice: '7.00'
+                  taxAmount: '0.00'
+                  currency: USD
+
+  schemas:
+    InquirySubmittedHeaders:
+      type: object
+      required:
+        [Nats-Msg-Id, Nats-Expected-Stream, Content-Type, Fionas-Event-Type, Fionas-Schema-Version]
+      properties:
+        Nats-Msg-Id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: |
+            The logical submission key. Identical for every delivery of one submission; JetStream
+            drops repeats inside the stream's duplicate window.
+        Nats-Expected-Stream:
+          type: string
+          const: FIONAS_INQUIRIES
+          description: |
+            Set by the publisher's JetStream client: the server refuses the message unless this
+            stream captures the subject. It is stored with the message.
+        Content-Type:
+          type: string
+          const: application/json
+        Fionas-Event-Type:
+          type: string
+          const: fionas.inquiry.submitted
+        Fionas-Schema-Version:
+          type: string
+          const: '1'
+
+    InquirySubmittedV1:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, type, id, occurredAt, source, data]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        type:
+          type: string
+          const: fionas.inquiry.submitted
+        id:
+          type: string
+          format: uuid
+          description: Unique per submission and stable across its retries. Deduplicate on it.
+        occurredAt:
+          type: string
+          format: date-time
+          description: When the web server accepted and priced the submission (UTC).
+        source:
+          type: string
+          const: fionas-web
+        data:
+          $ref: '#/components/schemas/InquiryData'
+
+    InquiryData:
+      type: object
+      additionalProperties: false
+      required: [name, email, zipCode, eventDate, eventType, requestedService, priceRevision, lines]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type: string
+          maxLength: 254
+          pattern: '^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: Optional note from the customer. Omitted when blank.
+        zipCode:
+          type: string
+          pattern: '^[0-9]{5}$'
+        eventDate:
+          type: string
+          format: date
+        eventType:
+          $ref: '#/components/schemas/EventType'
+        requestedService:
+          $ref: '#/components/schemas/RequestedService'
+        priceRevision:
+          type: string
+          minLength: 1
+          maxLength: 160
+          description: The opaque revision of the private price book the lines were priced from.
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PricedLine'
+
+    EventType:
+      type: string
+      enum: [BIRTHDAY, WEDDING, CORPORATE, SCHOOL_EVENT, NEIGHBORHOOD_EVENT, OTHER]
+
+    RequestedService:
+      type: object
+      additionalProperties: false
+      required: [guestCount]
+      description: What the customer asked for, with code-owned labels. There is no service duration.
+      properties:
+        guestCount:
+          type: integer
+          minimum: 1
+          maximum: 300
+        guestCountIsMinimum:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+        pricingReference:
+          type: string
+          description: Which web menu and price revision priced the request, e.g. `web-menu-1:<revision>`.
+
+    RequestedItem:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+          description: Customer-facing name, e.g. "Chocolate Chip".
+        group:
+          type: string
+          description: The menu group, e.g. "Hand-scooped".
+        key:
+          type: string
+          description: Stable code-owned menu key, e.g. `hand-scooped-chocolate-chip`.
+
+    PricedLine:
+      type: object
+      additionalProperties: false
+      required: [description, unitPrice, taxAmount, currency]
+      description: |
+        One priced line. Its subtotal is unitPrice × quantity (quantity defaults to 1) and always
+        settles to whole cents.
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 200
+        subDescription:
+          type: string
+          maxLength: 500
+        quantity:
+          type: string
+          pattern: '^[0-9]{1,9}(\.[0-9]{1,6})?$'
+          description: Exact positive decimal. Omitted for a flat line.
+        unitPrice:
+          type: string
+          pattern: '^[0-9]{1,9}(\.[0-9]{1,12})?$'
+          description: Exact decimal amount per unit.
+        taxAmount:
+          type: string
+          pattern: '^[0-9]{1,9}(\.[0-9]{1,2})?$'
+        currency:
+          type: string
+          const: USD

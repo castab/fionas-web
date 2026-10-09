@@ -141,7 +141,7 @@ export type ServiceInputs = {
 	selections: PricingSelection[];
 };
 
-/** POST /inquiries' `eventType` values (the backend's enum; the form offers them as options). */
+/** The inquiry event's `eventType` values (asyncapi.yaml `EventType`; the form offers them as options). */
 export const INQUIRY_EVENT_TYPES = [
 	'BIRTHDAY',
 	'WEDDING',
@@ -155,9 +155,9 @@ export type InquiryEventType = (typeof INQUIRY_EVENT_TYPES)[number];
 
 /**
  * Validated local customer intent, never amounts. Everything but `message` is required, and
- * `serviceInputs` above all: there is no plain/contact-only inquiry. SvelteKit prices
- * every accepted inquiry before Commerce creates Estimate v1. Build one only through `prepareInquiry`, which refuses
- * incomplete answers and any form that can't produce this shape.
+ * `serviceInputs` above all: there is no plain/contact-only inquiry. The public server prices
+ * every accepted inquiry before publishing it. Build one only through `prepareInquiry`, which
+ * refuses incomplete answers and any form that can't produce this shape.
  */
 export type InquiryIntent = {
 	name: string;
@@ -183,7 +183,8 @@ export type RequestedService = {
 	items?: { label: string; group?: string; key?: string }[];
 	pricingReference?: string;
 };
-export type CreateInquiryRequest = Omit<InquiryIntent, 'serviceInputs'> & {
+/** An inquiry priced by the public server: the `data` of the InquirySubmitted event (asyncapi.yaml). */
+export type PricedInquiry = Omit<InquiryIntent, 'serviceInputs'> & {
 	requestedService: RequestedService;
 	lines: PricedLine[];
 };
@@ -507,7 +508,7 @@ const PRICING_PROPERTIES: Record<string, InquiryInput['type'][]> = {
 const REQUIRED_PRICING = ['guestCount'] as const;
 
 /**
- * Why this form definition is incompatible with POST /inquiries, or null when it isn't: a pricing
+ * Why this form definition can't produce a complete inquiry, or null when it isn't: a pricing
  * section marked optional, no guest count question, or a pricing pointer this UI doesn't
  * understand. Such a form can't reliably produce an inquiry, so the page must not offer it: the
  * caller fails closed.
@@ -543,7 +544,7 @@ export function isEstimateReady(form: InquiryForm, answers: InquiryAnswers): boo
 /**
  * Reads the pricing answers into `serviceInputs` by submission pointer, without judging them. Picks
  * go in form order, one block per category that has any (a category whose minimum is 0 may be left
- * empty). `guestCountIsMinimum` is false unless a question sets it, as the backend defaults it.
+ * empty). `guestCountIsMinimum` is false unless a question sets it.
  */
 function collectPricing(
 	form: InquiryForm,
@@ -642,7 +643,7 @@ export type InquiryCommand =
 
 const REQUIRED_TEXT = ['name', 'email', 'zipCode', 'eventDate'] as const;
 
-/** Why a built body isn't a valid POST /inquiries request (a required field missing), or null. */
+/** Why a built body isn't a complete inquiry (a required field missing), or null. */
 function requestProblem(request: Record<string, unknown>): string | null {
 	const missing = REQUIRED_TEXT.find((property) => typeof request[property] !== 'string');
 	if (missing) return `the form gave no ${missing}`;
