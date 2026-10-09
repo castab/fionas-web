@@ -49,8 +49,7 @@ export function proposalPair(inquiryId, documentId, documentVersion, total, term
 			documentVersion,
 			depositRequirementRevision: 1,
 			issuedAt: '2026-07-16T19:01:00Z',
-			principalKind: 'USER',
-			principalId: '00000000-0000-0000-0000-000000000001',
+			issuedBy: '00000000-0000-0000-0000-000000000001',
 			issuanceKind: 'INITIAL'
 		},
 		depositRequirement: {
@@ -85,7 +84,7 @@ export function requestFixtures() {
 							{
 								id: '20000000-0000-0000-0000-000000000001',
 								description: 'Base service',
-								subDescription: '90 minutes · setup, staff & local travel',
+								subDescription: 'Setup, staff & local travel',
 								unitPrice: '205.00',
 								subtotal: '205.00',
 								taxAmount: '0.00',
@@ -148,27 +147,12 @@ export function requestFixtures() {
 								message: 'Backyard party, driveway parking is easy. My daughter loves strawberry!'
 							}),
 							createdAt: maya ? '2026-07-14T19:00:00Z' : item.inquiryCreatedAt,
-							pricingInputs: {
-								catalogRevision: 15,
+							requestedService: {
 								guestCount: dan ? 120 : 40,
 								guestCountIsMinimum: dan,
-								durationMinutes: dan ? 180 : 90,
-								selections: [
-									{ category: 'soft-serve-flavor', offerings: ['vanilla', 'chocolate'] },
-									{
-										category: 'hand-scooped-flavor',
-										offerings: [
-											'hand-scooped-chocolate-chip',
-											'hand-scooped-strawberry',
-											'hand-scooped-mint-chip',
-											'hand-scooped-vanilla-bean'
-										]
-									},
-									{
-										category: 'topping',
-										offerings: ['sprinkles', 'oreos', 'strawberries', 'brownies']
-									},
-									{ category: 'cone-option', offerings: ['waffle-cone'] }
+								items: [
+									{ label: 'Vanilla', group: 'Soft serve', key: 'vanilla' },
+									{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' }
 								]
 							},
 							zipCode: '93720',
@@ -177,6 +161,11 @@ export function requestFixtures() {
 							lifecycle: { documentId, stage: item.stage }
 						},
 						financial: {
+							linesAuthoredBy: {
+								principalKind: 'SERVICE',
+								principalId: '00000000-0000-4000-8000-0000000000aa',
+								recordedAt: '2026-07-14T19:00:00Z'
+							},
 							id: documentId,
 							inquiryId: item.inquiryId,
 							version: item.stage === 'REQUESTED' ? 1 : item.stage === 'QUOTED' ? 2 : 3,

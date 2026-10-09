@@ -3,12 +3,14 @@ import type {
 	StaffRequestResponse,
 	CurrentStaffRequest
 } from './request-contract.js';
+import { isSupportedCurrency } from './currency.js';
 import { isDepositTerms } from './deposit.js';
 import { isPaymentHistory } from './payment-history.js';
 
 export const PROPOSAL_PERMISSIONS = [
 	'commerce.financial-document.create',
-	'commerce.deposit-requirement.manage'
+	'commerce.deposit-requirement.manage',
+	'fionas.financial-terms.manage'
 ] as const;
 export function hasProposalPermissions(permissions: string[]): boolean {
 	return PROPOSAL_PERMISSIONS.every((permission) => permissions.includes(permission));
@@ -121,6 +123,39 @@ export function isCurrentStaffRequest(
 	))
 		return false;
 	const { inquiry, financial, proposal, depositRequirement: deposit } = data;
+	if (
+		!inquiry.requestedService ||
+		!Number.isInteger(inquiry.requestedService.guestCount) ||
+		inquiry.requestedService.guestCount < 1 ||
+		!Array.isArray(inquiry.requestedService.items) ||
+		!inquiry.requestedService.items.every(
+			(i) => i && typeof i.label === 'string' && !!i.label.trim()
+		) ||
+		typeof inquiry.requestedService.guestCountIsMinimum !== 'boolean' ||
+		!financial.linesAuthoredBy ||
+		!['USER', 'SERVICE'].includes(financial.linesAuthoredBy.principalKind) ||
+		typeof financial.linesAuthoredBy.principalId !== 'string' ||
+		!financial.linesAuthoredBy.principalId ||
+		typeof financial.linesAuthoredBy.recordedAt !== 'string' ||
+		!Number.isFinite(Date.parse(financial.linesAuthoredBy.recordedAt)) ||
+		financial.lines.length === 0 ||
+		!financial.lines.every((l) => l && typeof l === 'object') ||
+		![financial.subtotal, financial.taxAmount, financial.total].every(
+			(a) => typeof a === 'string' && /^-?\d+(\.\d+)?$/.test(a)
+		) ||
+		new Set(financial.lines.map((l) => l.id)).size !== financial.lines.length ||
+		!financial.lines.every(
+			(l) =>
+				typeof l.id === 'string' &&
+				!!l.id &&
+				typeof l.description === 'string' &&
+				[l.unitPrice, l.subtotal, l.taxAmount, l.total].every(
+					(a) => typeof a === 'string' && /^-?\d+(\.\d+)?$/.test(a)
+				) &&
+				l.currency === financial.currency
+		)
+	)
+		return false;
 	const version = (value: unknown) =>
 		typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
 	const instant = (value: unknown) =>
@@ -153,8 +188,7 @@ export function isCurrentStaffRequest(
 		!version(proposal.documentVersion) ||
 		!version(proposal.depositRequirementRevision) ||
 		!instant(proposal.issuedAt) ||
-		typeof proposal.principalKind !== 'string' ||
-		typeof proposal.principalId !== 'string' ||
+		typeof proposal.issuedBy !== 'string' ||
 		typeof proposal.issuanceKind !== 'string'
 	)
 		return false;
@@ -192,31 +226,29 @@ function isCoherentServicePlan(
 ): boolean {
 	if (plan == null) return true;
 	const { financial, proposal } = data;
-	if (
-		!proposal ||
-		plan.documentId !== financial.id ||
-		plan.documentVersion !== proposal.documentVersion ||
-		!Array.isArray(plan.lines) ||
-		!plan.lines.every(
-			(line) =>
-				typeof line?.lineItemId === 'string' &&
-				['ESTIMATE_LINE', 'GENERATED', 'ADJUSTMENT'].includes(line.origin?.type) &&
-				(line.overrideReason === undefined || typeof line.overrideReason === 'string')
-		) ||
-		!plan.service ||
-		!Array.isArray(plan.service.selections) ||
-		!plan.service.selections.every(
-			(category) =>
-				typeof category?.displayName === 'string' &&
-				Array.isArray(category.offerings) &&
-				category.offerings.every((offering) => typeof offering?.displayName === 'string')
-		)
-	)
-		return false;
 	return (
-		financial.version !== plan.documentVersion ||
-		(plan.lines.length === financial.lines.length &&
-			plan.lines.every((line, index) => line.lineItemId === financial.lines[index].id))
+		!!proposal &&
+		plan.documentId === financial.id &&
+		plan.documentVersion === proposal.documentVersion &&
+		Number.isInteger(plan.reviewedDocumentVersion) &&
+		plan.reviewedDocumentVersion > 0 &&
+		plan.reviewedDocumentVersion < plan.documentVersion &&
+		typeof plan.description === 'string' &&
+		!!plan.description.trim() &&
+		typeof plan.approvedBy === 'string' &&
+		!!plan.approvedBy &&
+		Number.isFinite(Date.parse(plan.approvedAt)) &&
+		Array.isArray(plan.items) &&
+		plan.items.every((item) => typeof item === 'string') &&
+		Array.isArray(plan.lineNotes) &&
+		new Set(plan.lineNotes.map((n) => n.lineItemId)).size === plan.lineNotes.length &&
+		plan.lineNotes.every(
+			(n) =>
+				typeof n.lineItemId === 'string' &&
+				typeof n.note === 'string' &&
+				(financial.version !== plan.documentVersion ||
+					financial.lines.some((l) => l.id === n.lineItemId))
+		)
 	);
 }
 export function isProposalEligible(data: StaffRequestResponse): boolean {
@@ -224,7 +256,8 @@ export function isProposalEligible(data: StaffRequestResponse): boolean {
 		data.inquiry.lifecycle.stage === 'REQUESTED' &&
 		data.financial.stage === 'ESTIMATE' &&
 		data.proposal == null &&
-		data.depositRequirement.state === 'NONE'
+		data.depositRequirement.state === 'NONE' &&
+		isSupportedCurrency(data.financial.currency)
 	);
 }
 export function canIssueQuote(data: StaffRequestResponse, permissions: string[]): boolean {
@@ -249,7 +282,9 @@ export function quoteErrorMessage(status: number): string {
 	if (status === 403) return 'This account cannot issue a quote for this request.';
 	if (status === 404)
 		return 'This request is no longer available. Reload to review the latest state.';
-	if (status === 400 || status === 422)
+	if (status === 422)
+		return 'These quote details couldn’t be accepted. Check the amounts and deposit terms, then preview again.';
+	if (status === 400)
 		return 'This quote couldn’t be read. Reload to review the request before trying again.';
 	if (status === 409)
 		return 'This request changed since you opened it. Reload to review the latest version before trying again.';

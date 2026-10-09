@@ -14,13 +14,9 @@ export const SERVICE_NAME = 'fionas-web';
 export const ROLE = Object.freeze({
 	key: 'fionas.web',
 	displayName: 'Fiona web frontend',
-	description: 'Public site: read the inquiry form, preview estimates, create inquiries',
+	description: 'Public site: create server-priced inquiries',
 	// Exactly these, never staff, offering-management, financial, role or credential permissions.
-	permissions: Object.freeze([
-		'fionas.inquiry-form.read',
-		'fionas.estimate-preview.create',
-		'fionas.inquiries.create'
-	])
+	permissions: Object.freeze(['fionas.inquiries.create'])
 });
 
 /** A failure the operator can act on; its message is safe to print (no secret ever goes in it). */

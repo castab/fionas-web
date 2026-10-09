@@ -8,7 +8,7 @@ import type {
 import type {
 	InquiryQuotePreviewResponse,
 	PreviewInquiryQuoteRequest,
-	QuoteCompositionRequest
+	QuoteCommand
 } from '../quote-contract.js';
 import { request, type BackendConfig } from './backend.js';
 import type { RecordPaymentRequest, RecordedPaymentResponse } from '../payment-contract.js';
@@ -52,11 +52,12 @@ export function issueInquiryProposal(
 	expectedDocumentVersion: number,
 	terms: DepositTermsRequest,
 	cookie: string | null,
-	reviewed?: { composition: QuoteCompositionRequest; reviewToken: string }
+	reviewed?: QuoteCommand & { reviewToken: string }
 ) {
 	const json: IssueInquiryProposalRequest = { expectedDocumentVersion, terms };
 	if (reviewed) {
-		json.composition = reviewed.composition;
+		json.lines = reviewed.lines;
+		json.servicePlan = reviewed.servicePlan;
 		json.reviewToken = reviewed.reviewToken;
 	}
 	return request<IssuedInquiryProposalResponse>(
@@ -82,14 +83,4 @@ export function previewInquiryQuote(
 		`/staff/requests/${encodeURIComponent(inquiryId)}/quote-preview`,
 		{ method: 'POST', json, cookie }
 	);
-}
-
-/** Current catalog names, limits and availability for the quote builder's selection editor. */
-export function getOfferingCatalog(config: BackendConfig, cookie: string | null) {
-	return request<unknown>(config, '/offering-catalog', { cookie });
-}
-
-/** Service durations and the guest minimum, which the catalog itself does not carry. */
-export function getInquiryForm(config: BackendConfig, cookie: string | null) {
-	return request<unknown>(config, '/inquiry-form', { cookie });
 }

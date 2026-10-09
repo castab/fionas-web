@@ -1,26 +1,9 @@
-import { readFileSync } from 'node:fs';
-import type { InquiryForm, PricingInputs } from '@fionas/shared';
-
-/*
- * Test double for the fionas-commerce HTTP API, installed as `fetch`. It keeps the contract the
- * public app relies on: SERVICE authentication (POST /auth/service/token exchanges the test service
- * credential for an opaque access token; the three public endpoints answer 401 without an issued
- * one, 403 when the service lacks the permission), and POST /inquiries idempotency (same key + same
- * body replays the original 201 receipt, same key + different body is IDEMPOTENCY_KEY_REUSED, an
- * old catalog revision is CATALOG_REVISION_STALE, a pick the current form doesn't offer or lists as
- * UNAVAILABLE is 422 UNKNOWN_OFFERING / OFFERING_UNAVAILABLE, failures consume nothing). Test-only:
- * the values below are not, and must never become, deployment credentials.
- */
+/** Test-only SERVICE auth and immutable priced-command idempotency double.
+ * Synthetic credentials below never belong in deployed configuration. */
 
 export const TEST_SERVICE_ID = '00000000-0000-4000-8000-0000000000aa';
 export const TEST_SERVICE_CREDENTIAL = 'test-only-service-credential-not-a-secret';
 export const TEST_BASE_URL = 'http://commerce.internal.test';
-
-/** Representative version 11 form with a test catalog (also served by the e2e stub). */
-export const formFixture = (): InquiryForm =>
-	JSON.parse(
-		readFileSync(new URL('../../../../e2e/fixtures/inquiry-form.json', import.meta.url), 'utf8')
-	) as InquiryForm;
 
 export type RecordedCall = {
 	method: string;
@@ -48,16 +31,12 @@ const json = (status: number, body: unknown) =>
 		headers: { 'content-type': 'application/json' }
 	});
 
-/**
- * The permission each endpoint the site calls requires. Role fionas.web also grants
- * fionas.estimate-preview.create, which the site no longer uses.
- */
+/** The one public SERVICE permission. */
 const PERMISSIONS: Record<string, string> = {
-	'GET /inquiry-form': 'fionas.inquiry-form.read',
 	'POST /inquiries': 'fionas.inquiries.create'
 };
 
-export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
+export function fakeCommerce() {
 	/** Calls to the protected API (token exchanges are in `exchanges`). */
 	const calls: RecordedCall[] = [];
 	/** Every POST /auth/service/token, and whether the credential was accepted. */
@@ -72,7 +51,6 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		{ fingerprint: string; receipt: { id: string; createdAt: string } }
 	>();
 	const scripted: Scripted[] = [];
-	let form = initialForm;
 	let sequence = 0;
 	let tokenLifetimeSeconds = 900;
 
@@ -104,21 +82,6 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		});
 	}
 
-	/** The backend's structural check of selections against the current catalog. */
-	function offeringViolation(pricing: PricingInputs): string | null {
-		const options = form.sections
-			.flatMap((s) => s.fields)
-			.flatMap((f) => (f.input.type === 'OFFERING_CHOICE' ? f.input.options : []));
-		for (const { category, offerings } of pricing.selections) {
-			for (const key of offerings) {
-				const option = options.find((o) => o.category === category && o.key === key);
-				if (!option) return 'UNKNOWN_OFFERING';
-				if (option.availability !== 'AVAILABLE') return 'OFFERING_UNAVAILABLE';
-			}
-		}
-		return null;
-	}
-
 	function createInquiry(headers: Record<string, string>, body: unknown): Response | 'drop' {
 		const key = headers['idempotency-key'];
 		if (!key || !/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
@@ -140,14 +103,11 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		}
 		if (next) return json(next.status, next.body ?? {});
 
-		const pricing = (body as { pricingInputs?: PricingInputs } | undefined)?.pricingInputs;
-		// Definition version 7: every inquiry is configured service. No pricingInputs, no inquiry.
-		if (typeof pricing !== 'object' || pricing === null) {
-			return json(400, {
-				code: 'malformed_request',
-				message: 'Malformed request: body (diagnostic)'
-			});
-		}
+		if (
+			!(body as { requestedService?: unknown })?.requestedService ||
+			!Array.isArray((body as { lines?: unknown })?.lines)
+		)
+			return json(400, { code: 'malformed_request' });
 
 		const fingerprint = JSON.stringify(body);
 		const prior = committed.get(key);
@@ -159,20 +119,6 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 				});
 			}
 			return json(201, prior.receipt);
-		}
-		if (pricing.catalogRevision !== form.catalogRevision) {
-			return json(409, {
-				code: 'CATALOG_REVISION_STALE',
-				message: `Catalog revision r${pricing.catalogRevision} is stale (diagnostic)`
-			});
-		}
-		const violation = offeringViolation(pricing);
-		if (violation) {
-			return json(422, {
-				code: 'validation_failed',
-				message: `${violation} (diagnostic)`,
-				violations: [{ code: violation }]
-			});
 		}
 		return json(201, commit(key, body));
 	}
@@ -197,7 +143,6 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 				message: 'The authenticated principal is not permitted to perform this request'
 			});
 		}
-		if (method === 'GET' && url.pathname === '/inquiry-form') return json(200, form);
 		if (method === 'POST' && url.pathname === '/inquiries') {
 			const result = createInquiry(headers, body);
 			if (result === 'drop') throw new DOMException('The operation timed out.', 'TimeoutError');
@@ -221,8 +166,6 @@ export function fakeCommerce(initialForm: InquiryForm = formFixture()) {
 		setTokenLifetime: (seconds: number) => (tokenLifetimeSeconds = seconds),
 		/** Queue one-off answers for the next POST /inquiries calls. */
 		script: (...next: Scripted[]) => scripted.push(...next),
-		/** Publish a new catalog: later GET /inquiry-form calls see it, older revisions go stale. */
-		publish: (next: InquiryForm) => (form = next),
 		posts: () => calls.filter((c) => c.method === 'POST' && c.path === '/inquiries')
 	};
 }

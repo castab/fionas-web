@@ -25,3 +25,7 @@
 docs
 **/e2e
 **/playwright.config.ts
+
+# Never copy a private price book into a build context
+**/prices*.yaml
+**/prices*.yml

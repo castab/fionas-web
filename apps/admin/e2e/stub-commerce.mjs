@@ -5,7 +5,6 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
 import { requestFixtures, proposalPair, appendPayment, fixtureMinor } from './request-fixture.mjs';
-import { catalogRevision, inquiryForm, offeringCatalog } from './catalog-fixture.mjs';
 import { issueComposedQuote, previewQuote } from './quote-stub.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
@@ -24,6 +23,7 @@ const user = {
 		'commerce.financial-document.read',
 		'commerce.financial-document.create',
 		'commerce.deposit-requirement.manage',
+		'fionas.financial-terms.manage',
 		'commerce.payment.record'
 	]
 };
@@ -118,7 +118,6 @@ createServer(async (req, res) => {
 			requestReads: 0,
 			proposalAttempts: [],
 			previewAttempts: [],
-			catalogRevision,
 			quoteEpoch: 0,
 			paymentAttempts: [],
 			fulfillmentAttempts: [],
@@ -205,7 +204,6 @@ createServer(async (req, res) => {
 			currentSession.mode = body?.mode ?? user.username;
 			if (body?.permissions) currentSession.permissions = body.permissions;
 			if (body?.request) currentSession.requests[body.request.inquiry.id] = body.request;
-			if (body?.catalogRevision) currentSession.catalogRevision = body.catalogRevision;
 			return send(res, 204);
 		}
 	}
@@ -236,18 +234,6 @@ createServer(async (req, res) => {
 		return send(res, 200, projection, { 'cache-control': 'no-store' });
 	}
 
-	if (req.method === 'GET' && (pathname === '/offering-catalog' || pathname === '/inquiry-form')) {
-		if (!currentSession) return send(res, 401);
-		if (currentSession.mode === 'catalog-unavailable')
-			return send(res, 500, { code: 'internal_failure', message: 'PRIVATE catalog diagnostic' });
-		const revision = currentSession.catalogRevision;
-		return send(
-			res,
-			200,
-			pathname === '/inquiry-form' ? inquiryForm(revision) : offeringCatalog(revision)
-		);
-	}
-
 	const previewMatch = /^\/staff\/requests\/([^/]+)\/quote-preview$/.exec(pathname);
 	if (req.method === 'POST' && previewMatch) {
 		if (!currentSession) return send(res, 401);
@@ -256,7 +242,8 @@ createServer(async (req, res) => {
 		if (
 			req.headers.origin !== trustedOrigin ||
 			!currentSession.permissions.includes('commerce.financial-document.create') ||
-			!currentSession.permissions.includes('commerce.deposit-requirement.manage')
+			!currentSession.permissions.includes('commerce.deposit-requirement.manage') ||
+			!currentSession.permissions.includes('fionas.financial-terms.manage')
 		)
 			return send(res, 403, {
 				code: 'forbidden',
@@ -279,6 +266,7 @@ createServer(async (req, res) => {
 			req.headers.origin !== trustedOrigin ||
 			!currentSession.permissions.includes('commerce.financial-document.create') ||
 			!currentSession.permissions.includes('commerce.deposit-requirement.manage') ||
+			!currentSession.permissions.includes('fionas.financial-terms.manage') ||
 			currentSession.mode === 'proposal-forbidden'
 		) {
 			return send(res, 403, { code: 'forbidden', message: 'PRIVATE quote permission diagnostic' });
@@ -299,9 +287,13 @@ createServer(async (req, res) => {
 				message: 'PRIVATE stale ledger diagnostic'
 			});
 		}
-		if (body && ('composition' in body || 'reviewToken' in body)) {
+		if (body && ('lines' in body || 'reviewToken' in body)) {
 			if (
-				Object.keys(body).sort().join() !== 'composition,expectedDocumentVersion,reviewToken,terms'
+				Object.keys(body).some(
+					(k) =>
+						!['expectedDocumentVersion', 'lines', 'reviewToken', 'servicePlan', 'terms'].includes(k)
+				) ||
+				!['expectedDocumentVersion', 'lines', 'reviewToken', 'terms'].every((k) => k in body)
 			)
 				return send(res, 400, {
 					code: 'malformed_request',

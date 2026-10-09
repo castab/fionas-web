@@ -241,9 +241,7 @@
 		{#if showBuilder}
 			<QuoteBuilder
 				{request}
-				choices={data.builderChoices}
 				result={builderResult ?? data.initialQuote}
-				{route}
 				blocked={mutationReviewRequired}
 				bind:pending={mutationPending}
 				onReviewRequired={() => {

@@ -2,6 +2,7 @@ import type { CurrentStaffRequest } from './request-contract.js';
 import { isDecimal } from './payment-history.js';
 import { isCurrentStaffRequest } from './request-workspace.js';
 import { BUSINESS_TIME_ZONE } from './presentation.js';
+import { CENT_DIGITS, isSupportedCurrency } from './currency.js';
 
 export const PAYMENT_PERMISSION = 'commerce.payment.record';
 export const manualPaymentMethods = ['CASH', 'CHECK', 'OTHER'] as const;
@@ -27,15 +28,13 @@ export function receivedTimeLabel(instant: string): string {
 		timeZone: BUSINESS_TIME_ZONE
 	}).format(new Date(instant));
 }
-/** Exact minor units for validation/comparison only, never settlement or pricing. */
+/** Exact USD cents for validation/comparison only, never settlement or pricing. Any other
+ * currency, or a fraction of a cent, is refused. */
 export function moneyMinorUnits(value: string, currency: string): bigint | null {
-	if (!isDecimal(value) || !/^[A-Z]{3}$/.test(currency)) return null;
-	const digits =
-		new Intl.NumberFormat('en-US', { style: 'currency', currency }).resolvedOptions()
-			.maximumFractionDigits ?? 2;
+	if (!isDecimal(value) || !isSupportedCurrency(currency)) return null;
 	const [whole, fraction = ''] = value.split('.');
-	if (fraction.length > digits) return null;
-	return BigInt(whole + fraction.padEnd(digits, '0'));
+	if (fraction.length > CENT_DIGITS) return null;
+	return BigInt(whole + fraction.padEnd(CENT_DIGITS, '0'));
 }
 export function invoiceAmountValid(amount: string, balance: string, currency: string): boolean {
 	const value = moneyMinorUnits(amount, currency);

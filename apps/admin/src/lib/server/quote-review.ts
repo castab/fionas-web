@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DepositTermsRequest } from '../request-contract.js';
-import type { QuoteCompositionRequest } from '../quote-contract.js';
+import type { QuoteCommand } from '../quote-contract.js';
 
 /**
  * Identity of the exact command staff previewed. Issuing re-derives the command from the posted
@@ -10,7 +10,7 @@ import type { QuoteCompositionRequest } from '../quote-contract.js';
  */
 export function reviewFingerprint(
 	expectedDocumentVersion: number,
-	composition: QuoteCompositionRequest,
+	command: QuoteCommand,
 	terms: DepositTermsRequest
 ): string {
 	const canonicalTerms =
@@ -18,6 +18,6 @@ export function reviewFingerprint(
 			? { type: terms.type, percentage: terms.percentage }
 			: { type: terms.type, amount: terms.amount, currency: terms.currency };
 	return createHash('sha256')
-		.update(JSON.stringify({ expectedDocumentVersion, composition, terms: canonicalTerms }))
+		.update(JSON.stringify({ expectedDocumentVersion, command, terms: canonicalTerms }))
 		.digest('hex');
 }

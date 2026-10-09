@@ -30,3 +30,8 @@ __screenshots__
 test-results
 playwright-report
 blob-report
+
+# Private business price books
+prices*.yaml
+prices*.yml
+!**/e2e/fixtures/prices.synthetic.yaml

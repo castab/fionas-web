@@ -3,8 +3,6 @@ import {
 	getStaffRequest,
 	issueInquiryProposal,
 	previewInquiryQuote,
-	getOfferingCatalog,
-	getInquiryForm,
 	markInquiryServed,
 	closeInquiry
 } from './staff-request.js';
@@ -98,12 +96,12 @@ describe('staff request clients', () => {
 			1,
 			{ type: 'PERCENTAGE', percentage: '20' },
 			'session=staff',
-			{ composition: { pricing: { mode: 'KEEP_ESTIMATE' } }, reviewToken: 'a'.repeat(64) }
+			{ lines: [], reviewToken: 'a'.repeat(64) }
 		);
 		expect(sent(fetch)).toEqual({
 			expectedDocumentVersion: 1,
 			terms: { type: 'PERCENTAGE', percentage: '20' },
-			composition: { pricing: { mode: 'KEEP_ESTIMATE' } },
+			lines: [],
 			reviewToken: 'a'.repeat(64)
 		});
 	});
@@ -111,19 +109,14 @@ describe('staff request clients', () => {
 		const fetch = recording();
 		const body = {
 			expectedDocumentVersion: 1,
-			composition: { pricing: { mode: 'KEEP_ESTIMATE' as const } },
+			lines: [],
 			terms: { type: 'PERCENTAGE' as const, percentage: '20' }
 		};
 		await previewInquiryQuote(config(fetch), 'inquiry/identity', body, 'session=staff');
-		await getOfferingCatalog(config(fetch), 'session=staff');
-		await getInquiryForm(config(fetch), 'session=staff');
 		expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
-			['http://api.test/staff/requests/inquiry%2Fidentity/quote-preview', 'POST'],
-			['http://api.test/offering-catalog', 'GET'],
-			['http://api.test/inquiry-form', 'GET']
+			['http://api.test/staff/requests/inquiry%2Fidentity/quote-preview', 'POST']
 		]);
 		expect(sent(fetch)).toEqual(body);
-		expect(fetch.mock.calls[1][1]?.headers).toMatchObject({ cookie: 'session=staff' });
 	});
 	it('makes one coherent request read, forwarding the USER cookie and returned cookies', async () => {
 		const fetch = vi.fn(

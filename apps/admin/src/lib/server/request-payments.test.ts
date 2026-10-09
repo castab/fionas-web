@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { actions } from './+page.server.js';
+import { actions } from '../../routes/(app)/requests/[inquiryId]/+page.server.js';
 import { getStaffRequest, recordPayment } from '$lib/server/staff-request.js';
 import { applySetCookies } from '$lib/server/auth.js';
 import { PAYMENT_PERMISSION } from '$lib/payments.js';
@@ -8,7 +8,7 @@ import {
 	mayaId,
 	mayaDocumentId,
 	paymentFixture
-} from '../../../../../e2e/request-fixture.mjs';
+} from '../../../e2e/request-fixture.mjs';
 
 vi.mock('$lib/server/staff-request.js', () => ({
 	markInquiryServed: vi.fn(),

@@ -14,7 +14,8 @@ import {
 const keptEstimate = (terms: unknown) => ({
 	expectedDocumentVersion: 1,
 	terms,
-	composition: { pricing: { mode: 'KEEP_ESTIMATE' } },
+	lines: expect.any(Array),
+	servicePlan: expect.any(Object),
 	reviewToken: expect.stringMatching(/^[0-9a-f]{64}$/)
 });
 
@@ -52,21 +53,15 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page.getByTestId('event-card')).toContainText('Saturday, July 25');
 	await expect(page.getByTestId('event-card')).toContainText('Birthday party');
 	await expect(page.getByTestId('event-card')).toContainText('40 guests');
-	await expect(page.getByTestId('event-card')).toContainText('90 minutes');
+	await expect(page.getByTestId('event-card')).not.toContainText(/minutes|hours|scooping/i);
 	await expect(page.getByTestId('event-card')).toContainText('93720');
 	await expect(page.getByText('Collected when booking', { exact: true })).toHaveCount(2);
 	await expect(page.getByTestId('original-request')).toContainText('My daughter loves strawberry!');
-	await expect(page.getByText('Recorded selection identifiers', { exact: false })).toBeHidden();
-	await page.getByText('Original selection details', { exact: true }).click();
-	await expect(page.getByText('Recorded selection identifiers', { exact: false })).toBeVisible();
-	await expect(
-		page.getByTestId('original-request').getByText('hand-scooped-chocolate-chip', { exact: true })
-	).toBeVisible();
-	await page.getByText('Original selection details', { exact: true }).click();
+	await expect(page.getByTestId('original-request')).toContainText('Vanilla');
 	const financial = page.getByTestId('financial-document');
 	await expect(financial).toContainText('Current estimate · Version 1 · USD');
 	await expect(financial.getByRole('listitem')).toHaveText([
-		/Base service.*\$205.*90 minutes.*Flat charge/s,
+		/Base service.*\$205.*Setup, staff & local travel.*Flat charge/s,
 		/Ice cream service.*\$180.*40 × \$4.50/s,
 		/Waffle cone upgrade.*\$30.*40 × \$0.75/s
 	]);
@@ -280,7 +275,7 @@ test('long user text remains escaped and wraps; minimum guests and absent messag
 	const request = requestFixtures()[mayaId];
 	request.inquiry.email = `${'long'.repeat(45)}@example.com`;
 	request.inquiry.message = `<script>window.BAD=true</script>\n${'long-note'.repeat(100)}`;
-	request.inquiry.pricingInputs.guestCountIsMinimum = true;
+	request.inquiry.requestedService.guestCountIsMinimum = true;
 	await session(context, { request });
 	await page.goto(route);
 	await expect(page.getByTestId('original-request')).toContainText(

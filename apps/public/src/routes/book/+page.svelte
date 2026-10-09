@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { onMount, tick, untrack } from 'svelte';
-	import { Button, Card, capsXs, cn, hintText } from '@fionas/ui';
+	import { Button, Card, capsSm, capsXs, cn, hintText } from '@fionas/ui';
 	import {
 		emptyAnswers,
 		instagramUrl,
@@ -10,12 +10,12 @@
 		prepareInquiry,
 		site,
 		validateAnswers,
-		type CreateInquiryRequest,
 		type FieldErrors,
 		type InquiryForm,
 		type InquiryFormField,
 		type InquiryAnswers
 	} from '@fionas/shared';
+	import { missingSummary, swirlNote } from '$lib/booking-copy.js';
 	import EstimatePanel from '$lib/components/estimate-panel.svelte';
 	import InquiryField from '$lib/components/inquiry-field.svelte';
 	import type { SubmissionFailure, SubmissionOutcome } from '$lib/inquiry-submission.js';
@@ -28,7 +28,7 @@
 	 * - `editing`: answering (also after a local validation failure)
 	 * - `submitting`: a delivery is in flight
 	 * - `ambiguous`: the last delivery may or may not have been recorded; answers are frozen
-	 * - `review`: the catalog changed; the refreshed form must be reviewed before sending
+	 * - `review`: the prices changed; the refreshed form must be reviewed before sending
 	 * - `failed`: a definite failure; fix or wait, then send again
 	 */
 	type Phase = 'editing' | 'submitting' | 'ambiguous' | 'review' | 'failed';
@@ -61,16 +61,16 @@
 			errors: failed?.errors ?? {},
 			formError: failed?.formError ?? null,
 			submissionToken: failed?.submissionToken ?? data.submissionToken,
-			catalogRevision: failed?.catalogRevision ?? inquiryForm?.catalogRevision ?? 0,
+			priceRevision: failed?.priceRevision ?? inquiryForm?.priceRevision ?? '',
 			restartToken: failed?.restartToken ?? null,
-			replay: failed?.replay?.request ?? null,
+			replay: failed?.replay?.envelope ?? null,
 			outcome: failed?.outcome ?? null,
 			review: reviewOf(failed),
 			phase: phaseOf(failed)
 		};
 	});
 
-	/** The form being answered: the loaded one, or the refreshed one after a catalog change. */
+	/** The form being answered: the loaded one, or the refreshed one after a price revision change. */
 	let inquiryForm = $state.raw<InquiryForm | null>(initial.inquiryForm);
 	let answers = $state<InquiryAnswers | null>(initial.answers);
 	let errors = $state<FieldErrors>(initial.errors);
@@ -81,21 +81,21 @@
 
 	/*
 	 * The logical submission. Its token reaches the backend as `Idempotency-Key` and stays the same
-	 * across double clicks and retries; only a reviewed catalog refresh or a deliberate restart (a new
-	 * submission) replaces it. The revision pins the answers to the catalog they were given against.
+	 * across double clicks and retries; only a reviewed price refresh or a deliberate restart (a new
+	 * submission) replaces it. The revision pins the answers to the prices they were shown.
 	 */
 	let submissionToken = $state(initial.submissionToken);
-	let catalogRevision = $state(initial.catalogRevision);
+	let priceRevision = $state(initial.priceRevision);
 	/** After IDEMPOTENCY_KEY_REUSED or an unknown outcome: the key for a deliberate new submission. */
 	let restartToken = $state<string | null>(initial.restartToken);
-	/** After a catalog change: what the customer must look at again. */
+	/** After a price revision change: what the customer must look at again. */
 	let review = $state<Review | null>(initial.review);
 	/**
 	 * After an unknown outcome: the exact request that was delivered under `submissionToken`. "Try
 	 * sending again" posts it back and the server resends it unchanged, never a request rebuilt from
 	 * the answers. Dropped the moment the customer starts a new submission.
 	 */
-	let replay = $state.raw<CreateInquiryRequest | null>(initial.replay);
+	let replay = $state.raw<string | null>(initial.replay);
 	/** The customer chose to change answers after an unknown outcome: this is a new submission. */
 	let restarted = $state(false);
 	/** The last delivery's outcome is unknown: answers stay frozen until a retry settles it. */
@@ -111,6 +111,14 @@
 	 * may already have been recorded, under the same key.
 	 */
 	const frozen = $derived(outcomeUnknown);
+	/** The design's "Please add: …" line under the send button, once a send was attempted. */
+	const missing = $derived(
+		attempted && inquiryForm && !frozen ? missingSummary(inquiryForm, errors) : null
+	);
+	const picksOf = (key: string): string[] => {
+		const value = answers?.values[key];
+		return Array.isArray(value) ? value : [];
+	};
 
 	// Once the visitor has tried to submit, keep the messages in step with their edits.
 	$effect(() => {
@@ -123,9 +131,9 @@
 		if (failed?.refreshedForm) inquiryForm = failed.refreshedForm;
 		if (failed?.answers) answers = failed.answers;
 		if (failed?.submissionToken) submissionToken = failed.submissionToken;
-		if (failed?.catalogRevision) catalogRevision = failed.catalogRevision;
+		if (failed?.priceRevision) priceRevision = failed.priceRevision;
 		restartToken = failed?.restartToken ?? null;
-		replay = failed?.replay?.request ?? null;
+		replay = failed?.replay?.envelope ?? null;
 		outcome = failed?.outcome ?? null;
 		review = reviewOf(failed);
 		phase = phaseOf(failed);
@@ -152,6 +160,7 @@
 	const isCompact = (field: InquiryFormField) =>
 		field.presentation.control === 'TEXT' ||
 		field.presentation.control === 'DATE' ||
+		field.presentation.control === 'NUMBER' ||
 		(field.input.type === 'STRING_CHOICE' && field.presentation.control !== 'CHIPS');
 
 	const listOf = (names: string[]) =>
@@ -170,14 +179,14 @@
 
 	async function focusReview() {
 		await tick();
-		const notice = document.getElementById('catalog-review');
+		const notice = document.getElementById('price-review');
 		notice?.focus();
 		notice?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 	}
 </script>
 
 <svelte:head>
-	<title>Request the trailer · {site.name}</title>
+	<title>Bring fionas to your event · {site.name}</title>
 	<meta name="description" content="Tell us about your event and build your ice cream service." />
 </svelte:head>
 
@@ -192,6 +201,17 @@
 			<p class="m-0 text-(--text-body)">
 				Please try again in a little while, or reach us directly and we'll get you sorted.
 			</p>
+			{#if frozen && replay}
+				<form method="POST" class="flex flex-col gap-3">
+					<p role="alert" class="m-0 text-sm">{formError}</p>
+					<p class={hintText}>You can retry your original request with the same reviewed prices.</p>
+					<input type="hidden" name="submissionToken" value={submissionToken} />
+					<input type="hidden" name="priceRevision" value={priceRevision} />
+					<input type="hidden" name="outcomeUnknown" value="true" />
+					<input type="hidden" name="replayRequest" value={replay} />
+					<Button type="submit">Try sending again</Button>
+				</form>
+			{/if}
 			<div class="flex flex-wrap gap-3">
 				<Button href={mailtoUrl}>Email us</Button>
 				<Button href={instagramUrl} target="_blank" rel="noopener noreferrer" variant="secondary">
@@ -200,16 +220,15 @@
 			</div>
 		</Card>
 	{:else}
-		<div class="mb-8 flex flex-col gap-3">
+		<div class="mb-7 flex flex-col gap-2.5">
 			<h1
 				class="m-0 font-sans text-[34px] leading-[1.15] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]"
 			>
-				Request the trailer
+				bring fionas to your event
 			</h1>
 			<p class="m-0 text-(--text-body) [font:var(--type-body)]">
-				Tell us about your event, build your ice cream service, and check your estimate at the
-				bottom — we'll review your request and follow up with a firm quote. Sending a request
-				doesn't book anything or charge you.
+				Pick your flavors, tell us about your event, and check your estimate at the bottom. We'll
+				follow up with a firm quote.
 			</p>
 		</div>
 
@@ -234,7 +253,7 @@
 				const command =
 					outcomeUnknown && replay
 						? ({ ok: true } as const)
-						: prepareInquiry(inquiryForm!, answers!, { catalogRevision });
+						: prepareInquiry(inquiryForm!, answers!, { priceRevision });
 				if (!command.ok) {
 					cancel();
 					if (command.reason === 'invalid') {
@@ -267,11 +286,11 @@
 			}}
 		>
 			<input type="hidden" name="submissionToken" value={submissionToken} />
-			<input type="hidden" name="catalogRevision" value={catalogRevision} />
+			<input type="hidden" name="priceRevision" value={priceRevision} />
 			{#if frozen}
 				<input type="hidden" name="outcomeUnknown" value="true" />
 				{#if replay}
-					<input type="hidden" name="replayRequest" value={JSON.stringify(replay)} />
+					<input type="hidden" name="replayRequest" value={replay} />
 				{/if}
 			{/if}
 
@@ -281,7 +300,7 @@
 
 			{#if review !== null}
 				<Card
-					id="catalog-review"
+					id="price-review"
 					tabindex={-1}
 					role="alert"
 					variant="flat"
@@ -325,16 +344,13 @@
 			>
 				{#each currentForm.sections as section (section.key)}
 					<!-- Only a section that may be left blank says so: the service section never can. -->
-					<section class="flex flex-col gap-3.5" aria-labelledby="section-{section.key}">
-						<div class="flex flex-col gap-1">
+					<section class="flex flex-col gap-4" aria-labelledby="section-{section.key}">
+						<div class={cn('flex flex-col gap-1', section.hideTitle && 'sr-only')}>
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-								<h2
-									id="section-{section.key}"
-									class={cn(capsXs, 'm-0 text-[14px] font-bold text-(--text-heading)')}
-								>
+								<h2 id="section-{section.key}" class={cn(capsSm, 'm-0 text-(--text-heading)')}>
 									{section.title}
 								</h2>
-								{#if isSkippable(section)}
+								{#if isSkippable(section) && !section.hideTitle}
 									<span
 										class={cn(
 											capsXs,
@@ -352,13 +368,14 @@
 							{/if}
 						</div>
 
-						<div class="grid gap-x-4 gap-y-4 sm:grid-cols-2">
+						<div class="grid gap-x-3.5 gap-y-4 sm:grid-cols-2">
 							{#each section.fields as field (field.key)}
 								<InquiryField
 									{field}
 									bind:values={answers.values}
 									error={errors[field.key]}
 									preview={currentForm.pricingPreview}
+									note={swirlNote(field, picksOf(field.key))}
 									class={isCompact(field) ? undefined : 'sm:col-span-2'}
 								/>
 							{/each}
@@ -419,15 +436,17 @@
 				</p>
 			{/if}
 
-			<div class="flex flex-wrap items-center justify-between gap-4">
-				<p class={cn(hintText, 'm-0 max-w-[340px]')}>
-					We'll only use your details to reply to this request.
-				</p>
+			<div class="flex flex-col items-start gap-2.5">
 				<!-- Frozen without the delivered request, nothing can safely be resent under this key. -->
 				{#if !frozen || replay}
 					<Button type="submit" size="lg" disabled={submitting}>
-						{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send request'}
+						{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send booking request'}
 					</Button>
+				{/if}
+				{#if missing}
+					<p role="alert" class="m-0 font-sans text-[12.5px] leading-snug text-rust-600">
+						{missing}
+					</p>
 				{/if}
 			</div>
 		</form>

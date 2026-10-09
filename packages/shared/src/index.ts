@@ -3,10 +3,8 @@ export { bookingLaunchLabel, comingSoonToast } from './booking.ts';
 export { computeAdvisoryEstimate } from './estimate.ts';
 export {
 	answersFromFormData,
-	CATALOG_STATE_VIOLATIONS,
-	completePricingInputs,
-	describeViolation,
-	draftPricingInputs,
+	completeServiceInputs,
+	draftServiceInputs,
 	EXPECTED_DEFINITION_VERSION,
 	emptyAnswers,
 	formatMoney,
@@ -26,7 +24,6 @@ export {
 	type ChoiceMetadata,
 	type ApiError,
 	type CreateInquiryRequest,
-	type DurationPricing,
 	type EstimateLine,
 	type EstimatePreview,
 	type FieldErrors,
@@ -41,5 +38,7 @@ export {
 	type InquiryPricingPreview,
 	type OfferingOption,
 	type OfferingPrice,
-	type PricingInputs
+	type ServiceInputs
 } from './inquiry.ts';
+
+export type { InquiryIntent, PricedLine, RequestedService } from './inquiry.ts';

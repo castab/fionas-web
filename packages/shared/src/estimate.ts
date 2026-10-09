@@ -1,5 +1,5 @@
 import {
-	draftPricingInputs,
+	draftServiceInputs,
 	isSelectable,
 	type EstimateLine,
 	type EstimatePreview,
@@ -8,21 +8,18 @@ import {
 	type OfferingOption
 } from './inquiry.ts';
 
-/*
- * Advisory estimate computed in the browser from GET /inquiry-form's `pricingPreview`: the only
- * estimate the page shows. It follows the server's documented arithmetic but is display only, never
- * submitted or compared: POST /inquiries prices the submitted selections independently. Line
- * wording comes from `pricingPreview` when the backend supplies it, otherwise from the defaults here.
- */
+/** Exact pricing from the public projection. The browser uses it for advisory display;
+ * the server uses its own projection from the validated private snapshot for submission. */
 
 // Amounts are exact decimals in strings; do the sums in scaled integers so nothing drifts.
-const SCALE = 6;
+const SCALE = 18;
 const ONE = 10n ** BigInt(SCALE);
 
 function toUnits(amount: string): bigint {
+	if (!/^-?[0-9]{1,9}(\.[0-9]{1,12})?$/.test(amount)) throw new Error('Invalid exact price');
 	const negative = amount.startsWith('-');
 	const [whole = '0', fraction = ''] = amount.replace(/^[-+]/, '').split('.');
-	const scaled = BigInt(whole || '0') * ONE + BigInt(fraction.padEnd(SCALE, '0').slice(0, SCALE));
+	const scaled = BigInt(whole || '0') * ONE + BigInt(fraction.padEnd(SCALE, '0'));
 	return negative ? -scaled : scaled;
 }
 
@@ -43,6 +40,7 @@ function line(
 	subDescription?: string
 ): { line: EstimateLine; subtotal: bigint } {
 	const subtotal = quantity === null ? unit : unit * BigInt(quantity);
+	if (subtotal % 10n ** 16n !== 0n) throw new Error('Price does not settle in USD cents');
 	return {
 		subtotal,
 		line: {
@@ -73,27 +71,12 @@ function findOffering(
 	return undefined;
 }
 
-/** Backend-supplied wording, or undefined when it is absent, null or blank. */
+/** Code-owned wording, or undefined when it is absent, null or blank. */
 const text = (value: string | null | undefined): string | undefined => value?.trim() || undefined;
 
-/** The duration question's own label for this choice (e.g. "1½ hours"), as the chips show it. */
-function durationLabel(form: InquiryForm, minutes: number): string | undefined {
-	for (const section of form.sections) {
-		for (const field of section.fields) {
-			if (
-				field.submissionPointer === '/pricingInputs/durationMinutes' &&
-				field.input.type === 'INTEGER_CHOICE'
-			) {
-				return text(field.input.options.find((o) => o.value === minutes)?.label);
-			}
-		}
-	}
-	return undefined;
-}
-
 /**
- * The advisory estimate for the current answers, or null until guest count and service length are
- * known. Offerings not yet chosen simply contribute nothing, giving an "estimate so far".
+ * The advisory estimate for the current answers, or null until the guest count is known. Offerings
+ * not yet chosen simply contribute nothing, giving an "estimate so far".
  */
 export function computeAdvisoryEstimate(
 	form: InquiryForm,
@@ -101,13 +84,8 @@ export function computeAdvisoryEstimate(
 ): EstimatePreview | null {
 	const preview = form.pricingPreview;
 	if (!preview) return null;
-	const inputs = draftPricingInputs(form, answers);
+	const inputs = draftServiceInputs(form, answers);
 	if (!inputs) return null;
-
-	const duration = preview.durationOptions.find(
-		(d) => d.durationMinutes === inputs.durationMinutes
-	);
-	if (!duration) return null;
 
 	const { currency } = preview;
 	const guests = inputs.guestCount;
@@ -115,11 +93,9 @@ export function computeAdvisoryEstimate(
 		line(
 			currency,
 			text(preview.baseServiceDescription) ?? 'Base service',
-			toUnits(duration.baseServiceAmount),
+			toUnits(preview.baseServiceAmount),
 			null,
-			text(duration.baseServiceSubDescription) ??
-				durationLabel(form, duration.durationMinutes) ??
-				`${duration.durationMinutes} minutes`
+			text(preview.baseServiceSubDescription)
 		),
 		line(
 			currency,
@@ -144,11 +120,6 @@ export function computeAdvisoryEstimate(
 				case 'PER_QUANTITY':
 					lines.push(line(currency, option.displayName, toUnits(price.amount), guests, sub));
 					break;
-				case 'PER_DURATION': {
-					const flat = duration.offeringContributions.find((c) => c.offeringKey === key);
-					if (flat) lines.push(line(currency, option.displayName, toUnits(flat.amount), null, sub));
-					break;
-				}
 			}
 		}
 	}
@@ -176,7 +147,7 @@ export function computeAdvisoryEstimate(
 
 	const total = lines.reduce((sum, l) => sum + l.subtotal, 0n);
 	return {
-		catalogRevision: inputs.catalogRevision,
+		priceRevision: inputs.priceRevision,
 		guestCountIsMinimum: inputs.guestCountIsMinimum === true,
 		lines: lines.map((l) => l.line),
 		subtotal: fromUnits(total),

@@ -14,7 +14,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                                     |
 | Site details, coming-soon copy           | `packages/shared/src/`                                                                            |
 | Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                                  |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                                         |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/menu.ts` (copy + rules); design: `Booking.dc.html`   |
 | Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                          |
 | Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"                  |
 | Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`                 |
@@ -41,77 +41,18 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   Don't combine a `[font:…]` shorthand with `text-[size]` on the same element — use discrete utilities.
 - Components in `packages/ui` use relative imports (no `$lib`) because apps consume the raw source.
   New classes there are picked up via the `@source` line in each app's `layout.css`.
-- Booking is gated. `/book` is an inquiry form rendered from the commerce API's `GET /inquiry-form`
-  (answers mapped back via each field's `submissionPointer`), with a browser-only estimate and
-  submit to `POST /inquiries`. It 404s unless `BOOKING_ENABLED=true` (`$lib/server/booking.ts`). While gated the Book CTAs use
-  `ComingSoonButton` (`aria-disabled`, raises the toast, never navigates); when enabled they link to `/book`. Playwright needs
-  `click({ force: true })` on the gated CTAs.
-- The commerce API sends no CORS headers: only server code (`apps/public/src/lib/server/commerce.ts`)
-  calls it (`COMMERCE_API_URL`, default `http://localhost:8080`), authenticated as **`SERVICE:fionas-web`**:
-  `$lib/server/service-auth.ts` exchanges `COMMERCE_SERVICE_ID` + `COMMERCE_SERVICE_CREDENTIAL` at
-  `POST /auth/service/token` for a short-lived access token (in memory only, refreshed early, one exchange at a time,
-  a 5 → 60 s cooldown after a failed exchange that still serves an unexpired, unrefused token),
-  sent as `Authorization: Bearer`. A `401` drops that token (only if still current) and repeats the identical request
-  once; a `403` is never retried. Both, and any token failure, are `service_auth` errors: logged for the operator,
-  "unavailable" (503) to visitors, never a form or selection error. There is no static key. Never log or expose the
-  credential or a token (not in page data, cookies, client code or `.env.example`), never decode tokens, and never give
-  the app the backend's signing key. The credentials are checked lazily, so the site runs without them while booking is
-  off. `apps/admin` uses USER sessions and never this SERVICE. `npm run provision:service` (`scripts/lib/provision.mjs`)
-  provisions or validates a dedicated service holding exactly `fionas.web` (exactly the three inquiry permissions); it
-  refuses duplicate, disabled or broader existing state and never rewrites the global role, removes roles or revokes
-  credentials, and it mints a credential only after re-checking that state. It writes `.env` owner-only (`0600`). E2E runs against the stub in
-  `apps/public/e2e/stub-commerce.mjs` (test-only service credential in `e2e/test-service.ts`).
-- **One `Idempotency-Key` names one immutable `CreateInquiryRequest`.** After an ambiguous delivery, preserve and
-  replay the exact canonical command (the failure's `replay`, posted back as `replayRequest` and checked by
-  `isCreateInquiryRequest`); never rebuild that key's request from a newer inquiry-form definition, and never send a
-  replay that fails the check. Only a definite answer (receipt, stale, refusal) ends it. Every `5xx` from
-  `POST /inquiries` (`500` included) leaves the outcome unknown (`isOutcomeUnknown`): same-key retry, then replay;
-  never an editable state under the same key.
-- **One `Idempotency-Key` per logical submission.** `/book`'s `load` mints the token; the form posts it
-  back (hidden `submissionToken`, with `catalogRevision`) and the action sends it unchanged. Never
-  generate a key per backend attempt. Retries keep it; only a reviewed catalog refresh
-  (`CATALOG_REVISION_STALE`, or a 422 naming unknown/disabled/unavailable offerings) or the customer's
-  explicit "Send as a new request" / "Change my answers" changes it. After an unknown outcome the
-  answers freeze (`inert`) so the retry is identical. Never auto-resubmit, and never send totals or
-  prices: the backend prices and creates the Estimate. See `docs/public-inquiry-submission.md`.
-- **No inquiry without configured service (definition version 11).** Every inquiry carries complete
-  `pricingInputs` (revision, guest count, duration, required selections); there is no plain/contact-only
-  path and no "just send a message" mode. Build the request only with `prepareInquiry`
-  (`@fionas/shared`), the submit gate used by both the page and the action. Section `optional` is
-  applied as sent; a definition incompatible with `POST /inquiries` (`pricingContractProblem`, e.g. an
-  optional section with `/pricingInputs/` questions) is rejected, never coerced: no form is offered and
-  nothing is sent. Success copy says "Request received", never booked, confirmed or reserved.
-- **Offering availability.** Disabled/retired offerings are absent from `/inquiry-form`; `ENABLED` +
-  `UNAVAILABLE` options stay visible but unselectable (faded, native `disabled`; no in-chip notice),
-  never hidden or described as removed. By convention the backend gives them a `badge` + `statusNote`
-  so tapping the chip explains why (not enforced in code). Never hardcode offering keys, names, prices or limits in UI code
-  (`src/catalog-hardcoding.test.ts`). The estimate is browser-only and display only (from `pricingPreview`,
-  exact decimals; line wording from `pricingPreview` when supplied): the site never calls
-  `POST /estimate-preview`, and `POST /inquiries` prices the submitted selections itself.
-- **Choice presentation (definition 11).** Honor explicit `CHIPS` for integer and string choices.
-  Offering limits, including hand-scooped selection counts, come from the form. `ChoiceChip`
-  shows `badge` inside the pill; with a `statusNote` the badge opens it in a dark popover above (a
-  status note without a badge is not shown). `infoNote` opens from an "i" button in a light popover
-  below. Both use `Popover` (`@fionas/ui`, shadcn-svelte/bits-ui; needs JavaScript) and sit outside
-  the input label. Offering metadata may be null. Notes never override availability or enter
-  submitted payloads.
+- Booking is gated with BOOKING_ENABLED=true. /book renders code-owned MENU_SECTIONS projected with private price values; disabled Book CTAs use ComingSoonButton. Success says Request received.
+- Only monetary amounts belong in private YAML, supplied by FIONAS_PRICES_FILE. Never commit production prices or load business rules from YAML. Missing/invalid prices or FIONAS_REPLAY_SECRET make booking unavailable; no sample fallback. The immutable process snapshot requires restart, and operators change its revision with every price/menu/rule change. See docs/public-inquiry-submission.md.
+- SERVICE:fionas-web holds exactly fionas.inquiries.create. Preserve lazy in-memory token exchange, refresh/backoff, one identical retry on 401 and none on 403. Never log/expose credentials, access tokens, price file paths or signing secrets. Provisioning refuses broader existing state instead of rewriting it.
+- A browser posts intent only. prepareInquiry validates complete required service; the server prices from its own private snapshot and sends requestedService plus PricedLine records to POST /inquiries. Never accept browser amounts or totals as authority. All arithmetic is exact, with no truncation or rounding.
+- One logical Idempotency-Key owns one immutable priced command. Unknown delivery freezes answers and replays a signed, key/digest/time-bound envelope unchanged, even after a price revision changes. Never forward raw browser replay JSON. Every 5xx is unknown. Initial stale priceRevision is rejected locally before delivery, requires review and a new key. Pages carrying keys are private/no-store.
+- Menu names, selection limits, the guest stepper (50 default, 1–300) and availability are code-owned. There is no service duration anywhere (no question, hourly price, requestedService or servicePlan duration). Keep unavailable chips visible, faded and natively disabled; badge/statusNote popovers and infoNote remain outside input labels. Honor CHIPS and Svelte 5 runes. Never call removed backend catalog/form/estimate APIs.
 - **Admin: every call to the commerce backend goes through the SvelteKit server.** The browser only talks
   to the admin origin; backend access lives in `apps/admin/src/lib/server/` (built on `backend.ts`'s
   `request()`) and is called from hooks, `load`, form actions and `+server.ts` only, never from `.svelte`
   or other client code. Session cookies are re-issued on the admin host. See `docs/admin-architecture.md`.
 - Light mode only. Motion 120–220ms ease-out, no bounces. Radii: pill / 16 / 10 / 6.
-- Admin **Issue quote** is the inline quote builder (`?quote`): staff compose intent only (pricing mode,
-  line overrides with a reason, CHARGE/DISCOUNT/CREDIT adjustments, deposit terms); Commerce prices it.
-  `?/previewQuote` calls the write-free `POST /staff/requests/{inquiryId}/quote-preview` from the posted
-  reviewed snapshot without re-reading the request (safe to repeat; a REVISE refused with
-  `SERVICE_SELECTIONS_CHANGE_PRICING` is previewed once more as REPRICE). `load` makes the opening preview.
-  Edits may be acknowledged instantly ("Updating…", typed amounts echoed), but never sum totals or
-  resolve deposits in the browser. `?/issueQuote` sends the exact previewed composition with its
-  `reviewToken` to `POST /staff/requests/{inquiryId}/proposals`, once: a command that no longer matches the
-  reviewed fingerprint, or `QUOTE_REVIEW_STALE`, previews again and needs a new click. Same reviewed version,
-  BOTH financial-document.create and deposit-requirement.manage. Picks, guests and durations come from
-  `GET /offering-catalog` and `GET /inquiry-form` only (never hardcoded). Success PRGs to the authoritative
-  GET; issuance does not imply delivery (no expiry, message or "Send" until delivery exists).
+- Admin Issue quote edits the complete ordered final line set: carry/override by lineItemId, remove/reorder, add bespoke signed lines with stable keys. Optional money-free servicePlan holds descriptions and line notes. Staff USER requires financial-document.create, deposit-requirement.manage and fionas.financial-terms.manage. Commerce derives totals/deposit; the browser never sums them. Preview and issuance carry identical lines/plan/terms/version and reviewToken; edits/staleness require explicit approval of a fresh preview. Issue once, PRG to the authoritative GET. Admin never depends on public prices or a catalog. Admin is USD-only (`$lib/currency.ts`): whole-cent flat/tax amounts, ≤12-digit rates that settle to cents, never a browser-chosen currency.
 - Admin manual payments require `commerce.payment.record`: Cash/Check/Other only. Quote deposit is
   the full authoritative amount with reviewed version + proposal ID; Invoice partial payments omit
   proposal ID. Never retry a payment mutation; stale/ambiguous outcomes require reload/review. Success

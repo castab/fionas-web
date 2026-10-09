@@ -183,7 +183,7 @@ describe('service identity', () => {
 });
 
 describe('role safety', () => {
-	it('creates a missing fionas.web with exactly the three grants', async () => {
+	it('creates a missing fionas.web with exactly the inquiry creation grant', async () => {
 		const backend = fakeAccess({ services: [service({ roles: [] })] });
 		await run(backend);
 		const create = backend.calls.find(
@@ -225,7 +225,7 @@ describe('role safety', () => {
 	it('refuses a role missing a grant and never replaces it', async () => {
 		const backend = fakeAccess({
 			services: [service()],
-			roles: [{ ...WEB_ROLE, permissions: ROLE.permissions.slice(0, 2) }]
+			roles: [{ ...WEB_ROLE, permissions: [] }]
 		});
 		await expect(run(backend)).rejects.toThrow(
 			/expected: .*\n {2}actual: .*\n {2}missing: {4}fionas\.inquiries\.create\n {2}unexpected: \(none\)/

@@ -9,13 +9,14 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { cn } from '../../utils.js';
-	import { capsXs, hintText } from '../../styles.js';
+	import { capsSm, capsXs, hintText } from '../../styles.js';
 
 	/**
 	 * Small-caps label, the control, then a hint and any error beneath it. Single controls get a
 	 * `<label for>`; choice groups (`group`) are a `<fieldset>` named by the label and can show a live `meta` note
 	 * beside the label (e.g. "1 of 2 picked"). The control receives the ids it needs as snippet
-	 * arguments so `aria-describedby` and `aria-invalid` stay wired up.
+	 * arguments so `aria-describedby` and `aria-invalid` stay wired up. `labelTone="heading"` gives a
+	 * group the larger heading-coloured caps of a form sub-heading (e.g. "Soft serve — pick 2").
 	 */
 	let {
 		label,
@@ -24,6 +25,7 @@
 		meta,
 		required = false,
 		group = false,
+		labelTone = 'field',
 		id,
 		class: className,
 		children
@@ -34,6 +36,7 @@
 		meta?: string;
 		required?: boolean;
 		group?: boolean;
+		labelTone?: 'field' | 'heading';
 		id?: string;
 		class?: string;
 		children: Snippet<[FieldControlProps]>;
@@ -49,7 +52,9 @@
 			undefined
 	);
 
-	const labelClass = cn(capsXs, 'text-olive-600');
+	const labelClass = $derived(
+		labelTone === 'heading' ? cn(capsSm, 'text-(--text-heading)') : cn(capsXs, 'text-olive-600')
+	);
 </script>
 
 {#snippet requiredMark()}

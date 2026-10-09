@@ -1,499 +1,354 @@
 <script lang="ts">
-	import { onMount, tick, untrack } from 'svelte';
-	import { applyAction, enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
-	import { Button, Card } from '@fionas/ui';
+	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
+	import { onMount, untrack } from 'svelte';
+	import { Button, Card, focusRing } from '@fionas/ui';
 	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
-	import ServicePicks from './service-picks.svelte';
-	import QuoteLines from './quote-lines.svelte';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
-	import type { InquiryQuotePreviewResponse, QuotePreviewLine } from '$lib/quote-contract.js';
 	import {
-		basisNotice,
-		effectiveConfiguration,
-		isActiveOverride,
-		isBlankAdjustment,
-		lineTarget,
-		quoteInputErrors,
-		readQuoteForm,
-		targetKey,
-		type AdjustmentDraft,
-		type BuilderChoices,
-		type FeedbackSection,
-		type QuoteActionResult as QuoteResult,
-		type QuoteFieldErrors,
-		type QuoteNotices
+		initialQuoteValues,
+		type QuoteActionResult,
+		type LineDraft
 	} from '$lib/quote-builder.js';
-	import { depositTermsLabel } from '$lib/deposit.js';
 	import { formatMoney } from '$lib/presentation.js';
-	import { errorText, hint, panelCaps } from './styles.js';
-
+	import { CURRENCY } from '$lib/currency.js';
 	let {
 		request,
-		choices,
 		result,
-		route,
 		blocked = false,
 		pending = $bindable(false),
 		onReviewRequired
 	}: {
 		request: CurrentStaffRequest;
-		choices: BuilderChoices | null;
-		/** The quote actions' result from a native POST render; enhanced results stay local. */
-		result: QuoteResult | null;
-		/** The request's clean pathname (Cancel and reload). */
-		route: string;
-		/** Another mutation needs review first: nothing may be issued. */
+		result: QuoteActionResult | null;
 		blocked?: boolean;
 		pending?: boolean;
 		onReviewRequired: () => void;
 	} = $props();
-
-	const PREVIEW_ACTION = '?quote&/previewQuote';
-	const ISSUE_ACTION = '?quote&/issueQuote';
-	/** Typing settles briefly; a click, pick or choice is a complete edit and previews at once. */
-	const TYPING_MS = 300;
-	const QUICK_MS = 40;
-	const currency = $derived(request.financial.currency);
-	const effective = $derived(effectiveConfiguration(request));
-	const firstName = $derived(request.inquiry.name.trim().split(/\s+/)[0] || 'them');
-
-	// Seeded once from the server render; enhanced results then update these in place.
 	const seed = untrack(() => result);
-	let enhanced = $state(false);
-	let preview = $state<InquiryQuotePreviewResponse | null>(seed?.preview ?? null);
-	let reviewed = $state({
-		token: seed?.quoteValues?.reviewToken ?? '',
-		basis: seed?.quoteValues?.reviewedBasis ?? '',
-		fingerprint: seed?.quoteValues?.reviewedFingerprint ?? ''
-	});
-	let notices = $state<QuoteNotices>(seed?.notices ?? {});
-	let quoteError = $state<string | null>(seed?.quoteError ?? null);
+	let values = $state(untrack(() => seed?.quoteValues ?? initialQuoteValues(request)));
+	let preview = $state(seed?.preview ?? null);
+	let error = $state(seed?.quoteError ?? '');
+	let fieldErrors = $state(seed?.fieldErrors ?? {});
 	let reviewRequired = $state(seed?.reviewRequired ?? false);
-	let serverErrors = $state<QuoteFieldErrors>(seed?.fieldErrors ?? {});
-	let feedback = $state<Partial<Record<FeedbackSection, string[]>>>(seed?.feedback ?? {});
-	let overrides = $state<Record<string, { amount: string; reason: string }>>(
-		Object.fromEntries(
-			(seed?.quoteValues?.overrides ?? []).map((o) => [
-				o.key,
-				{ amount: o.amount, reason: o.reason }
-			])
-		)
-	);
-	let adjustments = $state<AdjustmentDraft[]>(
-		(seed?.quoteValues?.adjustments ?? []).filter((row) => !isBlankAdjustment(row))
-	);
-	let submitting = $state<'preview' | 'issue' | null>(null);
-	let clientErrors = $state<QuoteFieldErrors>({});
-	let touched = $state(new Set<string>());
-	let currentSnapshot = $state('');
-	let previewSnapshot = $state<string | null>(null);
-	/** The edits a scheduled or in-flight preview already covers, so nothing restarts it. */
-	let queuedSnapshot = $state<string | null>(null);
-	/** Edits Commerce just refused; only a new edit or "Preview again" previews them. */
-	let failedSnapshot: string | null = null;
-	/** The menu changed under this quote; staff should check the picks until they next edit. */
-	let menuRefreshed = $state(false);
-	let formElement = $state<HTMLFormElement | null>(null);
-	let previewButton = $state<HTMLButtonElement | null>(null);
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	let latest: AbortController | undefined;
+	let reviewStale = $state(seed?.notices?.reviewStale ?? false);
+	let dirty = $state(false);
+	let hydrated = $state(false);
+	let formElement = $state<HTMLFormElement>();
+	let previewButton = $state<HTMLButtonElement>();
+	let timer: ReturnType<typeof setTimeout>;
 	let sequence = 0;
-	let keyCounter = 0;
-
-	const serviceLines = $derived<QuotePreviewLine[]>(
-		preview
-			? preview.lines.filter((line) => line.origin.type !== 'ADJUSTMENT')
-			: request.financial.lines.map((line) => ({
-					...line,
-					lineItemId: line.id,
-					origin: { type: 'ESTIMATE_LINE' as const }
-				}))
-	);
-	const adjustmentLines = $derived(
-		preview ? preview.lines.filter((line) => line.origin.type === 'ADJUSTMENT') : []
-	);
-	const errors = $derived<QuoteFieldErrors>({
-		...Object.fromEntries(Object.entries(clientErrors).filter(([field]) => touched.has(field))),
-		...serverErrors
-	});
-	const dirty = $derived(enhanced && previewSnapshot !== currentSnapshot);
-	const canIssue = $derived(
-		!blocked &&
-			!reviewRequired &&
-			!submitting &&
-			(!enhanced || (!!preview && !!reviewed.token && !dirty))
-	);
-	const notice = $derived(preview ? basisNotice(preview.pricingBasis) : null);
-	/** Edits are acknowledged at once; the authoritative numbers follow from Commerce. */
-	const status = $derived(
-		submitting === 'preview' || (dirty && queuedSnapshot === currentSnapshot)
-			? 'Updating…'
-			: dirty && Object.keys(clientErrors).length
-				? 'Finish your changes to update the total'
-				: null
-	);
-	const depositError = $derived(
-		errors.depositPercentage
-			? 'depositPercentage'
-			: errors.depositAmount
-				? 'depositAmount'
-				: undefined
-	);
-
-	/** What the server would compose from the form: only intent, never presentation fields. */
-	function snapshotOf(data: FormData): string {
-		const values = readQuoteForm(data);
-		if (!values) return 'invalid';
-		return JSON.stringify({
-			deposit: values.deposit,
-			service: values.service,
-			overrides: values.overrides
-				.filter((o) => isActiveOverride(o, currency))
-				.map(({ key, amount, reason }) => ({ key, amount, reason })),
-			adjustments: values.adjustments.filter((row) => !isBlankAdjustment(row))
-		});
-	}
-	function formData(): FormData | null {
-		return formElement ? new FormData(formElement) : null;
-	}
-
-	function isTyping(event?: Event): boolean {
-		const target = event?.target;
-		return (
-			event?.type === 'input' &&
-			(target instanceof HTMLTextAreaElement ||
-				(target instanceof HTMLInputElement && !['checkbox', 'radio'].includes(target.type)))
-		);
-	}
-
-	function edited(event?: Event) {
-		const data = formData();
-		if (!data) return;
-		currentSnapshot = snapshotOf(data);
-		const values = readQuoteForm(data);
-		clientErrors = values ? quoteInputErrors(values, currency) : {};
-		if (event) serverErrors = {};
-		if (event && event.type !== 'click') menuRefreshed = false;
-		const settled =
-			currentSnapshot === previewSnapshot ||
-			currentSnapshot === failedSnapshot ||
-			reviewRequired ||
-			blocked ||
-			Object.keys(clientErrors).length > 0;
-		if (settled) {
-			clearTimeout(timer);
-			if (!submitting) queuedSnapshot = null;
-			return;
-		}
-		// Already scheduled or on its way: a click or blur that changed nothing never delays it.
-		if (currentSnapshot === queuedSnapshot) return;
-		clearTimeout(timer);
-		queuedSnapshot = currentSnapshot;
-		timer = setTimeout(
-			() => formElement?.requestSubmit(previewButton),
-			isTyping(event) ? TYPING_MS : QUICK_MS
-		);
-	}
-
-	/** Overrides for lines the latest preview no longer has can never be posted; forget them. */
-	function forgetMissingOverrides(lines: QuotePreviewLine[]) {
-		const keys = new Set(
-			lines.flatMap((line) => {
-				const target = lineTarget(line);
-				return target ? [targetKey(target)] : [];
-			})
-		);
-		for (const key of Object.keys(overrides)) if (!keys.has(key)) delete overrides[key];
-	}
-
+	let previewController: AbortController | undefined;
 	onMount(() => {
-		enhanced = true;
-		void tick().then(() => {
-			const data = formData();
-			if (!data) return;
-			currentSnapshot = snapshotOf(data);
-			if (preview && reviewed.token) previewSnapshot = currentSnapshot;
-			else if (!reviewRequired && !blocked) formElement?.requestSubmit(previewButton);
-		});
-		return () => clearTimeout(timer);
+		hydrated = true;
+		return () => {
+			clearTimeout(timer);
+			previewController?.abort();
+		};
 	});
+	const input = `mt-1 w-full rounded-[6px] border border-(--border-soft) bg-(--surface-card) px-3 py-2 text-sm ${focusRing}`;
+	const blank = (): LineDraft => ({
+		key: crypto.randomUUID(),
+		description: '',
+		unitPrice: '',
+		taxAmount: '0.00',
+		currency: CURRENCY,
+		note: ''
+	});
+	const rows = $derived([
+		...values.lines,
+		{
+			key: 'blank-row',
+			description: '',
+			unitPrice: '',
+			taxAmount: '0.00',
+			currency: CURRENCY,
+			note: ''
+		}
+	]);
+	function changed() {
+		dirty = true;
+		error = '';
+		clearTimeout(timer);
+		if (hydrated && !pending && !reviewRequired)
+			timer = setTimeout(() => formElement?.requestSubmit(previewButton), 300);
+	}
+	function move(i: number, d: number) {
+		if (i + d < 0 || i + d >= values.lines.length) return;
+		[values.lines[i], values.lines[i + d]] = [values.lines[i + d], values.lines[i]];
+		changed();
+	}
+	function remove(i: number) {
+		values.lines.splice(i, 1);
+		changed();
+	}
+	function add(kind = 'service') {
+		const row = blank();
+		if (kind !== 'service')
+			row.description =
+				kind === 'charge' ? 'Additional charge' : kind === 'discount' ? 'Discount' : 'Credit';
+		values.lines.push(row);
+		dirty = true;
+		clearTimeout(timer);
+	}
 </script>
 
-<Card
-	variant="flat"
-	id="quote-builder"
-	class="flex scroll-mt-4 flex-col gap-4 border-2 border-olive-700 p-[18px] sm:p-5"
-	data-testid="quote-builder"
->
-	<!-- Clicks only observe chip and line buttons (keyboard activation also clicks) to refresh the preview. -->
-	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+<Card data-testid="quote-builder" id="quote-builder" class="flex flex-col gap-5 p-5">
+	<div>
+		<h2 class="m-0 [font:var(--type-h3)]">Issue quote</h2>
+		<p class="mt-1 text-xs text-(--text-muted)">
+			Review final lines and the service you’ll provide. Totals and deposit come from Commerce.
+		</p>
+	</div>
+	{#if error}<p role="alert" class="text-sm text-(--text-body)">{error}</p>{/if}
+	{#if Object.keys(fieldErrors).length}<p role="alert" class="text-sm">
+			{Object.values(fieldErrors).join(' ')}
+		</p>{/if}
+	{#if reviewStale}<p role="status" class="text-sm">
+			The quote changed since you reviewed it. Review this preview, then click Issue quote again.
+		</p>{/if}
+	{#if reviewRequired}<p role="alert">Reload this request to review the latest state.</p>
+		<a
+			href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}
+			data-sveltekit-reload>Reload to review</a
+		>{/if}
 	<form
-		bind:this={formElement}
 		method="POST"
-		action={PREVIEW_ACTION}
-		class="flex flex-col gap-4"
-		aria-busy={!!submitting}
-		oninput={edited}
-		onchange={edited}
-		onclick={(event) => void tick().then(() => edited(event))}
-		onfocusout={(event) => {
-			const name = (event.target as HTMLInputElement | null)?.name;
-			if (name) touched = new Set([...touched, name]);
-		}}
-		use:enhance={({ submitter, cancel, controller, formData }) => {
-			const action = submitter?.getAttribute('formaction') === ISSUE_ACTION ? 'issue' : 'preview';
-			clearTimeout(timer);
-			if (action === 'issue' && (!canIssue || pending)) {
-				cancel();
-				return;
+		action="?quote&/previewQuote"
+		bind:this={formElement}
+		oninput={changed}
+		onchange={changed}
+		use:enhance={({ submitter, controller }) => {
+			const issuing = submitter?.getAttribute('formaction')?.includes('issueQuote') ?? false;
+			if (!issuing) {
+				previewController?.abort();
+				previewController = controller;
 			}
-			if (action === 'preview' && (submitting === 'issue' || reviewRequired || blocked)) {
-				cancel();
-				return;
-			}
-			if (submitter) touched = new Set([...touched, ...formData.keys()]);
-			latest?.abort();
-			latest = controller;
-			const submitted = snapshotOf(formData);
-			if (action === 'preview') queuedSnapshot = submitted;
-			const id = ++sequence;
-			submitting = action;
-			if (action === 'issue') pending = true;
-			return async ({ result: outcome }) => {
-				if (id !== sequence) return;
-				try {
-					if (outcome.type === 'redirect') {
-						await applyAction(outcome);
-						return;
-					}
-					if (outcome.type === 'error') {
-						quoteError =
-							action === 'issue'
-								? 'We couldn’t confirm whether the quote was issued. Reload to review the latest state before trying again.'
-								: 'We couldn’t preview this quote just now. Nothing was issued — try again.';
-						if (action === 'issue') {
-							reviewRequired = true;
-							onReviewRequired();
-						}
-						previewSnapshot = null;
-						failedSnapshot = submitted;
-						return;
-					}
-					const data = (outcome.data ?? {}) as QuoteResult;
-					notices = data.notices ?? {};
-					feedback = data.feedback ?? {};
-					serverErrors = data.fieldErrors ?? {};
-					quoteError = data.quoteError ?? null;
-					if (outcome.type === 'success' && data.preview && data.quoteValues) {
-						preview = data.preview;
-						reviewed = {
-							token: data.quoteValues.reviewToken,
-							basis: data.quoteValues.reviewedBasis,
-							fingerprint: data.quoteValues.reviewedFingerprint
-						};
-						previewSnapshot = submitted;
-						failedSnapshot = null;
-						forgetMissingOverrides(data.preview.lines);
-						return;
-					}
-					previewSnapshot = null;
-					failedSnapshot = submitted;
-					if (data.reviewRequired) {
-						reviewRequired = true;
-						onReviewRequired();
-					}
-					if (data.catalogStale) {
-						// Reload the menu; the refreshed revision then previews on its own.
-						menuRefreshed = true;
-						await invalidateAll();
-					}
-				} finally {
-					if (id === sequence) {
-						submitting = null;
-						queuedSnapshot = null;
-						if (action === 'issue') pending = false;
-						// Anything edited while this was in flight previews next.
-						await tick();
-						edited();
-					}
+			const current = ++sequence;
+			pending = true;
+			return async ({ result, update }) => {
+				if (current !== sequence) return;
+				pending = false;
+				if (result.type === 'redirect') {
+					await update();
+					return;
 				}
+				if (result.type === 'error') {
+					error = 'We couldn’t confirm the response. Reload before issuing.';
+					reviewRequired = issuing;
+					if (issuing) onReviewRequired();
+					return;
+				}
+				const data = result.data as QuoteActionResult;
+				if (data.quoteValues) values = data.quoteValues;
+				preview = data.preview ?? null;
+				error = data.quoteError ?? '';
+				fieldErrors = data.fieldErrors ?? {};
+				reviewRequired = data.reviewRequired ?? false;
+				reviewStale = data.notices?.reviewStale ?? false;
+				dirty = !data.preview;
+				if (reviewRequired) onReviewRequired();
 			};
 		}}
 	>
-		<!-- First submit button: Enter in a field previews, it never issues. -->
-		<button
-			bind:this={previewButton}
-			type="submit"
-			formaction={PREVIEW_ACTION}
-			hidden
-			tabindex="-1"
-			aria-hidden="true"
-			disabled={reviewRequired || blocked}
-		>
-			Update preview
-		</button>
-		<input type="hidden" name="reviewToken" value={reviewed.token} />
-		<input type="hidden" name="reviewedBasis" value={reviewed.basis} />
-		<input type="hidden" name="reviewedFingerprint" value={reviewed.fingerprint} />
-		<!-- The reviewed Estimate's facts, so a preview needs no extra read; issuing re-checks them. -->
-		<input type="hidden" name="reviewedCurrency" value={currency} />
-		{#if effective}<input
-				type="hidden"
-				name="reviewedConfiguration"
-				value={JSON.stringify(effective)}
-			/>{/if}
-
-		<div class="flex flex-col gap-1">
-			<h2 class={panelCaps}>Formal quote</h2>
-			<p class={hint}>
-				Started from their estimate — adjust each line after checking ingredients, supplies &amp;
-				staffing for the date. Issuing publishes the quote and its deposit; nothing is sent to {firstName}.
-			</p>
-		</div>
-
-		<ServicePicks
-			{choices}
-			{effective}
-			initial={seed?.quoteValues?.service ?? null}
-			reviewed={preview?.service ?? null}
-			{enhanced}
-			{errors}
-			feedback={feedback.service}
-			disabled={reviewRequired || blocked}
-		/>
-
-		<QuoteLines
-			lines={serviceLines}
-			{adjustmentLines}
-			bind:overrides
-			bind:adjustments
-			{currency}
-			{enhanced}
-			{errors}
-			lineFeedback={feedback.lines}
-			adjustmentFeedback={feedback.adjustments}
-			disabled={reviewRequired || blocked}
-			newKey={() => `line-${Date.now().toString(36)}-${++keyCounter}`}
-		/>
-
-		<div class="flex flex-col gap-2" data-testid="quote-total">
-			<div class="flex items-baseline border-t-2 border-olive-700 pt-2.5">
-				<span class={panelCaps}>Quote total</span>
-				<span class="flex-1"></span>
-				<span
-					aria-live="polite"
-					class={[
-						'text-[22px] leading-[1.3] font-bold text-olive-900 transition-opacity duration-(--dur-fast) ease-(--ease-out)',
-						(dirty || submitting === 'preview') && 'opacity-60'
-					]}>{preview ? formatMoney(preview.total, currency) : '—'}</span
-				>
+		<input type="hidden" name="reviewedCurrency" value={values.reviewedCurrency} />
+		<input type="hidden" name="reviewToken" value={values.reviewToken} />
+		<input type="hidden" name="reviewedFingerprint" value={values.reviewedFingerprint} />
+		<fieldset disabled={blocked || reviewRequired || pending} class="m-0 min-w-0 border-0 p-0">
+			<legend class="text-xs font-semibold text-olive-800 uppercase">Final quote lines</legend>
+			<div class="mt-3 flex flex-col gap-4">
+				{#each rows as row, i (row.lineItemId ?? row.key)}
+					<div
+						class="rounded-[10px] border border-(--border-soft) p-3"
+						data-testid="quote-line-editor"
+					>
+						<input
+							type="hidden"
+							name="lineIdentity"
+							value={row.lineItemId ? `id:${row.lineItemId}` : `new:${row.key}`}
+						/>
+						<label class="block text-xs font-semibold"
+							>{i === values.lines.length ? 'New service or adjustment' : 'Description'}<input
+								class={input}
+								name="description"
+								value={row.description}
+								oninput={(e) => {
+									if (i < values.lines.length) values.lines[i].description = e.currentTarget.value;
+								}}
+								maxlength="200"
+							/></label
+						>
+						<label class="mt-2 block text-xs"
+							>Detail<input
+								class={input}
+								name="subDescription"
+								value={row.subDescription ?? ''}
+								oninput={(e) => {
+									if (i < values.lines.length)
+										values.lines[i].subDescription = e.currentTarget.value;
+								}}
+								maxlength="500"
+							/></label
+						>
+						<div class="mt-2 grid grid-cols-3 gap-2">
+							<label class="text-xs"
+								>Quantity<input
+									class={input}
+									name="quantity"
+									value={row.quantity ?? ''}
+									oninput={(e) => {
+										if (i < values.lines.length) values.lines[i].quantity = e.currentTarget.value;
+									}}
+									inputmode="decimal"
+								/></label
+							>
+							<label class="text-xs"
+								>Unit price<input
+									class={input}
+									name="unitPrice"
+									value={row.unitPrice}
+									oninput={(e) => {
+										if (i < values.lines.length) values.lines[i].unitPrice = e.currentTarget.value;
+									}}
+									inputmode="decimal"
+								/></label
+							>
+							<label class="text-xs"
+								>Line tax<input
+									class={input}
+									name="taxAmount"
+									value={row.taxAmount}
+									oninput={(e) => {
+										if (i < values.lines.length) values.lines[i].taxAmount = e.currentTarget.value;
+									}}
+									inputmode="decimal"
+								/></label
+							>
+						</div>
+						<label class="mt-2 block text-xs"
+							>Reason or service note<input
+								class={input}
+								name="note"
+								value={row.note}
+								oninput={(e) => {
+									if (i < values.lines.length) values.lines[i].note = e.currentTarget.value;
+								}}
+								maxlength="500"
+							/></label
+						>
+						{#if i < values.lines.length}<div class="mt-2 flex gap-3 text-xs">
+								<button
+									type={hydrated ? 'button' : 'submit'}
+									name="rowAction"
+									value={`up:${i}`}
+									disabled={i === 0}
+									onclick={() => {
+										if (hydrated) move(i, -1);
+									}}>Move up</button
+								>
+								<button
+									type={hydrated ? 'button' : 'submit'}
+									name="rowAction"
+									value={`down:${i}`}
+									disabled={i === values.lines.length - 1}
+									onclick={() => {
+										if (hydrated) move(i, 1);
+									}}>Move down</button
+								>
+								<button
+									type={hydrated ? 'button' : 'submit'}
+									name="rowAction"
+									value={`remove:${i}`}
+									onclick={() => {
+										if (hydrated) remove(i);
+									}}>Remove</button
+								>
+							</div>{/if}
+					</div>
+				{/each}
 			</div>
-			<p class={`${hint} text-right`} aria-live="polite">
-				{#if status}{status}{:else if !dirty && preview && preview.estimateTotal !== preview.total}Their
-					estimate was {formatMoney(preview.estimateTotal, currency)}{:else if !preview}Preview the
-					quote to see its total{/if}
-			</p>
-			{#if notice}
-				<p
-					class={[
-						'm-0 rounded-input border px-3 py-2 text-xs leading-[1.55]',
-						notice.tone === 'strong'
-							? 'border-rust-600/40 bg-cream-200 font-semibold text-ink-700'
-							: 'border-(--border-soft) bg-cream-200 text-(--text-muted)'
-					]}
-					data-testid="quote-basis"
-				>
-					{notice.text}
-				</p>
-			{/if}
-			{#if notices.repriced}<p class={hint} role="status">
-					Those pick changes affect the price, so the whole quote is recalculated from today’s
-					catalog.
-				</p>{/if}
-			{#if menuRefreshed}<p class="m-0 text-xs font-semibold text-ink-700" role="status">
-					The menu changed since this quote was opened, so it now uses today’s menu. Check the picks
-					before issuing.
-				</p>{/if}
-			{#if notices.overridesCleared}<p class={hint} role="status">
-					Line price changes were cleared because the lines were recalculated. Re-enter any you
-					still need.
-				</p>{/if}
-			{#each feedback.total ?? [] as text (text)}<p class={errorText} role="alert">{text}</p>{/each}
-		</div>
-
-		<div>
-			<DepositChoices
-				suggestion={request.suggestedDepositTerms}
-				currency={request.financial.currency}
-				version={request.financial.version}
-				values={seed?.quoteValues?.deposit}
-				errorField={depositError}
-				disabled={reviewRequired || blocked}
-			/>
-			{#if preview}
-				<p class="m-0 -mt-1 text-sm" data-testid="quote-deposit">
-					<span class="font-semibold"
-						>Deposit to hold the date: {formatMoney(
-							preview.deposit.requiredAmount.amount,
-							preview.deposit.requiredAmount.currency
-						)}</span
-					>
-					<span class="text-xs text-(--text-muted)">
-						· {depositTermsLabel(preview.deposit.terms)}</span
-					>
-				</p>
-			{/if}
-		</div>
-
-		{#if notices.reviewStale}
-			<p class="m-0 text-sm font-semibold text-ink-700" role="status">
-				The quote changed since you reviewed it. Check this new preview, then issue again.
-			</p>
-		{/if}
-		{#each feedback.form ?? [] as text (text)}<p class={errorText} role="alert">{text}</p>{/each}
-		{#if quoteError}
-			<div role="alert" class="flex flex-col items-start gap-3">
-				<p id="deposit-error" class="m-0 text-[12.5px] text-rust-600">{quoteError}</p>
-				{#if reviewRequired}
-					<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
-						>Reload to review</Button
-					>
-				{:else if enhanced}
-					<Button
+			{#if hydrated}<div class="my-3 flex flex-wrap gap-3 text-xs">
+					<button type="button" onclick={() => add()}>+ New service</button><button
 						type="button"
-						variant="secondary"
-						size="sm"
-						onclick={() => {
-							failedSnapshot = null;
-							formElement?.requestSubmit(previewButton);
-						}}>Preview again</Button
+						onclick={() => add('charge')}>+ Charge</button
+					><button type="button" onclick={() => add('discount')}>+ Discount</button><button
+						type="button"
+						onclick={() => add('credit')}>+ Credit</button
 					>
-				{/if}
-			</div>
-		{/if}
-
-		<div class="flex flex-wrap gap-2.5">
-			{#if !enhanced}
-				<Button
-					type="submit"
-					formaction={PREVIEW_ACTION}
-					variant="secondary"
-					disabled={reviewRequired || blocked}
-					class="min-h-[50px] min-w-[150px] flex-1 text-[12.5px]">Update preview</Button
-				>
-			{/if}
-			<Button
-				type="submit"
-				formaction={ISSUE_ACTION}
-				disabled={!canIssue}
-				class="min-h-[50px] min-w-[150px] flex-[1.4] text-[12.5px]"
-				>{submitting === 'issue' ? 'Issuing quote…' : 'Issue quote'}</Button
+				</div>{/if}
+			<p class="text-xs text-(--text-muted)">
+				Leave quantity blank for a flat amount. Enter a negative unit price for a separate discount
+				or credit. Nothing is rounded.
+			</p>
+			<h3 class="mt-5 text-xs font-semibold text-olive-800 uppercase">What you’ll serve</h3>
+			<label class="block text-xs"
+				>Approved service description<textarea
+					class={input}
+					name="planDescription"
+					bind:value={values.description}
+					maxlength="2000"></textarea></label
 			>
-			<Button
-				href={route}
-				variant="secondary"
-				class="min-h-[50px] min-w-[120px] flex-1 text-[12.5px]">Cancel</Button
+			<div class="my-2 grid grid-cols-2 gap-3">
+				<label class="text-xs"
+					>Guests<input
+						class={input}
+						name="planGuestCount"
+						bind:value={values.guestCount}
+						inputmode="numeric"
+					/></label
+				>
+			</div>
+			<label class="block text-xs"
+				>Service items, one per line<textarea
+					class={input}
+					name="planItems"
+					bind:value={values.items}></textarea></label
+			>
+			<div class="mt-5">
+				<DepositChoices
+					suggestion={request.suggestedDepositTerms}
+					currency={request.financial.currency}
+					version={request.financial.version}
+					values={values.deposit}
+					errorField={fieldErrors.deposit
+						? values.deposit.depositChoice === 'fixed'
+							? 'depositAmount'
+							: values.deposit.depositChoice === 'percentage'
+								? 'depositPercentage'
+								: 'depositChoice'
+						: undefined}
+				/>
+			</div>
+		</fieldset>
+		{#if preview}<div class="my-5 border-t border-(--border-soft) pt-4" data-testid="quote-preview">
+				<h3 class="text-xs font-semibold text-olive-800 uppercase">Quote preview</h3>
+				{#each preview.lines as line (line.id)}<p class="flex justify-between text-sm">
+						<span>{line.description} · {line.origin.toLowerCase()}</span><span
+							>{formatMoney(line.total, line.currency)}</span
+						>
+					</p>{/each}
+				<p data-testid="quote-total" class="flex justify-between font-semibold">
+					<span>Total</span><span>{formatMoney(preview.total, preview.currency)}</span>
+				</p>
+				<p data-testid="quote-deposit" class="text-sm">
+					Deposit {formatMoney(preview.deposit.requiredAmount.amount, preview.currency)}
+				</p>
+			</div>{/if}
+		{#if dirty || pending}<p role="status" class="text-xs">
+				{pending ? 'Updating…' : 'Preview required for current edits.'}
+			</p>{/if}
+		<div class="flex gap-3">
+			<button
+				type="submit"
+				bind:this={previewButton}
+				disabled={blocked || reviewRequired || pending}
+				class="rounded-full border border-olive-300 px-4 py-2 text-sm">Update preview</button
+			><Button
+				type="submit"
+				formaction="?quote&/issueQuote"
+				disabled={blocked || reviewRequired || pending || (hydrated && (!preview || dirty))}
+				>Issue quote</Button
+			><a href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}>Cancel</a
 			>
 		</div>
 	</form>
