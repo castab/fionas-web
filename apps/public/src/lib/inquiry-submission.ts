@@ -2,32 +2,30 @@ import type { FieldErrors, InquiryAnswers, InquiryForm } from '@fionas/shared';
 
 /**
  * How a /book submission that did not produce an inquiry is reported back to the page (the form
- * action's `fail()` data). Never carries backend diagnostics or credentials.
+ * action's `fail()` data). Never carries NATS diagnostics or credentials.
  *
  * - `invalid`: answers failed the form's own checks; nothing was sent.
  * - `malformed`: the page itself is out of date (no usable token or revision); reload.
- * - `rejected`: the backend refused the answers (422 and friends); fix them and send again. When the
- *   refusal says the page's options are out of date it comes with a `refreshedForm` to review.
  * - `stale`: the private price revision changed while the customer was filling the form in. `refreshedForm` is the
  *   current form, `answers` were fitted to it, and the customer must review before sending again.
  * - `key_reused`: this submission's key already belongs to a different request. Not retried;
  *   `restartToken` lets the customer deliberately send the answers as a new submission.
- * - `unavailable`: nothing was sent (the backend couldn't be reached, or refused the site's own
- *   service identity: an operator problem the visitor is never told about).
- * - `ambiguous`: the request was sent but its outcome is unknown (timeout, lost or garbled response,
- *   any 5xx, an answer outside the contract), even after the server's own same-key retry. It may have been recorded. `replay`
+ * - `unavailable`: nothing was stored (NATS couldn't be reached, no stream captures the event, or
+ *   the site may not publish it: an operator problem the visitor is never told about).
+ * - `ambiguous`: the request was sent but its outcome is unknown (no acknowledgement in time, a
+ *   dropped connection, anything unexpected), even after the server's own same-key retry. It may have been recorded. `replay`
  *   carries the exact request that was delivered; the page freezes the answers and posts `replay`
  *   back, so "Try sending again" resends that same command under the same `submissionToken`.
  *   Without a usable `replay` nothing can safely be resent under that key. `restartToken` is only
  *   for a customer who deliberately changes their answers instead (a new submission).
  */
 export type SubmissionOutcome =
-	'invalid' | 'malformed' | 'rejected' | 'stale' | 'key_reused' | 'unavailable' | 'ambiguous';
+	'invalid' | 'malformed' | 'stale' | 'key_reused' | 'unavailable' | 'ambiguous';
 
 /**
- * The immutable command an unresolved submission already delivered to POST /inquiries: exactly the
- * body sent under its `Idempotency-Key`. Customer intent only (the answers the visitor gave, mapped
- * to the backend's fields), never credentials, tokens or amounts. Distinct from `answers`, which are
+ * The immutable command an unresolved submission already published: the signed InquirySubmitted
+ * event, exactly as sent under its `Nats-Msg-Id`. Never credentials or tokens; its server-priced
+ * amounts are covered by the signature, never trusted from the browser. Distinct from `answers`, which are
  * what the visitor sees and edits: a retry of an unknown outcome resends this, never a request
  * rebuilt from a newer form.
  */
@@ -38,7 +36,7 @@ export type SubmissionFailure = {
 	answers?: InquiryAnswers;
 	errors?: FieldErrors;
 	formError?: string;
-	/** The `Idempotency-Key` the next submission must carry. Only a reviewed refresh changes it. */
+	/** The key (`Nats-Msg-Id`) the next submission must carry. Only a reviewed refresh changes it. */
 	submissionToken?: string;
 	/** The price revision the answers belong to, sent back with the next submission. */
 	priceRevision?: string;

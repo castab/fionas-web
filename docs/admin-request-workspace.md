@@ -23,7 +23,7 @@ inconsistent document ownership is unavailable rather than an assumed zero balan
 
 ## Issue Quote (quote builder)
 
-Staff USER sessions flow through backend.ts with the host-only __Host-fionas_session cookie and trusted Origin. Issue quote requires commerce.financial-document.create, commerce.deposit-requirement.manage and fionas.financial-terms.manage. Public SERVICE credentials never author staff terms. The admin works without a public price book.
+Staff USER sessions flow through backend.ts with the host-only __Host-fionas_session cookie and trusted Origin. Issue quote requires commerce.financial-document.create, commerce.deposit-requirement.manage and fionas.financial-terms.manage. Only staff USER sessions author staff terms; the public site holds no commerce credentials at all. The admin works without a public price book.
 
 The inline editor opens with a preview of complete existing financial lines under their immutable ids. Staff can override descriptions, quantity, unit price and whole-line tax; remove/reorder existing lines; add bespoke services or distinct signed charges/discounts/credits with stable draft keys. Negative adjustments are separate lines. Optional servicePlan descriptions, guest counts, free-form items and identity-bound lineNotes preserve the approved service and negotiation reasons. There is no catalog dependency. requestedService displays the customer's recorded human-readable labels; linesAuthoredBy, issuedBy and approvedBy represent backend authorship.
 

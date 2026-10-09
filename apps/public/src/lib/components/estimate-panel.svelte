@@ -8,9 +8,9 @@
 	} from '@fionas/shared';
 
 	/**
-	 * Price estimate, computed in the browser from the form's `pricingPreview` as soon as guests and
-	 * service length are known, growing as choices are made. It is display only: nothing here is
-	 * sent, and POST /inquiries prices the submitted selections on its own.
+	 * Price estimate, computed in the browser from the form's `pricingPreview` as soon as the guest
+	 * count is known, growing as choices are made. It is display only: nothing here is sent, and the
+	 * server prices the submitted selections from its own price book.
 	 */
 	let { form, answers }: { form: InquiryForm; answers: InquiryAnswers } = $props();
 
@@ -60,7 +60,7 @@
 			</div>
 		{:else}
 			<p class="m-0 text-[12.5px] leading-snug text-(--text-muted)">
-				Add your guest count and service length to start your estimate.
+				Add your guest count to start your estimate.
 			</p>
 		{/if}
 	</div>

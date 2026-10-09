@@ -1,0 +1,28 @@
+# Local development infrastructure. Not used in production.
+#
+#   npm run nats:up     # start NATS + JetStream and create/verify the FIONAS_INQUIRIES stream
+#   npm run nats:tail   # watch inquiry events as /book publishes them
+#   npm run nats:down   # stop (add `-- -v` to also delete the stored messages)
+#
+# Users and their dev-only passwords are in infra/nats/nats-server.conf.
+name: fionas-web
+
+services:
+  nats:
+    image: nats:2.14.7-alpine
+    command: ['-c', '/etc/nats/nats-server.conf']
+    ports:
+      - '${NATS_PORT:-4222}:4222' # clients
+      - '${NATS_MONITOR_PORT:-8222}:8222' # monitoring: http://localhost:8222
+    volumes:
+      - ./infra/nats/nats-server.conf:/etc/nats/nats-server.conf:ro
+      - nats-data:/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8222/healthz?js-enabled-only=true']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+volumes:
+  nats-data:

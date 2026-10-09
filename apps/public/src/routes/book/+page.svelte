@@ -80,13 +80,13 @@
 	let outcome = $state<SubmissionOutcome | null>(initial.outcome);
 
 	/*
-	 * The logical submission. Its token reaches the backend as `Idempotency-Key` and stays the same
+	 * The logical submission. Its token is published as `Nats-Msg-Id` and stays the same
 	 * across double clicks and retries; only a reviewed price refresh or a deliberate restart (a new
 	 * submission) replaces it. The revision pins the answers to the prices they were shown.
 	 */
 	let submissionToken = $state(initial.submissionToken);
 	let priceRevision = $state(initial.priceRevision);
-	/** After IDEMPOTENCY_KEY_REUSED or an unknown outcome: the key for a deliberate new submission. */
+	/** After a reused key or an unknown outcome: the key for a deliberate new submission. */
 	let restartToken = $state<string | null>(initial.restartToken);
 	/** After a price revision change: what the customer must look at again. */
 	let review = $state<Review | null>(initial.review);

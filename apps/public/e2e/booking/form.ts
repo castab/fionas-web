@@ -1,34 +1,16 @@
 import type { Page } from '@playwright/test';
+import { publishedFor, type PublishedInquiry } from '../nats.js';
 
 /** Helpers for filling in /book, shared by the booking specs. */
 
-export const stub = `http://127.0.0.1:${process.env.COMMERCE_STUB_PORT ?? '4174'}`;
+export type Submission = import('@fionas/shared').PricedInquiry;
 
-export type Submission = import('@fionas/shared').CreateInquiryRequest;
+/** Every InquirySubmitted event /book published for this email, with its `Nats-Msg-Id`. */
+export const deliveriesFor = (email: string): Promise<PublishedInquiry[]> => publishedFor(email);
 
-/** One POST /inquiries the stub saw: under which key, with which access token, and whether it
- * accepted that token. */
-export type Attempt = {
-	email: string | null;
-	key: string | null;
-	token: string | null;
-	authorized: boolean;
-};
-
-/** Inquiries the stub committed for this email. */
-export async function submissionsFor(page: Page, email: string): Promise<Submission[]> {
-	const all = (await (await page.request.get(`${stub}/__submissions`)).json()) as Submission[];
-	return all.filter((s) => s.email === email);
-}
-
-export async function submissionFor(page: Page, email: string): Promise<Submission | undefined> {
-	return (await submissionsFor(page, email))[0];
-}
-
-/** Every POST /inquiries the app made for this email, in order. */
-export async function attemptsFor(page: Page, email: string): Promise<Attempt[]> {
-	const all = (await (await page.request.get(`${stub}/__attempts`)).json()) as Attempt[];
-	return all.filter((a) => a.email === email);
+/** The inquiry /book published for this email (the event's `data`), if any. */
+export async function submissionFor(email: string): Promise<Submission | undefined> {
+	return (await publishedFor(email))[0]?.event.data;
 }
 
 export async function fillContact(page: Page, email: string) {

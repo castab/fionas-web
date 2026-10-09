@@ -25,6 +25,8 @@ jobs:
 
       - run: npm run lint
 
+      - run: npm run asyncapi:validate
+
       - run: npm run check
 
       - name: Install Playwright Chromium (component tests)
@@ -50,6 +52,7 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      # The public booking suite starts NATS + JetStream from compose.yaml (e2e/global-setup.ts).
       - run: npm run test:e2e
 
       - name: Upload Playwright reports
@@ -59,3 +62,7 @@ jobs:
           name: playwright-report
           path: apps/*/playwright-report/
           retention-days: 7
+
+      - name: Stop NATS
+        if: always()
+        run: docker compose down --volumes

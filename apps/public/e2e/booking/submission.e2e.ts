@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
-import { fillContact, fillService, sendButton, submissionFor, attemptsFor } from './form.js';
+import { fillContact, fillService, sendButton, submissionFor, deliveriesFor } from './form.js';
+
+/*
+ * /book publishes to a real NATS + JetStream (e2e/global-setup.ts) and these specs read back what
+ * was stored. Unknown and refused deliveries (lost acknowledgements, no stream, denied publish)
+ * can't be produced on demand against a real server, so they are covered by the unit tests
+ * (src/lib/server/booking-page.test.ts and event-bus.test.ts).
+ */
+
 for (const native of [false, true])
 	test.describe(`submission native=${native}`, () => {
 		test.use({ javaScriptEnabled: !native });
@@ -14,10 +22,18 @@ for (const native of [false, true])
 			await sendButton(page).click();
 			await expect(page).toHaveURL(/\/book\/received$/);
 			await expect(page.getByRole('status')).toContainText('Request received');
-			const body = await submissionFor(page, email);
-			expect(body?.requestedService.guestCount).toBe(75);
-			expect(body?.requestedService).not.toHaveProperty('durationMinutes');
-			expect(body?.requestedService.items).toEqual(
+			const [delivery] = await deliveriesFor(email);
+			expect(delivery.msgID).toBe(key);
+			expect(delivery.event).toMatchObject({
+				schemaVersion: 1,
+				type: 'fionas.inquiry.submitted',
+				source: 'fionas-web',
+				data: { priceRevision: 'synthetic-1', message: 'Backyard birthday' }
+			});
+			const body = delivery.event.data;
+			expect(body.requestedService.guestCount).toBe(75);
+			expect(body.requestedService).not.toHaveProperty('durationMinutes');
+			expect(body.requestedService.items).toEqual(
 				expect.arrayContaining([
 					{ label: 'Chocolate Chip', group: 'Hand-scooped', key: 'hand-scooped-chocolate-chip' },
 					{ label: 'Butter Pecan', group: 'Hand-scooped', key: 'hand-scooped-butter-pecan' },
@@ -26,21 +42,20 @@ for (const native of [false, true])
 				])
 			);
 			expect(JSON.stringify(body)).not.toMatch(/soft.serve/i);
-			expect(body?.lines).toEqual(
+			expect(body.lines).toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({ unitPrice: '101.00' }),
 					expect.objectContaining({ quantity: '75', unitPrice: '7.00' })
 				])
 			);
 			// Free flavors, cones and cups, in any combination, never add a priced line.
-			expect(body?.lines.map((l) => l.description)).not.toEqual(
+			expect(body.lines.map((l) => l.description)).not.toEqual(
 				expect.arrayContaining([expect.stringMatching(/cone|cup|butter/i)])
 			);
 			expect(body).not.toHaveProperty('total');
 			expect(body).not.toHaveProperty('pricingInputs');
-			expect((await attemptsFor(page, email))[0].key).toBe(key);
 			await page.reload();
-			expect((await attemptsFor(page, email)).length).toBe(1);
+			expect(await deliveriesFor(email)).toHaveLength(1);
 		});
 	});
 test('server ignores forged financial fields and alternate service labels', async ({ page }) => {
@@ -49,7 +64,7 @@ test('server ignores forged financial fields and alternate service labels', asyn
 	await fillContact(page, email);
 	await fillService(page);
 	await page.locator('main form').evaluate((form) => {
-		for (const name of ['unitPrice', 'total', 'lines', 'requestedService']) {
+		for (const name of ['unitPrice', 'total', 'lines', 'requestedService', 'id']) {
 			const input = document.createElement('input');
 			input.type = 'hidden';
 			input.name = name;
@@ -59,7 +74,7 @@ test('server ignores forged financial fields and alternate service labels', asyn
 	});
 	await sendButton(page).click();
 	await expect(page).toHaveURL(/\/received$/);
-	expect(JSON.stringify(await submissionFor(page, email))).not.toContain('FORGED_PRICE');
+	expect(JSON.stringify((await deliveriesFor(email))[0].event)).not.toContain('FORGED_PRICE');
 });
 test('a changed revision requires review before any delivery', async ({ page }) => {
 	const email = `revision-${randomUUID()}@example.com`;
@@ -69,35 +84,22 @@ test('a changed revision requires review before any delivery', async ({ page }) 
 	await page.locator('[name=priceRevision]').evaluate((el: HTMLInputElement) => (el.value = 'old'));
 	await sendButton(page).click();
 	await expect(page.getByRole('button', { name: 'Send booking request' })).toBeVisible();
-	expect(await attemptsFor(page, email)).toHaveLength(0);
-	expect(await submissionFor(page, email)).toBeUndefined();
+	expect(await submissionFor(email)).toBeUndefined();
 });
-test('unknown deliveries freeze answers and replay exactly once under the same key', async ({
-	page
-}) => {
-	const email = `hidden500-${randomUUID()}@example.com`;
+test('a forged replay is refused without publishing', async ({ page, baseURL }) => {
 	await page.goto('/book');
-	await fillContact(page, email);
-	await fillService(page);
-	await sendButton(page).click();
-	await expect(page.getByRole('button', { name: 'Try sending again' })).toBeVisible();
-	expect(await attemptsFor(page, email)).toHaveLength(2);
-	const key = (await attemptsFor(page, email))[0].key;
-	await page.getByRole('button', { name: 'Try sending again' }).click();
-	await expect(page).toHaveURL(/\/received$/);
-	expect((await attemptsFor(page, email)).every((a) => a.key === key)).toBe(true);
-});
-test('forged replay cannot send trusted lines', async ({ page }) => {
-	const email = `down-${randomUUID()}@example.com`;
-	await page.goto('/book');
-	await fillContact(page, email);
-	await fillService(page);
-	await sendButton(page).click();
-	await expect(page.getByRole('button', { name: 'Try sending again' })).toBeVisible();
-	await page
-		.locator('[name=replayRequest]')
-		.evaluate((el: HTMLInputElement) => (el.value = 'unsigned'));
-	await page.getByRole('button', { name: 'Try sending again' }).click();
-	expect(await attemptsFor(page, email)).toHaveLength(2);
-	await expect(page.getByText(/couldn.t safely resend/)).toBeVisible();
+	const key = await page.locator('[name=submissionToken]').inputValue();
+	const response = await page.request.post('/book', {
+		headers: { origin: baseURL!, accept: 'text/html' },
+		form: {
+			submissionToken: key,
+			priceRevision: 'synthetic-1',
+			outcomeUnknown: 'true',
+			replayRequest: JSON.stringify({ data: { email: 'forged@example.com', lines: [] } })
+		},
+		maxRedirects: 0
+	});
+	expect(response.status()).toBe(400);
+	expect(await response.text()).toMatch(/couldn.t safely resend/);
+	expect((await deliveriesFor('forged@example.com')).length).toBe(0);
 });

@@ -4,7 +4,7 @@ import {
 	computeAdvisoryEstimate,
 	type InquiryForm,
 	type InquiryIntent,
-	type CreateInquiryRequest
+	type PricedInquiry
 } from '@fionas/shared';
 import { MENU_SECTIONS, PRICE_KEYS } from './menu.js';
 
@@ -97,7 +97,7 @@ export function projectForm(book: PriceBook): InquiryForm {
 /** Staff read the group without the customer's pick instruction: "Toppings — pick 4 to 6" → "Toppings". */
 const groupName = (label: string) => label.replace(/ — pick .*$/, '');
 
-export function priceInquiry(intent: InquiryIntent, book: PriceBook): CreateInquiryRequest {
+export function priceInquiry(intent: InquiryIntent, book: PriceBook): PricedInquiry {
 	const form = projectForm(book);
 	const { serviceInputs, ...contact } = intent;
 	// Price the validated intent itself; raw browser answers never become financial input here.

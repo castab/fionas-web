@@ -23,7 +23,7 @@ export {
 	type AnswerValue,
 	type ChoiceMetadata,
 	type ApiError,
-	type CreateInquiryRequest,
+	type PricedInquiry,
 	type EstimateLine,
 	type EstimatePreview,
 	type FieldErrors,
