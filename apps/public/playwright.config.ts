@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 import { E2E_SERVICE_CREDENTIAL, E2E_SERVICE_ID } from './e2e/test-service.js';
 
@@ -9,6 +10,10 @@ const stubPort = process.env.COMMERCE_STUB_PORT ?? '4174';
 // The stub only issues access tokens to this test-only SERVICE credential, and only answers the
 // three public endpoints to those tokens, so the booking app must authenticate as a SERVICE.
 const service = {
+	FIONAS_PRICES_FILE: fileURLToPath(
+		new URL('./e2e/fixtures/prices.synthetic.yaml', import.meta.url)
+	),
+	FIONAS_REPLAY_SECRET: 'synthetic-test-only-replay-secret-32-bytes',
 	COMMERCE_SERVICE_ID: E2E_SERVICE_ID,
 	COMMERCE_SERVICE_CREDENTIAL: E2E_SERVICE_CREDENTIAL
 };

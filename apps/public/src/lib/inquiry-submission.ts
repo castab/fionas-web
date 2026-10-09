@@ -1,9 +1,4 @@
-import type {
-	CreateInquiryRequest,
-	FieldErrors,
-	InquiryAnswers,
-	InquiryForm
-} from '@fionas/shared';
+import type { FieldErrors, InquiryAnswers, InquiryForm } from '@fionas/shared';
 
 /**
  * How a /book submission that did not produce an inquiry is reported back to the page (the form
@@ -13,7 +8,7 @@ import type {
  * - `malformed`: the page itself is out of date (no usable token or revision); reload.
  * - `rejected`: the backend refused the answers (422 and friends); fix them and send again. When the
  *   refusal says the page's options are out of date it comes with a `refreshedForm` to review.
- * - `stale`: the catalog changed while the customer was filling the form in. `refreshedForm` is the
+ * - `stale`: the private price revision changed while the customer was filling the form in. `refreshedForm` is the
  *   current form, `answers` were fitted to it, and the customer must review before sending again.
  * - `key_reused`: this submission's key already belongs to a different request. Not retried;
  *   `restartToken` lets the customer deliberately send the answers as a new submission.
@@ -36,7 +31,7 @@ export type SubmissionOutcome =
  * what the visitor sees and edits: a retry of an unknown outcome resends this, never a request
  * rebuilt from a newer form.
  */
-export type InquiryReplay = { request: CreateInquiryRequest };
+export type InquiryReplay = { envelope: string };
 
 export type SubmissionFailure = {
 	outcome: SubmissionOutcome;
@@ -45,13 +40,13 @@ export type SubmissionFailure = {
 	formError?: string;
 	/** The `Idempotency-Key` the next submission must carry. Only a reviewed refresh changes it. */
 	submissionToken?: string;
-	/** The catalog revision the answers belong to, sent back with the next submission. */
-	catalogRevision?: number;
+	/** The price revision the answers belong to, sent back with the next submission. */
+	priceRevision?: string;
 	/** `ambiguous`: the command to resend, unchanged, with the same `submissionToken`. */
 	replay?: InquiryReplay;
 	/** `key_reused` / `ambiguous`: a fresh key for a deliberate new submission. */
 	restartToken?: string;
-	/** The current form after a catalog change, which the page must render from now on. */
+	/** The current form after a price revision change, which the page must render from now on. */
 	refreshedForm?: InquiryForm;
 	/** With `refreshedForm`: labels of the questions whose answers were dropped or no longer fit. */
 	reviewFields?: string[];

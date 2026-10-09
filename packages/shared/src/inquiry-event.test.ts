@@ -26,8 +26,7 @@ const field = (
 // every inquiry has needed since version 7.
 const form: InquiryForm = {
 	definitionVersion: 7,
-	catalogId: 'c',
-	catalogRevision: 1,
+	priceRevision: '1',
 	sections: [
 		{
 			key: 'contact',
@@ -69,7 +68,7 @@ const form: InquiryForm = {
 			fields: [
 				{
 					...field('guestCount', { type: 'INTEGER', minimum: 1 }, 'NUMBER'),
-					submissionPointer: '/pricingInputs/guestCount'
+					submissionPointer: '/serviceInputs/guestCount'
 				},
 				{
 					...field(
@@ -77,7 +76,7 @@ const form: InquiryForm = {
 						{ type: 'INTEGER_CHOICE', options: [{ value: 90, label: '90 minutes' }] },
 						'SELECT'
 					),
-					submissionPointer: '/pricingInputs/durationMinutes'
+					submissionPointer: '/serviceInputs/durationMinutes'
 				}
 			]
 		}
@@ -162,8 +161,8 @@ describe('event questions', () => {
 				zipCode: '02134',
 				eventDate: '2026-12-05',
 				eventType: 'BIRTHDAY',
-				pricingInputs: {
-					catalogRevision: 1,
+				serviceInputs: {
+					priceRevision: '1',
 					guestCount: 40,
 					guestCountIsMinimum: false,
 					durationMinutes: 90,

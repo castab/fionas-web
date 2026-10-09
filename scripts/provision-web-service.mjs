@@ -2,7 +2,7 @@
 //
 // Asks for the backend URL and an administrator login, then uses that admin session to provision or
 // validate a dedicated, least-privilege SERVICE:fionas-web (lib/provision.mjs): the service, its
-// `fionas.web` role (exactly three permissions) and that one assignment. Ambiguous or broader
+// `fionas.web` role (exactly the inquiry-creation permission) and that one assignment. Ambiguous or broader
 // existing state is refused, never repaired. Only then does it create a credential, and it writes
 // COMMERCE_API_URL, COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL into apps/public/.env
 // (owner-only on POSIX) or prints them.

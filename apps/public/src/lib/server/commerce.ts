@@ -1,12 +1,6 @@
 import { env } from '$env/dynamic/private';
-import {
-	EXPECTED_DEFINITION_VERSION,
-	pricingContractProblem,
-	type ApiError,
-	type CreateInquiryRequest,
-	type InquiryForm
-} from '@fionas/shared';
-import { isInquiryForm } from './commerce-shapes.js';
+import type { ApiError, CreateInquiryRequest } from '@fionas/shared';
+
 import { createServiceTokenSource } from './service-auth.js';
 
 /*
@@ -14,7 +8,7 @@ import { createServiceTokenSource } from './service-auth.js';
  * browser never talks to it directly: pages, form actions and endpoints call these helpers instead.
  * See docs/public-inquiry-submission.md.
  *
- * The public endpoints (/inquiry-form, POST /inquiries) are called as
+ * POST /inquiries is called as
  * SERVICE:fionas-web, with a short-lived access token from `service-auth.ts` sent as
  * `Authorization: Bearer`. The service credential it is bought with comes from private env
  * (COMMERCE_SERVICE_ID, COMMERCE_SERVICE_CREDENTIAL); neither it nor the token is ever logged,
@@ -24,8 +18,8 @@ import { createServiceTokenSource } from './service-auth.js';
 /**
  * How a call failed, for behavior (the stable backend `code` says which conflict or violation):
  * - `validation`: 400 / 422, a definite refusal; nothing was written
- * - `not_found`: 404 (catalog not initialized, or an unknown revision)
- * - `conflict`: 409 (`CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`, or the retryable `conflict`)
+ * - `not_found`: 404 (a definite refusal)
+ * - `conflict`: 409 (`IDEMPOTENCY_KEY_REUSED` or the retryable `conflict`)
  * - `service_auth`: our SERVICE identity couldn't be used: no token could be obtained (credential
  *   missing or refused, token endpoint unreachable or answering outside the contract), a fresh
  *   token was still refused (401), or the service lacks the permission (403). The protected request
@@ -84,7 +78,7 @@ type RequestOptions = {
 	method?: 'GET' | 'POST';
 	json?: unknown;
 	headers?: Record<string, string>;
-	/** Skip every cache between here and the backend (stale-catalog recovery). */
+	/** Skip every cache between here and the backend for a fresh request. */
 	fresh?: boolean;
 	/** The fionas.web permission the call needs, named in the operator's log on a 403. */
 	permission: string;
@@ -148,18 +142,6 @@ async function decode(response: Response): Promise<ApiResult<unknown>> {
 	};
 }
 
-/** A 2xx is trusted only in its documented shape; anything else fails closed. */
-function shaped<T>(
-	result: ApiResult<unknown>,
-	check: (body: unknown) => body is T,
-	what: string
-): ApiResult<T> {
-	if (!result.ok) return result;
-	if (check(result.data)) return { ok: true, data: result.data };
-	console.error(`[commerce] ${what} returned a body outside the contract; not using it`);
-	return failure('unexpected', 502, 'bad_response', `Unexpected ${what} response`);
-}
-
 const isReceipt = (body: unknown): body is InquiryReceipt =>
 	typeof body === 'object' &&
 	body !== null &&
@@ -167,14 +149,11 @@ const isReceipt = (body: unknown): body is InquiryReceipt =>
 	typeof (body as InquiryReceipt).createdAt === 'string';
 
 /** The 409 codes that definitely mean "nothing was recorded for this request". */
-const DEFINITE_CONFLICTS: ReadonlySet<string> = new Set([
-	'CATALOG_REVISION_STALE',
-	'IDEMPOTENCY_KEY_REUSED'
-]);
+const DEFINITE_CONFLICTS: ReadonlySet<string> = new Set(['IDEMPOTENCY_KEY_REUSED']);
 
 /**
  * Whether a failed POST /inquiries may have been committed anyway. Only documented refusals prove
- * nothing was written: `400`, `404`, `422`, `409 CATALOG_REVISION_STALE` / `IDEMPOTENCY_KEY_REUSED`,
+ * nothing was written: `400`, `404`, `422`, `409 IDEMPOTENCY_KEY_REUSED`,
  * and a service-auth failure (refused before processing). Everything else leaves the outcome
  * unknown: a timeout or network failure, an unreadable or misshapen success, the documented
  * retryable `409 conflict`, and **every 5xx**, `500` included (a failure after the database work
@@ -186,33 +165,6 @@ export const isOutcomeUnknown = (error: CommerceError) => {
 	if (error.status === 400 || error.status === 404 || error.status === 422) return false;
 	return !(error.kind === 'conflict' && DEFINITE_CONFLICTS.has(error.code));
 };
-
-const warned = new Set<string>();
-const warnOnce = (message: string) => {
-	if (warned.has(message)) return;
-	warned.add(message);
-	console.warn(message);
-};
-
-/**
- * The form is self-describing, so a newer question definition still renders; the operator should
- * know when it differs from what this UI was built against. Logged once each, never shown to
- * customers. A form incompatible with POST /inquiries (`pricingContractProblem`, such as an optional
- * service section) is refused by the callers: no form is offered and nothing is sent.
- */
-function checkDefinition(form: InquiryForm) {
-	if (form.definitionVersion !== EXPECTED_DEFINITION_VERSION) {
-		warnOnce(
-			`[commerce] GET /inquiry-form returned definitionVersion ${form.definitionVersion}; this UI expects ${EXPECTED_DEFINITION_VERSION}`
-		);
-	}
-	const problem = pricingContractProblem(form);
-	if (problem) {
-		warnOnce(
-			`[commerce] GET /inquiry-form is incompatible with POST /inquiries (${problem}); inquiries are off`
-		);
-	}
-}
 
 /**
  * A client authenticated as SERVICE:fionas-web. Every protected call takes the current access token
@@ -293,22 +245,6 @@ export function createCommerceClient(config: CommerceClientConfig) {
 	}
 
 	/**
-	 * GET /inquiry-form. Every call reaches the backend: nothing here caches the form, so a page view
-	 * always renders the current revision. `fresh` also tells any HTTP cache in between to revalidate
-	 * (the backend sends `private, max-age=60, must-revalidate`), for recovery from
-	 * `CATALOG_REVISION_STALE`.
-	 */
-	async function getInquiryForm({ fresh = false }: { fresh?: boolean } = {}) {
-		const result = shaped(
-			await request('/inquiry-form', { fresh, permission: 'fionas.inquiry-form.read' }),
-			isInquiryForm,
-			'GET /inquiry-form'
-		);
-		if (result.ok) checkDefinition(result.data);
-		return result;
-	}
-
-	/**
 	 * POST /inquiries with the logical submission's `Idempotency-Key`. The caller owns the key: it
 	 * names one visible submission and must be the same for every delivery of it. A failure that
 	 * leaves the outcome unknown is retried once here with that same key and the same body, so a
@@ -322,8 +258,8 @@ export function createCommerceClient(config: CommerceClientConfig) {
 			throw new Error('createInquiry needs the logical submission key ([A-Za-z0-9_-]{1,128})');
 		}
 		// The type already says so; this guards untyped callers. There is no contact-only inquiry.
-		if (typeof inquiry?.pricingInputs !== 'object' || inquiry.pricingInputs === null) {
-			throw new Error('createInquiry needs pricingInputs: every inquiry is configured service');
+		if (typeof inquiry?.requestedService !== 'object' || inquiry.requestedService === null) {
+			throw new Error('createInquiry needs requestedService: every inquiry is configured service');
 		}
 
 		const send = async (): Promise<ApiResult<InquiryReceipt>> => {
@@ -354,7 +290,7 @@ export function createCommerceClient(config: CommerceClientConfig) {
 		return result;
 	}
 
-	return { getInquiryForm, createInquiry };
+	return { createInquiry };
 }
 
 export type CommerceClient = ReturnType<typeof createCommerceClient>;
@@ -389,9 +325,6 @@ function commerce(): CommerceClient {
 export function resetCommerceClient(): void {
 	shared = null;
 }
-
-export const getInquiryForm: CommerceClient['getInquiryForm'] = (options) =>
-	commerce().getInquiryForm(options);
 
 export const createInquiry: CommerceClient['createInquiry'] = (inquiry, idempotencyKey) =>
 	commerce().createInquiry(inquiry, idempotencyKey);

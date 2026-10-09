@@ -29,7 +29,7 @@ const choice = (
 ): InquiryFormField => ({
 	key: `offering:${category}`,
 	label: category,
-	submissionPointer: '/pricingInputs/selections',
+	submissionPointer: '/serviceInputs/selections',
 	required: min > 0,
 	input: { type: 'OFFERING_CHOICE', category, minSelections: min, maxSelections: max, options },
 	presentation: { control: 'CARDS' }
@@ -39,8 +39,7 @@ const choice = (
 // amounts are fixture values, not any real catalog revision's prices.
 const form: InquiryForm = {
 	definitionVersion: 7,
-	catalogId: 'c',
-	catalogRevision: 15,
+	priceRevision: '15',
 	sections: [
 		{
 			key: 'service',
@@ -50,7 +49,7 @@ const form: InquiryForm = {
 				{
 					key: 'guestCount',
 					label: 'Guests',
-					submissionPointer: '/pricingInputs/guestCount',
+					submissionPointer: '/serviceInputs/guestCount',
 					required: true,
 					input: { type: 'INTEGER', minimum: 1 },
 					presentation: { control: 'NUMBER' }
@@ -58,7 +57,7 @@ const form: InquiryForm = {
 				{
 					key: 'guestCountIsMinimum',
 					label: 'Minimum',
-					submissionPointer: '/pricingInputs/guestCountIsMinimum',
+					submissionPointer: '/serviceInputs/guestCountIsMinimum',
 					required: false,
 					input: { type: 'BOOLEAN', defaultValue: false },
 					presentation: { control: 'CHECKBOX' }
@@ -66,7 +65,7 @@ const form: InquiryForm = {
 				{
 					key: 'durationMinutes',
 					label: 'Duration',
-					submissionPointer: '/pricingInputs/durationMinutes',
+					submissionPointer: '/serviceInputs/durationMinutes',
 					required: true,
 					input: {
 						type: 'INTEGER_CHOICE',
@@ -289,7 +288,7 @@ describe('computeAdvisoryEstimate', () => {
 		);
 	});
 
-	it('prefers line wording the backend supplies, ignoring null or blank text', () => {
+	it('prefers projected line wording, ignoring null or blank text', () => {
 		const worded = JSON.parse(JSON.stringify(form)) as InquiryForm;
 		const preview = worded.pricingPreview;
 		preview.baseServiceDescription = 'Trailer visit';

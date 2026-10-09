@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	answersFromFormData,
-	CATALOG_STATE_VIOLATIONS,
-	completePricingInputs,
-	describeViolation,
-	draftPricingInputs,
+	completeServiceInputs,
+	draftServiceInputs,
 	emptyAnswers,
 	formatOfferingPrice,
 	hasPricingBasics,
@@ -37,8 +35,7 @@ const flavor = (
 /** A definition version 7 form: the service section is required. Synthetic catalog. */
 const form: InquiryForm = {
 	definitionVersion: 7,
-	catalogId: '0cde8e0b-aa9c-4129-9853-8db2cbbb909b',
-	catalogRevision: 15,
+	priceRevision: '15',
 	sections: [
 		{
 			key: 'contact',
@@ -101,7 +98,7 @@ const form: InquiryForm = {
 				{
 					key: 'guestCount',
 					label: 'How many guests?',
-					submissionPointer: '/pricingInputs/guestCount',
+					submissionPointer: '/serviceInputs/guestCount',
 					required: true,
 					input: { type: 'INTEGER', minimum: 1 },
 					presentation: { control: 'NUMBER' }
@@ -109,7 +106,7 @@ const form: InquiryForm = {
 				{
 					key: 'guestCountIsMinimum',
 					label: 'This is a minimum guest count',
-					submissionPointer: '/pricingInputs/guestCountIsMinimum',
+					submissionPointer: '/serviceInputs/guestCountIsMinimum',
 					required: false,
 					input: { type: 'BOOLEAN', defaultValue: false },
 					presentation: { control: 'CHECKBOX' }
@@ -117,7 +114,7 @@ const form: InquiryForm = {
 				{
 					key: 'durationMinutes',
 					label: 'How long would you like service?',
-					submissionPointer: '/pricingInputs/durationMinutes',
+					submissionPointer: '/serviceInputs/durationMinutes',
 					required: true,
 					input: {
 						type: 'INTEGER_CHOICE',
@@ -131,7 +128,7 @@ const form: InquiryForm = {
 				{
 					key: 'offering:soft-serve-flavor',
 					label: 'Choose your soft serve flavors',
-					submissionPointer: '/pricingInputs/selections',
+					submissionPointer: '/serviceInputs/selections',
 					required: true,
 					input: {
 						type: 'OFFERING_CHOICE',
@@ -303,8 +300,8 @@ describe('prepareInquiry', () => {
 			zipCode: '02134',
 			eventDate: '2026-12-05',
 			eventType: 'BIRTHDAY',
-			pricingInputs: {
-				catalogRevision: 15,
+			serviceInputs: {
+				priceRevision: '15',
 				guestCount: 75,
 				guestCountIsMinimum: false,
 				durationMinutes: 120,
@@ -316,14 +313,14 @@ describe('prepareInquiry', () => {
 	it('sends guestCountIsMinimum from its question, false when the form asks none', () => {
 		const answers = answered();
 		answers.values.guestCountIsMinimum = true;
-		expect(requestOf(prepareInquiry(form, answers)).pricingInputs.guestCountIsMinimum).toBe(true);
+		expect(requestOf(prepareInquiry(form, answers)).serviceInputs.guestCountIsMinimum).toBe(true);
 
 		const withoutQuestion = clone();
 		withoutQuestion.sections[1]!.fields = withoutQuestion.sections[1]!.fields.filter(
 			(f) => f.key !== 'guestCountIsMinimum'
 		);
 		const request = requestOf(prepareInquiry(withoutQuestion, answered()));
-		expect(request.pricingInputs.guestCountIsMinimum).toBe(false);
+		expect(request.serviceInputs.guestCountIsMinimum).toBe(false);
 	});
 
 	it('drops a blank message and trims a real one', () => {
@@ -336,7 +333,7 @@ describe('prepareInquiry', () => {
 
 	it('never sends prices, totals or presentation data', () => {
 		const text = JSON.stringify(requestOf(prepareInquiry(form, answered())));
-		expect(text).not.toMatch(/amount|total|price|lines|estimate|label|displayName|options/i);
+		expect(text).not.toMatch(/amount|total|unitPrice|lines|estimate|label|displayName|options/i);
 	});
 
 	// Critical regression: there is no plain/contact-only inquiry any more (definition version 7).
@@ -378,7 +375,7 @@ describe('prepareInquiry', () => {
 			expect(prepareInquiry(form, answers).ok).toBe(false);
 		});
 
-		it('refuses a form that cannot produce pricingInputs, whatever the answers', () => {
+		it('refuses a form that cannot produce serviceInputs, whatever the answers', () => {
 			const noService = clone();
 			noService.sections = noService.sections.filter((s) => s.key !== 'service');
 			expect(prepareInquiry(noService, contactOnly())).toEqual({
@@ -398,7 +395,7 @@ describe('prepareInquiry', () => {
 			});
 		});
 
-		it('builds complete pricingInputs in every request it does build', () => {
+		it('builds complete serviceInputs in every request it does build', () => {
 			const variants: InquiryAnswers[] = [answered(), contactOnly(), emptyAnswers(form)];
 			for (const picks of [[], ['vanilla'], ['chocolate', 'horchata'], ['mango']]) {
 				for (const guests of ['', '1', '75']) {
@@ -414,12 +411,12 @@ describe('prepareInquiry', () => {
 			const built = variants.map((a) => prepareInquiry(form, a)).filter((c) => c.ok);
 			expect(built.length).toBeGreaterThan(0);
 			for (const command of built) {
-				const { pricingInputs } = requestOf(command);
-				expect(pricingInputs.catalogRevision).toBe(15);
-				expect(pricingInputs.guestCount).toBeGreaterThanOrEqual(1);
-				expect([90, 120]).toContain(pricingInputs.durationMinutes);
-				expect(pricingInputs.selections[0]?.category).toBe('soft-serve-flavor');
-				expect(pricingInputs.selections[0]?.offerings.length).toBeGreaterThanOrEqual(1);
+				const { serviceInputs } = requestOf(command);
+				expect(serviceInputs.priceRevision).toBe('15');
+				expect(serviceInputs.guestCount).toBeGreaterThanOrEqual(1);
+				expect([90, 120]).toContain(serviceInputs.durationMinutes);
+				expect(serviceInputs.selections[0]?.category).toBe('soft-serve-flavor');
+				expect(serviceInputs.selections[0]?.offerings.length).toBeGreaterThanOrEqual(1);
 			}
 		});
 	});
@@ -457,16 +454,10 @@ describe('prepareInquiry', () => {
 		expect(prepareInquiry(form, answers)).toMatchObject({ ok: false, reason: 'invalid' });
 	});
 
-	it('pins older answers to their own revision and leaves option membership to the backend', () => {
+	it('validates menu membership even when a caller supplies an old freshness token', () => {
 		const answers = answered();
-		answers.values['offering:soft-serve-flavor'] = ['vanilla', 'retired-since'];
-		const request = requestOf(prepareInquiry(form, answers, { catalogRevision: 14 }));
-		expect(request.pricingInputs.catalogRevision).toBe(14);
-		expect(request.pricingInputs.selections[0]?.offerings).toEqual(['vanilla', 'retired-since']);
-
-		// ...but never the service configuration itself.
-		answers.values.guestCount = '';
-		expect(prepareInquiry(form, answers, { catalogRevision: 14 }).ok).toBe(false);
+		answers.values['offering:soft-serve-flavor'] = ['retired-since'];
+		expect(prepareInquiry(form, answers, { priceRevision: 'old' }).ok).toBe(false);
 	});
 });
 
@@ -497,7 +488,7 @@ describe('pricingContractProblem', () => {
 
 	it('refuses a pricing pointer or input type it does not understand', () => {
 		const unknown = clone();
-		unknown.sections[1]!.fields[0]!.submissionPointer = '/pricingInputs/total';
+		unknown.sections[1]!.fields[0]!.submissionPointer = '/serviceInputs/total';
 		expect(pricingContractProblem(unknown)).toMatch(/unsupported pricing pointer/);
 
 		const mismatched = clone();
@@ -518,7 +509,7 @@ describe('reconcileAnswers', () => {
 	/** The same form after a catalog publication: Horchata retired, at most one flavor. */
 	function republished(): InquiryForm {
 		const next = clone();
-		next.catalogRevision = 16;
+		next.priceRevision = '16';
 		for (const field of next.sections.flatMap((s) => s.fields)) {
 			if (field.input.type === 'OFFERING_CHOICE') {
 				field.input.maxSelections = 1;
@@ -577,7 +568,7 @@ describe('reconcileAnswers', () => {
 
 	it('never invents picks to meet a raised minimum', () => {
 		const next = clone();
-		next.catalogRevision = 16;
+		next.priceRevision = '16';
 		const flavors = next.sections[1]!.fields.find((f) => f.key === 'offering:soft-serve-flavor')!;
 		if (flavors.input.type === 'OFFERING_CHOICE') flavors.input.minSelections = 2;
 		const previous = answered();
@@ -629,19 +620,19 @@ describe('estimates', () => {
 
 	it('drafts pricing for the advisory estimate once the basics are known', () => {
 		const answers = emptyAnswers(form);
-		expect(draftPricingInputs(form, answers)).toBeNull();
+		expect(draftServiceInputs(form, answers)).toBeNull();
 		answers.values.guestCount = '20';
 		answers.values.durationMinutes = '90';
-		expect(draftPricingInputs(form, answers)).toEqual({
-			catalogRevision: 15,
+		expect(draftServiceInputs(form, answers)).toEqual({
+			priceRevision: '15',
 			guestCount: 20,
 			guestCountIsMinimum: false,
 			durationMinutes: 90,
 			selections: []
 		});
 		// Not enough for the server preview, which needs the complete configuration.
-		expect(completePricingInputs(form, answers)).toBeNull();
-		expect(completePricingInputs(form, answered())?.selections).toHaveLength(1);
+		expect(completeServiceInputs(form, answers)).toBeNull();
+		expect(completeServiceInputs(form, answered())?.selections).toHaveLength(1);
 	});
 });
 
@@ -671,23 +662,6 @@ describe('answersFromFormData', () => {
 });
 
 describe('copy helpers', () => {
-	it('gives friendly violation text with a generic fallback', () => {
-		expect(describeViolation('TOO_MANY_SELECTIONS')).toMatch(/too many/);
-		expect(describeViolation('OFFERING_UNAVAILABLE')).toMatch(/unavailable right now/);
-		expect(describeViolation('OFFERING_DISABLED')).toMatch(/no longer on our menu/);
-		expect(describeViolation('SOMETHING_NEW')).toMatch(/review/);
-	});
-
-	it('knows which violations mean the options on the page are out of date', () => {
-		expect([...CATALOG_STATE_VIOLATIONS].sort()).toEqual([
-			'OFFERING_DISABLED',
-			'OFFERING_UNAVAILABLE',
-			'PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED',
-			'UNKNOWN_OFFERING'
-		]);
-		expect(CATALOG_STATE_VIOLATIONS.has('INVALID_GUEST_COUNT')).toBe(false);
-	});
-
 	it('formats offering prices', () => {
 		expect(
 			formatOfferingPrice({

@@ -4,18 +4,7 @@ import type { Page } from '@playwright/test';
 
 export const stub = `http://127.0.0.1:${process.env.COMMERCE_STUB_PORT ?? '4174'}`;
 
-export type Submission = {
-	name: string;
-	email: string;
-	message?: string;
-	pricingInputs: {
-		catalogRevision: number;
-		guestCount: number;
-		guestCountIsMinimum: boolean;
-		durationMinutes: number;
-		selections: { category: string; offerings: string[] }[];
-	};
-};
+export type Submission = import('@fionas/shared').CreateInquiryRequest;
 
 /** One POST /inquiries the stub saw: under which key, with which access token, and whether it
  * accepted that token. */

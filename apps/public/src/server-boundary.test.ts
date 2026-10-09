@@ -35,7 +35,7 @@ const clientReachable = [
 ];
 
 const secrets =
-	/\$env\/(static|dynamic)\/private|\$lib\/server|COMMERCE_SERVICE_(ID|CREDENTIAL)|\/auth\/service\/token|process\.env/;
+	/\$env\/(static|dynamic)\/private|\$lib\/server|COMMERCE_SERVICE_(ID|CREDENTIAL)|FIONAS_(PRICES_FILE|REPLAY_SECRET)|\/auth\/service\/token|process\.env/;
 
 describe('server-only commerce access', () => {
 	it('finds client-reachable sources to check', () => {

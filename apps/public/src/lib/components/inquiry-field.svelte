@@ -11,7 +11,7 @@
 	} from '@fionas/shared';
 
 	/**
-	 * Renders one question from GET /inquiry-form. The control follows `presentation.control`
+	 * Renders one code-owned question. The control follows `presentation.control`
 	 * (short choice lists become chips); `input` supplies the constraints. Field `name` is the field
 	 * key so the plain HTML form submits without JavaScript.
 	 */

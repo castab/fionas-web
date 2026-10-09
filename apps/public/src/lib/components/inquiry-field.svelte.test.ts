@@ -31,7 +31,7 @@ function scoops(
 		key: 'offering:test-scoop',
 		label: 'Pick test scoops',
 		description: 'Described by the backend.',
-		submissionPointer: '/pricingInputs/selections',
+		submissionPointer: '/serviceInputs/selections',
 		required: (limits.min ?? 1) > 0,
 		input: {
 			type: 'OFFERING_CHOICE',

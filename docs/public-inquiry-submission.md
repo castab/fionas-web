@@ -1,442 +1,55 @@
 # Public inquiry submission
 
-How a customer's `/book` request reaches `fionas-commerce`, and what the public SvelteKit app
-promises along the way. Read this before changing the inquiry form, its action or the commerce
-adapter.
+The web app owns Fiona's menu, input descriptors, availability, selection limits and pricing formulas in TypeScript. Only monetary values are private configuration. Commerce 0.0.23 accepts trusted already-priced lines; its deleted catalog and form APIs are never called.
 
-**The invariant.** Every inquiry is a request for configured ice cream service. There is no
-plain/contact-only inquiry (definition version 11):
+## Local and deployment setup
 
-```
-No configured ice cream service   →  no inquiry submission
-Complete configured service       →  POST /inquiries
-                                  →  backend validates and prices it, authoritatively, once
-                                  →  Inquiry + Estimate v1 (+ INITIAL_ESTIMATE) commit together
-                                  →  customer sees "Request received"
-```
+Set BOOKING_ENABLED=true, COMMERCE_API_URL, COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL in the public app's private environment. Booking stays gated with a 404 while disabled; the marketing site starts without these credentials.
 
-## Trust boundary
+Set FIONAS_PRICES_FILE to an absolute private YAML path, e.g. /run/secrets/fionas/prices.yaml. Local development can use a gitignored prices.local.yaml. Never commit or bake the business price book into an image. The test fixture apps/public/e2e/fixtures/prices.synthetic.yaml is deliberately fictional and is never a runtime default. It can be copied to an ignored local file and replaced with operator-supplied prices.
 
-```
- Browser                        Public SvelteKit server                     fionas-commerce
- ───────                        ───────────────────────                     ───────────────
-                                (first need, or token due) ─────────────▶  POST /auth/service/token
-                                ◀── access token (memory)                   { serviceId, secret }
- GET /book  ─────────────────▶  load: getInquiryForm() ─────────────────▶  GET /inquiry-form
- ◀── form + submissionToken
- POST /book (form action) ────▶  submitInquiry() → createInquiry() ─────▶  POST /inquiries
-   submissionToken,                                Authorization: Bearer <access token>
-   catalogRevision, answers                        Idempotency-Key: <submissionToken>
- ◀── 303 /book/received  (or the form again, with a recoverable state)
-```
+The supported YAML subset is intentionally small: revision is a nonempty quoted string (at most 160 characters), followed by amounts, a mapping with two-space indentation. Every amount is a quoted nonnegative exact decimal string. No duplicate keys, extra keys, YAML numbers, aliases, tags, merges, exponents or constructors are accepted. The exact required keys are exported as PRICE_KEYS in apps/public/src/lib/server/menu.ts and listed below. Each key must exist, including explicit zero-valued surcharges:
 
-- **Service credentials are server-only.** The site is `SERVICE:fionas-web` at the backend.
-  `COMMERCE_SERVICE_ID` and `COMMERCE_SERVICE_CREDENTIAL` are read through `$env/dynamic/private` in
-  exactly one file, `apps/public/src/lib/server/commerce.ts`, at request time, so their values are
-  never inlined into any build output; only `service-auth.ts` sends them anywhere (the token
-  endpoint). The access tokens they buy live in server memory only. SvelteKit refuses to bundle
-  `$lib/server` or private env into client code, and `src/server-boundary.test.ts` fails if any
-  client-reachable source (routes, components, `@fionas/ui`, `@fionas/shared`) imports them. Neither
-  the credential nor a token is ever logged, returned in page data, set in a cookie or echoed in
-  errors; the e2e suite checks `/book`, `__data.json`, cookies and every file in
-  `build/client`.
-- **The browser only talks to the SvelteKit origin.** The backend sends no CORS headers and none
-  are needed; CORS is not the security mechanism. The browser never learns the backend's address
-  (`COMMERCE_API_URL`, shared with the admin app).
-- **Page data is safe to show.** The browser receives the inquiry form definition (the backend's
-  public form), a submission token, and, after a failed submit, its own answers and a customer-facing
-  message. Backend diagnostic messages are never rendered or parsed.
-- **Credentials are provisioned by an operator.** A staff administrator runs
-  `npm run provision:service`, which provisions or validates a dedicated `SERVICE:fionas-web`
-  holding exactly `fionas.web` (exactly the three public inquiry permissions), refuses ambiguous or
-  broader existing state instead of repairing it, and only then mints a credential (README,
-  "Service authentication"). The app never provisions or rotates anything itself. No OAuth, refresh
-  tokens or JWT handling in the frontend.
+- event.base
+- event.hourly
+- event.per_guest
+- topping.extra_per_guest
+- soft-serve-flavor.vanilla
+- soft-serve-flavor.chocolate
+- soft-serve-flavor.horchata
+- hand-scooped-flavor.hand-scooped-chocolate-chip
+- hand-scooped-flavor.hand-scooped-chocolate
+- hand-scooped-flavor.hand-scooped-vanilla-bean
+- hand-scooped-flavor.hand-scooped-strawberry
+- topping.sprinkles
+- topping.oreos
+- topping.strawberries
+- topping.brownies
+- topping.gummy-bears
+- topping.cookie-dough
+- cone-option.cup
+- cone-option.waffle-cone
 
-| Variable                      | Where           | Purpose                                                              |
-| ----------------------------- | --------------- | -------------------------------------------------------------------- |
-| `COMMERCE_API_URL`            | private, server | fionas-commerce base URL (default `http://localhost:8080`)           |
-| `COMMERCE_SERVICE_ID`         | private, server | UUID of `SERVICE:fionas-web`                                         |
-| `COMMERCE_SERVICE_CREDENTIAL` | private, server | its credential secret, exchanged for access tokens                   |
-| `BOOKING_ENABLED`             | private, server | `true` serves `/book`; otherwise it 404s and CTAs show "coming soon" |
+Nine integer digits and twelve fractional digits bound input. The public menu offers arbitrary integer guests and half-hour durations, so per-guest and fixed amounts must settle for every offered quantity (whole cents), and hourly amounts must settle for half an hour (even cents). The engine rejects nonsettleable extensions without rounding. Precise rates for restricted quantities remain supported by the exact line arithmetic and staff editor. Currency is code-owned USD; line tax is zero because no existing tax policy is configured.
 
-## Service authentication
+Set FIONAS_REPLAY_SECRET to an independent cryptographically random signing secret of at least 32 bytes. Generate it with Node crypto.randomBytes(32).toString('base64url') in your private deployment environment. Never use a Commerce signing key. All public replicas must share this secret throughout the 24-hour replay window. Rotating it immediately invalidates outstanding envelopes; retain it across normal deployments and restarts. Replays then remain independent of the current price file. Neither secret, price-file path nor price keys are projected to visitors.
 
-`service-auth.ts` holds the site's SERVICE identity; `commerce.ts`' `createCommerceClient` uses it
-for every call. One client (and so one token) per server process, created from env on first use.
+## Pricing and freshness
 
-- **Lazy.** Nothing happens at startup: the marketing site runs without credentials. The first call
-  that needs the backend checks them (missing or not a UUID: logged once, "unavailable") and
-  exchanges them at `POST /auth/service/token`.
-- **In memory only.** A successful exchange caches `{ accessToken, expiresAt, refreshAt }` in the
-  client's closure; never in cookies, files, page data or env. Expiry comes from the response's
-  `expiresIn`, counted from when the request was sent; the token is opaque and never decoded.
-- **Refreshed early.** A token is replaced once `refreshAt` passes: a tenth of its lifetime before
-  expiry, at least 1 s, at most 60 s, never more than half the lifetime (a 15-minute token a minute
-  early). If that refresh fails while the old token is still unexpired, the old one is used.
-- **One exchange at a time.** The backend verifies credentials with memory-hard Argon2, so requests
-  that find no usable token share a single in-flight exchange, which is released on success and
-  failure alike.
-- **Cooldown after a failure.** A failed exchange (refused, unreachable, `429`/`5xx`, unusable body)
-  blocks the next one for 5 s, then 10, 20, 40 and at most 60 s while failures continue; a `429` or
-  `503` with a `Retry-After` in seconds is honored instead (bounded to 5 minutes). Requests during
-  the cooldown fail fast as `service_auth` without calling the backend (and without a log line
-  each); a still-unexpired token keeps serving, but a token the backend refused never comes back.
-  When the cooldown ends, one exchange goes (shared by concurrent callers), and a success resets the
-  backoff. Missing or invalid configuration makes no request, so it needs no cooldown.
-- **401: one retry.** The token that was refused is dropped only if it is still the cached one (a
-  newer token another request installed survives), a current token is obtained, and the identical
-  request (same body bytes, same `Idempotency-Key`) is sent once more. A second `401` is final.
-- **403: no retry.** The service authenticated but lacks the permission; the backend resolves
-  grants live, so a new token can't help.
-- **Failures are outages.** No usable token (credential missing or refused, token endpoint
-  unreachable or answering outside the contract), a final `401` or a `403` is a `service_auth`
-  error: nothing was processed. The server logs a safe operator hint, such as
-  `[commerce] service token exchange failed → 401; check COMMERCE_SERVICE_ID / COMMERCE_SERVICE_CREDENTIAL`
-  or `[commerce] POST /inquiries → 403; check fionas-web service permissions (needs fionas.inquiries.create)`
-  (method, path, status, hint; never a credential, token, header or body). Visitors see only the
-  generic "unavailable" copy: `/book` shows no form, the action reports `unavailable` ("hasn't been
-  sent"). The estimate never depends on the backend, so it is unaffected.
+The file is validated and cached as one immutable snapshot after the first successful read in each process. Missing or invalid configuration produces a safe unavailable state. There are no watchers, fallbacks, polling or admin configuration editors. Changing a file requires restarting every replica. Change the opaque revision whenever amounts or public menu/rules change; unchanged-revision changes cannot be detected across restarts, so operators must enforce this contract. Coordinate replicas on the same revision. A stale initial form is refused locally before any backend POST, receives the current projected prices and a fresh submission key, and requires customer review.
 
-## Code map
+The public projection contains only control metadata and applicable advisory rates. It may reveal customer-facing prices; the privacy requirement concerns version control, not customer secrecy. The combined base-service line is event.base plus event.hourly times durationMinutes / 60; additional lines charge guests, selected item add-ons and selected toppings beyond four times guests. Decimal arithmetic uses BigInt without truncating rates. Form controls preserve 90/120/150/180 minutes, one or two of Vanilla/Chocolate/Horchata, all four Chocolate Chip/Chocolate/Vanilla Bean/Strawberry hand-scooped choices, four to six toppings (sprinkles, oreos, strawberries, brownies, gummy-bears, cookie-dough), and one cup/waffle-cone choice. Gummy bears remain visible and unavailable. This intentionally removes three extra fixture-only hand-scooped flavors to meet the requested four-flavor scope. Guest counts are bounded at 100000 by the backend descriptive-service contract.
 
-| Concern                                                  | File                                                   |
-| -------------------------------------------------------- | ------------------------------------------------------ |
-| HTTP to fionas-commerce (URL, auth, timeout, errors)     | `apps/public/src/lib/server/commerce.ts`               |
-| SERVICE credential → access token (cache, refresh)       | `apps/public/src/lib/server/service-auth.ts`           |
-| Response and replay shape checks (fail closed)           | `apps/public/src/lib/server/commerce-shapes.ts`        |
-| Submission flow (token, revision, outcomes, receipt)     | `apps/public/src/lib/server/inquiry-submission.ts`     |
-| Failure payload type + customer copy (client-safe)       | `apps/public/src/lib/inquiry-submission.ts`            |
-| Form load + action                                       | `apps/public/src/routes/book/+page.server.ts`          |
-| Form UI: sections, hidden token/revision, review, errors | `apps/public/src/routes/book/+page.svelte`             |
-| One question: controls, offering chips, availability     | `apps/public/src/lib/components/inquiry-field.svelte`  |
-| Estimate card                                            | `apps/public/src/lib/components/estimate-panel.svelte` |
-| Confirmation page                                        | `apps/public/src/routes/book/received/`                |
-| Submit gate, answer mapping, validation, reconciliation  | `packages/shared/src/inquiry.ts`                       |
-| Advisory estimate arithmetic                             | `packages/shared/src/estimate.ts`                      |
+The browser submits customer answers and an opaque priceRevision, never trusted financial lines. prepareInquiry validates the complete configured service. The server independently uses its own projection and private snapshot to price and construct requestedService with code-owned labels. POST /inquiries contains name/email/ZIP/date/type, optional message, requestedService and ordered PricedLine records. No totals or backend offering references are sent. A successful request creates an Estimate; it neither books a date nor takes payment.
 
-## The adapter
+## Immutable delivery and replay
 
-`commerce.ts` owns the base URL, service authentication (above), request construction, JSON
-decoding, an 8 s timeout and error decoding. Route files never call `fetch` on the backend. Operations:
-`getInquiryForm({ fresh })` and
-`createInquiry(request, idempotencyKey)`. Every result is `{ ok: true, data }` or
-`{ ok: false, error }`, where `error` keeps the backend's stable `code` and violation codes and adds
-a `kind`:
+Every logical submission owns one Idempotency-Key. Automatic retry sends the identical priced body once after an unknown outcome. Every 5xx, unreadable response, timeout and uncertain conflict leaves the outcome unknown. Answers freeze after that outcome. A definite receipt or refusal ends it; IDEMPOTENCY_KEY_REUSED requires deliberate restart. There is no auto-resubmission.
 
-| `kind`         | Meaning                                                                                            |
-| -------------- | -------------------------------------------------------------------------------------------------- |
-| `validation`   | `400` / `422`: refused; nothing written                                                            |
-| `not_found`    | `404`: catalog not initialized or unknown revision                                                 |
-| `conflict`     | `409`: `CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`, `conflict`                              |
-| `service_auth` | no usable service token, or a final `401` / `403`: not processed (logged for the operator)         |
-| `server`       | `5xx`                                                                                              |
-| `timeout`      | no answer within 8 s; for a POST the outcome is **unknown**                                        |
-| `network`      | connection failed; for a POST the outcome is **unknown**                                           |
-| `unexpected`   | outside the contract: unreadable or wrongly shaped body, odd status (redirects are never followed) |
+Before first delivery the server signs an envelope containing the immutable serialized command, SHA-256 digest, logical key and issue time with HMAC-SHA256. Replay verification checks signature in constant time, key, digest, structural shape and a 24-hour lifetime before any backend call. Altered, unsigned, expired or re-bound commands are refused with no fallback. A valid old envelope resends its original priced body even after prices change; it is never repriced. The browser holds customer data in that envelope only for this workflow; it is not confidential encryption and is never logged.
 
-A `2xx` is trusted only in its documented shape (`commerce-shapes.ts`): a form with an input type
-this UI can't render, or a receipt or estimate without its fields, fails closed and `/book` shows
-"isn't available right now" instead of guessing.
+The page is private/no-store because it carries a unique token. A successful delivery uses an HttpOnly receipt cookie and a 303 to /book/received. Native and enhanced forms share the same server action. SERVICE exchange remains lazy, cached only in memory, refreshed once on 401, with no retry on 403. Credentials and tokens never reach client code.
 
-## The form comes from the backend
+## Operator permission remediation
 
-`GET /inquiry-form` (definition version 11, `EXPECTED_DEFINITION_VERSION`) is the source of truth for
-which questions and options exist. `/book` renders its sections and fields in the order sent, with
-the backend's titles, labels and descriptions, choosing controls from `input` semantics (`TEXT`,
-`EMAIL`, `INTEGER`, `BOOLEAN`, `INTEGER_CHOICE`, `STRING_CHOICE`, `OFFERING_CHOICE`, `DATE`) and the
-`presentation.control` hint, and maps answers back through each field's `submissionPointer`. No
-offering keys, names, prices, category limits or durations live in UI code
-(`src/catalog-hardcoding.test.ts` checks this against the captured form). There is no phone field:
-the form doesn't ask for one. A different `definitionVersion` is logged once on the server; the
-self-describing form still renders.
-
-Definition 11 requests `CHIPS` for duration and offering choices, including the required
-hand-scooped flavor group. The form's category limits determine how many options may be chosen;
-the frontend never hardcodes the category or its four-selection limit. Explicit `CHIPS` also
-supports integer and string option lists of any length. Existing presentation fallbacks remain.
-Options may supply `badge`, `statusNote`, and `infoNote` (offering metadata may also be null).
-Badges render inside the chip. A badge with a status note opens it in a dark popover above the chip
-(on an unavailable chip, tapping anywhere on the chip opens it). A status note without a badge is
-not shown. Info notes open from an “i” button (“More about …”) in a light popover below, outside the
-selection label, even for disabled choices. The popovers (shadcn-svelte `Popover`) need JavaScript.
-Without it, badges still render and the form still submits. Status notes describe the input for
-assistive technology and never override availability.
-Unavailable choices keep their price but carry no in-chip notice: the faded, disabled chip says it,
-and by convention the backend supplies a badge and status note so tapping the chip explains why
-(the UI does not require one). Presentation metadata is never submitted with selections.
-
-**Service configuration is mandatory.** The section `optional` flag means "may be omitted entirely";
-in version 11 only "Additional information" is optional, and it alone shows an "Optional" badge. The
-UI applies the flag exactly as sent (`isSkippable`) and never reinterprets it. A definition that is
-incompatible with `POST /inquiries` is rejected as a whole (`pricingContractProblem`): a section with
-pricing questions (pointers under `/pricingInputs/`) marked optional, no guest-count or duration
-question, or a pricing pointer this UI doesn't understand. Such a form is never coerced into a
-required one: `/book` offers no form ("isn't available right now"), the action sends nothing (not even
-complete answers), a stale refresh offers nothing to review, and the server logs
-`GET /inquiry-form is incompatible with POST /inquiries (…)` once.
-
-**The submit gate.** `prepareInquiry(form, answers)` in `@fionas/shared` is the only way to build a
-`POST /inquiries` body, used by both the browser (before posting) and the form action (before
-sending). It validates every question that applies, then maps answers by pointer and checks the
-transport floor again: a catalog revision, a whole-number guest count, a duration, and a selection
-block meeting every category's minimum, and every other field the backend requires (`name`, `email`,
-`zipCode`, `eventDate`, and an `eventType` from the backend's enum, `INQUIRY_EVENT_TYPES`). It
-returns `invalid` (field errors) or `incompatible` (the form itself can't produce a valid request)
-instead of a request, so there is no state equivalent to `pricingInputs: undefined`.
-
-**Offering availability.** Every option carries `selectionState` and `availability`:
-
-| Backend state                   | Public form | UI                                                                                           |
-| ------------------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `ENABLED` + `AVAILABLE`         | listed      | normal chip, selectable                                                                      |
-| `ENABLED` + `UNAVAILABLE`       | listed      | visible but faded, native `disabled`; tapping it opens its status note (when it has a badge) |
-| `DISABLED` (either), or retired | **absent**  | nothing to show; absence is never presented as "temporarily unavailable"                     |
-
-A `DISABLED` option in `GET /inquiry-form` breaks the endpoint's contract: the shape check refuses the
-whole form (logged as "outside the contract"), so `/book` shows "isn't available right now" rather than
-filtering it out or rendering it as temporarily unavailable.
-
-Unavailable is temporary: the copy never says sold out, removed or disabled, and label, description,
-price and position are kept. An unavailable option contributes nothing to the advisory estimate, and
-local validation names it if it somehow ends up in the answers ("Horchata is unavailable right now —
-please choose another."). A chip already checked from older answers stays enabled so it can be
-unchecked. The backend still enforces this (`422 OFFERING_UNAVAILABLE` / `OFFERING_DISABLED`); the
-UI only prevents the obvious mistake.
-
-`minSelections`/`maxSelections` drive the "2 picked · choose 1–2" note, disable further chips at the
-maximum, and feed local validation ("Choose at least 4."). When fewer options are selectable than
-the minimum, the hint says the request can't be completed online today and to check back or email.
-
-## Advisory estimate
-
-The estimate card ("Your estimate so far", "Estimate only") is presentation. As soon as guest count
-and duration are valid it computes instantly in the browser from `pricingPreview`: the duration's
-`baseServiceAmount` once, `perGuestAmount` × guests, each selected option's price (`FIXED` once,
-`PER_QUANTITY` × guests, `PER_DURATION` from the duration's `offeringContributions`) and the
-`toppingAdjustment` per extra pick beyond `includedSelections`. Amounts are exact decimal strings,
-summed as scaled `BigInt`s, never floats. No pricing rule lives in a frontend constant.
-
-That is the only estimate shown: the site never calls `POST /estimate-preview`, so the figures
-never change after a round trip. Line wording comes from `pricingPreview` when the backend supplies
-it (`baseServiceDescription`, `perGuestDescription`, each duration's `baseServiceSubDescription`,
-`toppingAdjustment.description` / `subDescription`); otherwise the UI uses "Base service" (with the
-duration question's own label, e.g. "1½ hours", as its subtext), "Ice cream service" and "Extra
-toppings".
-
-**Backend pricing is authoritative.** `POST /inquiries` validates the current catalog, prices once
-and atomically creates the Inquiry and Estimate v1. The browser never submits totals, line amounts or
-estimate identity, and never compares its figures with the backend's.
-
-## One token per logical submission
-
-`Idempotency-Key` names one visible submission, not one HTTP attempt, and **one key names one
-immutable `CreateInquiryRequest`**: once a request has been delivered under a key, that key is only
-ever sent with that same request.
-
-1. `load` mints a UUID (`newSubmissionToken`) for the rendered form. The page is `private, no-store`
-   so no cache can hand one visitor's token to another.
-2. The form posts it back in the hidden `submissionToken` field, with the hidden `catalogRevision`
-   the answers were given against.
-3. The action sends it unchanged as `Idempotency-Key`. Nothing on the server ever generates a key
-   for an attempt.
-
-So a double click, a duplicated delivery, a no-JS "resend form data?" reload, the adapter's own
-retry and the customer pressing Send again after an outage all carry the same key, and the backend
-turns them into one inquiry and the same `201` receipt. The token is not authentication; a browser
-can change it, and the backend treats it purely as command identity (`[A-Za-z0-9_-]{1,128}`, checked
-before sending so an empty token is refused locally).
-
-A token changes only when the customer starts a new logical submission:
-
-| Event                                               | Token                                           |
-| --------------------------------------------------- | ----------------------------------------------- |
-| Page view                                           | new                                             |
-| Local or backend validation failure (`422`)         | kept (failures don't consume keys)              |
-| Outcome unknown (timeout, lost response, any 5xx)   | kept, with its delivered request, until settled |
-| ...then the customer chooses "Change my answers"    | new (a deliberate new submission)               |
-| Nothing sent (form unreadable, service auth)        | kept                                            |
-| `CATALOG_REVISION_STALE` → refreshed form to review | new (the reviewed form is a new submission)     |
-| `422` naming unknown/disabled/unavailable offerings | new, with a refreshed form to review            |
-| `IDEMPOTENCY_KEY_REUSED`                            | kept; "Send as a new request" uses a new one    |
-| Success                                             | redirect to `/book/received`; form is finished  |
-
-## What is sent
-
-`POST /inquiries` carries the customer's intent only: `name`, `email`, optional `message`, `zipCode`,
-`eventDate`, `eventType` and, always, `pricingInputs` (`catalogRevision`, `guestCount`,
-`guestCountIsMinimum` — false unless the form asks —, `durationMinutes`, `selections`: one
-`{ category, offerings }` block per category with picks, in form order). Fields map through each
-form field's `submissionPointer`. No totals, prices, lines, document or customer ids are sent.
-
-`catalogRevision` is the one the customer saw (from the hidden field), never silently swapped for
-the current one. When it still matches the current form the action runs the full gate. When the
-catalog has moved on it still requires the complete service configuration but leaves option
-membership to the backend, which either replays an earlier commit of this key or answers
-`CATALOG_REVISION_STALE`.
-
-## Outcomes
-
-The action reports one `SubmissionFailure.outcome` per case (`apps/public/src/lib/inquiry-submission.ts`):
-
-| Situation                                                                                                                   | `outcome`     | Customer sees                                                                             | Key  |
-| --------------------------------------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------- | ---- |
-| `201` (new or replayed — same receipt)                                                                                      | — (303)       | `/book/received`: "Request received", reference + time, not a booking                     | done |
-| answers fail the gate (including unconfigured service)                                                                      | `invalid`     | inline field errors; nothing sent                                                         | kept |
-| no usable token or revision posted                                                                                          | `malformed`   | "This page is out of date"                                                                | —    |
-| `409 CATALOG_REVISION_STALE`                                                                                                | `stale`       | refreshed form + "Our menu changed" review notice                                         | new  |
-| `422` with a catalog-state violation (below)                                                                                | `rejected`    | refreshed form + "Some of your choices need another look"                                 | new  |
-| other `422`, `400`, `404`                                                                                                   | `rejected`    | form error from stable violation codes (`describeViolation`)                              | kept |
-| `409 IDEMPOTENCY_KEY_REUSED`                                                                                                | `key_reused`  | "We couldn't safely verify this submission…" + "Send as a new request"                    | kept |
-| form unreadable or incompatible before sending; service auth failed (`service_auth`)                                        | `unavailable` | "hasn't been sent"; edit freely, send again                                               | kept |
-| timeout, network failure, garbled `2xx`, any `5xx`, `conflict`, any status outside the contract (after the adapter's retry) | `ambiguous`   | frozen answers + the delivered request, "Try sending again", optional "Change my answers" | kept |
-
-Catalog-state violations (`CATALOG_STATE_VIOLATIONS`): `UNKNOWN_OFFERING`, `OFFERING_DISABLED`,
-`OFFERING_UNAVAILABLE`, `PUBLIC_INQUIRY_CATEGORY_NOT_ALLOWED`. An honest current page can't produce
-them (changing an offering's state advances the revision, so a stale page gets `CATALOG_REVISION_STALE`
-first); if one arrives anyway the page was inconsistent or tampered with, so the action does the same
-cache-bypassing refresh and review as for a stale catalog, and never resubmits. Behaviour keys off
-codes only; backend messages are diagnostic and never parsed or shown.
-
-**Success.** The receipt (`id`, `createdAt`) goes into a short-lived `HttpOnly` cookie and the action
-redirects (`303`) to `/book/received` (post/redirect/get), so reloading or navigating never re-posts.
-A replayed `201` is indistinguishable and treated the same. The page says "Request received": Fiona's
-team will review and follow up; the date is not reserved and nothing is charged. It never says
-booked, confirmed or reserved. The app never reads staff-only `/inquiries/{id}` and never sees or
-shows Estimate ids.
-
-**Stale catalog.** The action never resubmits. It re-reads `GET /inquiry-form` with
-`cache: 'no-store'` and `Cache-Control: no-cache`, fits the answers to it with `reconcileAnswers`
-and returns the new form, the reconciled answers, the labels of questions to look at again, the
-names of unselected unavailable choices, how many choices left the menu, and a new token:
-
-- name, email, ZIP, event date, message and guest count carry over; event type and duration carry
-  over if the new form still offers them
-- an offering that is now absent (disabled or retired) is dropped and counted; the notice says it
-  "isn't on our menu anymore" and nothing more, since the public form says nothing more about it
-- an offering that is now `UNAVAILABLE` stays listed but is unselected and unselectable, and the
-  notice names it ("Horchata is unavailable right now — check back later. We've unselected it…")
-- nothing is ever substituted. A raised minimum is never filled in and a lowered maximum is never
-  trimmed: the question is flagged for review and the gate blocks sending until the customer fixes it
-- the notice says prices may have changed; the estimate is recomputed from the new `pricingPreview`
-
-The customer must press Send again; that is a new logical submission under the new token.
-
-**Reused key.** Not retried automatically: a new key after an uncertain earlier submission could
-create a duplicate inquiry. The server logs `[inquiry] Idempotency-Key … was already used` (the key
-is not secret; no customer payload is logged) and offers a `restartToken`; the customer's explicit
-"Send as a new request" submits the current answers under it.
-
-## Retries and network ambiguity
-
-A failed or timed-out request does not prove the backend failed: it may have committed before the
-response was lost. Nothing infers from a timeout whether the inquiry exists. `createInquiry`
-therefore retries **once**, after 250 ms, **with the same key and the same body**, when the outcome
-is unknown or transient: a timeout or network failure, a `2xx` body that could not be read, **any
-`5xx`** (a `500` included: the backend may fail after its database work but before answering, so a
-`500` proves nothing), the backend's documented retryable `409 conflict` (concurrent customer
-creation), or any status outside the contract (`isOutcomeUnknown`). Only documented refusals settle
-a delivery: `400`, `404`, `422`, `CATALOG_REVISION_STALE`, `IDEMPOTENCY_KEY_REUSED`, and a
-service-auth failure (refused before processing); those are never retried. If the retry fails too,
-the action reports `ambiguous` with the same token and the request it delivered. There is no
-editable "server error" state for a delivered request: a request that may have been recorded is
-never followed by a different one under its key.
-
-The page then **freezes the submission**, at two levels:
-
-- **The visible answers.** The field area is `inert` (server-rendered, so this also holds without
-  JavaScript; inert controls still submit) and the primary button becomes "Try sending again".
-- **The command.** The `ambiguous` failure carries `replay`: the exact `CreateInquiryRequest` the
-  action delivered (built by `prepareInquiry` just before `createInquiry`). The page posts it back
-  in the hidden `replayRequest` field with `outcomeUnknown=true`, in the server-rendered form, so it
-  works without JavaScript too. It is the visitor's own intent (no credential, token or amount).
-
-"Try sending again" therefore **resends that request, not a reconstruction**. The action checks the
-snapshot's exact transport shape (`isCreateInquiryRequest`: only the documented properties, a known
-`eventType`, positive whole-number revision, guest count and duration, string selections) and sends
-it under the same key, without reading `GET /inquiry-form` or mapping answers first. A later change
-to the form or the catalog cannot alter the command: if revision 16 has replaced revision 15, or no
-longer offers the 120-minute service the visitor chose, request A still goes as it was, revision 15
-included. The backend settles it:
-
-- **it had committed**: its idempotency lookup replays the original `201` receipt, even though the
-  catalog has moved on since;
-- **it hadn't**: the old revision is now stale (`409 CATALOG_REVISION_STALE`), and the usual review
-  follows: fresh form, reconciled answers, and a **new** key for the reviewed request;
-- otherwise its answer is handled as for any delivery (validation refusal, reused key).
-
-While unresolved, a retry that can't get through (backend unreachable, `5xx`, service auth down)
-stays `ambiguous`, with the same `replay`. A snapshot that is missing, unreadable or not exactly a
-request is never sent and never replaced by a rebuilt one: the visitor is told the earlier request
-can't safely be resent from this page and offered "Change my answers" or email; no "Try sending
-again" is shown. After a replay the server reads the current form only to show the answers again
-(the no-JavaScript page needs them), never to build anything.
-
-If the customer would rather change their answers, "Change my answers" (JavaScript only) unfreezes
-the form, drops the replay and swaps in the server-minted `restartToken`, with a note that the
-changes go as a new request: a new key, a new command built from the edited answers. A posted
-`restartToken` always means a new submission, whatever else came with it. That is the one way an
-ambiguous submission's answers can change, and it is explicit.
-
-The two retry layers stay separate: business retries (the adapter's own retry, "Try sending again")
-repeat the same command under the same key; authentication recovery below them (a `401`) repeats
-the same HTTP request with a new service token. Neither regenerates the body.
-
-**Double clicks.** The submit button is disabled and the enhance handler ignores submits while one is
-in flight, purely for UX. Correctness doesn't depend on it: any duplicate delivery (a double click
-without JavaScript, a browser resend) carries the same key and gets the same receipt.
-
-## Form caching
-
-The backend marks the form `Cache-Control: private, max-age=60, must-revalidate`. The SvelteKit
-server keeps no cache of it: every page view and every submit reads it from the backend (Node's
-`fetch` has no HTTP cache). Stale recovery additionally sends `Cache-Control: no-cache` with
-`cache: 'no-store'`, so a proxy between the app and the backend can't return the old form either.
-
-## Tests
-
-- `packages/shared/src/inquiry.test.ts`: the submit gate, including the critical regression that no
-  contact-only or partial request can be built, and that an incompatible definition (an optional
-  service section, missing pricing questions) is rejected rather than coerced, even with complete
-  answers; section skippability, pointer mapping, reconciliation (unavailable, removed, raised
-  minimum, lowered maximum).
-- `packages/shared/src/estimate.test.ts`: every price form against synthetic prices, unavailable
-  options contributing nothing, decimal exactness where floats drift.
-- `apps/public/src/lib/server/service-auth.test.ts`: the token lifecycle with an injected clock:
-  lazy exchange, reuse, one exchange for concurrent callers (released on failure), early refresh
-  (15-minute and short tokens), fallback to an unexpired token, race-safe invalidation, refused /
-  unreachable / malformed exchanges and missing config, never leaking the credential; the failure
-  cooldown (sequential exchanges suppressed, one shared exchange when it ends, 5 → 60 s backoff,
-  reset on success, `Retry-After`, an unexpired token still served, a refused one never).
-- `apps/public/src/lib/server/commerce.test.ts`: service token and `Idempotency-Key` headers,
-  same-key same-body retry on timeouts and lost/garbled responses and the retryable `conflict`, no
-  retry on semantic failures, error kinds and stable codes, fail-closed shapes and redirects, cache
-  bypass; through `createCommerceClient`: lazy acquisition, reuse, singleflight, early refresh, `401`
-  recovery repeating the identical request exactly once, no second auth retry, a slow `401` not
-  discarding a newer token, `403` on each endpoint never refreshed, unusable token responses, and an
-  unknown outcome staying unknown when the retry can't authenticate; nothing secret in results or logs.
-- `apps/public/src/routes/book/page.server.test.ts`: integration through the real `load` and action
-  with only `fetch` replaced by a contract-faithful fake (`src/lib/server/testing/`): version 11
-  rendering, contact-only refusal, an optional-service definition rejected (on load, on submit and on
-  stale refresh), an incompatible form, a leaked `DISABLED` offering refused, priced body, double
-  delivery, lost response, ambiguous then identical same-key retry, unreachable backend, persistent
-  `500`s ambiguous with the exact replay (and a `500` that hid a commit recovering its receipt; edited
-  answers never becoming another request under the key; "Change my answers" using the restart key), 422,
-  catalog-state refresh, stale review with a fresh key, replay after a catalog change, key reuse; the
-  exact replay: request A resent unchanged under key K (no form read first) when nothing changed,
-  after revision 16 changed the form (original receipt if it committed, stale review under a new key
-  if not), with tampered visible answers, through a `401`, and when lost again; tampered or missing
-  snapshots sending nothing; a deliberate restart dropping the old command.
-- `apps/public/src/lib/components/inquiry-field.svelte.test.ts` (browser): backend order, labels and
-  descriptions, min/max, AVAILABLE selectable, UNAVAILABLE visible/disabled/named, error association.
-- `apps/public/src/catalog-hardcoding.test.ts` and `src/server-boundary.test.ts`: no catalog literals
-  in UI code; no private env or `$lib/server` in client-reachable code.
-- `apps/public/e2e/booking/*.e2e.ts`: the real browser against the production build and the stub API
-  (`e2e/stub-commerce.mjs`, which issues opaque tokens for the test-only service credential in
-  `e2e/test-service.ts` and implements the idempotency contract, offering availability and the
-  required `pricingInputs`): rendering order, unavailable chips, no contact-only path (with and
-  without JavaScript), estimate (computed in the browser, no preview request), submit, lost response, frozen
-  retry resending the delivered request, a tampered replay never sent, deliberate restart, stale review, reused key, double delivery recorded once, an expired
-  token replaced under the same key, a `403` shown as an outage, same-origin-only traffic, no
-  credential or token in HTML, `__data.json`, cookies or the client build. The
-  gated preview runs without service credentials.
+fionas.web must grant exactly fionas.inquiries.create. npm run provision:service validates this set and refuses broader existing roles or service assignments; it never silently rewrites a global role. An authorized operator must first inspect every principal using that role, deliberately replace its permissions with only inquiry creation (and remove any other roles from this dedicated service), then rerun provisioning. Review the backend migration guide for database/bootstrap migration separately. This PR does not modify deployed roles, price files or databases.

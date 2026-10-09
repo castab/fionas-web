@@ -1,7 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { pricingContractProblem } from '@fionas/shared';
+import { getPriceBook, projectForm } from '$lib/server/price-book.js';
+import { replaySecret } from '$lib/server/inquiry-replay.js';
 import { assertBookingEnabled } from '$lib/server/booking.js';
-import { getInquiryForm } from '$lib/server/commerce.js';
+
 import { newSubmissionToken, storeReceipt, submitInquiry } from '$lib/server/inquiry-submission.js';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -9,15 +10,14 @@ export const load: PageServerLoad = async ({ setHeaders }) => {
 	assertBookingEnabled();
 	// The page carries a per-visitor submission token: no shared cache may ever reuse it.
 	setHeaders({ 'cache-control': 'private, no-store' });
-	const result = await getInquiryForm();
-	// A form that can't produce pricingInputs can't produce an inquiry: show "unavailable" instead
-	// of questions nobody could successfully submit (the adapter has logged why).
-	const usable = result.ok && pricingContractProblem(result.data) === null;
-	return {
-		form: usable ? result.data : null,
-		/** Names this rendering's one logical submission; posted back and sent as `Idempotency-Key`. */
-		submissionToken: newSubmissionToken()
-	};
+	let form = null;
+	try {
+		replaySecret();
+		form = projectForm(getPriceBook());
+	} catch {
+		console.error('[booking] Private pricing or replay configuration unavailable');
+	}
+	return { form, submissionToken: newSubmissionToken() };
 };
 
 export const actions: Actions = {

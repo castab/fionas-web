@@ -5,20 +5,14 @@ import {
 	TEST_SERVICE_CREDENTIAL,
 	TEST_SERVICE_ID,
 	fakeCommerce,
-	formFixture,
 	type FakeCommerce
 } from './testing/fake-commerce.js';
 
 const env = vi.hoisted(() => ({}) as Record<string, string | undefined>);
 vi.mock('$env/dynamic/private', () => ({ env }));
 
-const {
-	createCommerceClient,
-	createInquiry,
-	getInquiryForm,
-	isOutcomeUnknown,
-	resetCommerceClient
-} = await import('./commerce.js');
+const { createCommerceClient, createInquiry, isOutcomeUnknown, resetCommerceClient } =
+	await import('./commerce.js');
 
 /** Replaces the backend's protected endpoints with one fixed answer (or failure) for every call. */
 function answerEvery(respond: () => Response | Promise<Response>) {
@@ -43,13 +37,10 @@ const inquiry: CreateInquiryRequest & Record<string, unknown> = {
 	zipCode: '02134',
 	eventDate: '2026-12-05',
 	eventType: 'BIRTHDAY',
-	pricingInputs: {
-		catalogRevision: 15,
-		guestCount: 75,
-		guestCountIsMinimum: false,
-		durationMinutes: 120,
-		selections: [{ category: 'cone-option', offerings: ['waffle-cone'] }]
-	}
+	requestedService: { guestCount: 75, durationMinutes: 120 },
+	lines: [
+		{ description: 'Synthetic service', unitPrice: '101.00', taxAmount: '0.00', currency: 'USD' }
+	]
 };
 
 let backend: FakeCommerce;
@@ -166,12 +157,12 @@ describe('createInquiry', () => {
 		]);
 	});
 
-	it('refuses to send an inquiry without pricingInputs', async () => {
+	it('refuses to send an inquiry without requestedService', async () => {
 		const contactOnly: Record<string, unknown> = { ...inquiry };
-		delete contactOnly.pricingInputs;
+		delete contactOnly.requestedService;
 		await expect(
 			createInquiry(contactOnly as unknown as CreateInquiryRequest, KEY)
-		).rejects.toThrow(/pricingInputs/);
+		).rejects.toThrow(/requestedService/);
 		expect(backend.calls).toHaveLength(0);
 	});
 
@@ -188,7 +179,7 @@ describe('createInquiry', () => {
 		const calls = answerEvery(
 			() => new Response(null, { status: 302, headers: { location: 'https://elsewhere.test/' } })
 		);
-		const result = await getInquiryForm();
+		const result = await createInquiry(inquiry, KEY);
 		expect(result).toMatchObject({ ok: false, error: { kind: 'unexpected', status: 302 } });
 		expect(calls[0]?.init?.redirect).toBe('manual');
 	});
@@ -198,7 +189,6 @@ describe('createInquiry', () => {
 			422,
 			{ code: 'validation_failed', message: 'm', violations: [{ code: 'INVALID_GUEST_COUNT' }] }
 		],
-		[409, { code: 'CATALOG_REVISION_STALE', message: 'm' }],
 		[409, { code: 'IDEMPOTENCY_KEY_REUSED', message: 'm' }],
 		[400, { code: 'malformed_request', message: 'm' }],
 		[404, { code: 'not_found', message: 'm' }]
@@ -254,7 +244,6 @@ describe('createInquiry', () => {
 		['400', { kind: 'validation', status: 400, code: 'malformed_request' }, false],
 		['404', { kind: 'not_found', status: 404, code: 'not_found' }, false],
 		['422', { kind: 'validation', status: 422, code: 'validation_failed' }, false],
-		['a stale catalog', { kind: 'conflict', status: 409, code: 'CATALOG_REVISION_STALE' }, false],
 		['a reused key', { kind: 'conflict', status: 409, code: 'IDEMPOTENCY_KEY_REUSED' }, false],
 		['a service-auth failure', { kind: 'service_auth', status: 503, code: 'unavailable' }, false]
 	] as const)('decides whether %s leaves the outcome unknown', (_, error, unknown) => {
@@ -292,64 +281,6 @@ describe('createInquiry', () => {
 	});
 });
 
-describe('getInquiryForm', () => {
-	it('reads the form with the service token', async () => {
-		const result = await getInquiryForm();
-		expect(result.ok && result.data.catalogRevision).toBe(15);
-		expect(backend.calls[0]).toMatchObject({
-			method: 'GET',
-			path: '/inquiry-form',
-			headers: { authorization: `Bearer ${backend.tokens()[0]}` }
-		});
-		expect(backend.calls[0]?.headers['cache-control']).toBeUndefined();
-	});
-
-	it('bypasses every cache when asked for a fresh copy', async () => {
-		await getInquiryForm({ fresh: true });
-		expect(backend.calls[0]).toMatchObject({
-			cache: 'no-store',
-			headers: { 'cache-control': 'no-cache' }
-		});
-	});
-
-	it('fails closed on a 200 outside the documented shape', async () => {
-		answerEvery(() => Response.json({ definitionVersion: 7, sections: 'nope' }));
-		const result = await getInquiryForm();
-		expect(result).toMatchObject({
-			ok: false,
-			error: { kind: 'unexpected', code: 'bad_response' }
-		});
-		expect(logs.join(' ')).toMatch(/outside the contract/);
-	});
-
-	it('fails closed on an offering marked DISABLED: the public form must omit those', async () => {
-		const leaked = formFixture();
-		const option = leaked.sections
-			.flatMap((s) => s.fields)
-			.flatMap((f) => (f.input.type === 'OFFERING_CHOICE' ? f.input.options : []))[0]!;
-		option.selectionState = 'DISABLED';
-		backend.publish(leaked);
-
-		const result = await getInquiryForm();
-		expect(result).toMatchObject({
-			ok: false,
-			error: { kind: 'unexpected', code: 'bad_response' }
-		});
-		expect(logs.join(' ')).toMatch(/GET \/inquiry-form returned a body outside the contract/);
-	});
-
-	it('calls nothing when the service credential is not configured', async () => {
-		env.COMMERCE_SERVICE_CREDENTIAL = '  ';
-		const result = await getInquiryForm();
-		expect(result).toMatchObject({ ok: false, error: { kind: 'service_auth', status: 503 } });
-		expect(backend.exchanges).toHaveLength(0);
-		expect(backend.calls).toHaveLength(0);
-		expect(logs.join('\n')).toMatch(
-			/COMMERCE_SERVICE_ID and COMMERCE_SERVICE_CREDENTIAL must be set/
-		);
-	});
-});
-
 describe('service authentication', () => {
 	let clock: number;
 
@@ -372,15 +303,15 @@ describe('service authentication', () => {
 		const commerce = client();
 		expect(backend.exchanges).toHaveLength(0);
 
-		await commerce.getInquiryForm();
+		await commerce.createInquiry(inquiry, KEY);
 		expect(backend.exchanges).toHaveLength(1);
 		expect(bearers()).toEqual(['Bearer test-access-token-1']);
 	});
 
 	it('reuses the token across sequential calls', async () => {
 		const commerce = client();
-		await commerce.getInquiryForm();
-		await commerce.getInquiryForm();
+		await commerce.createInquiry(inquiry, KEY);
+		await commerce.createInquiry(inquiry, KEY);
 		await commerce.createInquiry(inquiry, KEY);
 		expect(backend.exchanges).toHaveLength(1);
 		expect(new Set(bearers())).toEqual(new Set(['Bearer test-access-token-1']));
@@ -389,9 +320,9 @@ describe('service authentication', () => {
 	it('performs one exchange for many concurrent calls', async () => {
 		const commerce = client();
 		const results = await Promise.all([
-			commerce.getInquiryForm(),
-			commerce.getInquiryForm(),
-			commerce.getInquiryForm(),
+			commerce.createInquiry(inquiry, KEY),
+			commerce.createInquiry(inquiry, KEY),
+			commerce.createInquiry(inquiry, KEY),
 			commerce.createInquiry(inquiry, KEY)
 		]);
 		expect(results.every((r) => r.ok)).toBe(true);
@@ -400,22 +331,22 @@ describe('service authentication', () => {
 
 	it('replaces the token before it expires, using the injected clock', async () => {
 		const commerce = client();
-		await commerce.getInquiryForm();
+		await commerce.createInquiry(inquiry, KEY);
 		clock += 14 * 60_000; // a 15-minute token is due for replacement a minute early
-		await commerce.getInquiryForm();
+		await commerce.createInquiry(inquiry, KEY);
 		expect(backend.exchanges).toHaveLength(2);
 		expect(bearers()).toEqual(['Bearer test-access-token-1', 'Bearer test-access-token-2']);
 	});
 
 	it('recovers from a 401 with a new token and repeats the identical POST /inquiries once', async () => {
 		const commerce = client();
-		await commerce.getInquiryForm();
+		await commerce.createInquiry(inquiry, KEY);
 		backend.expireTokens();
 
 		const result = await commerce.createInquiry(inquiry, KEY);
 
 		expect(result.ok).toBe(true);
-		const posts = backend.posts();
+		const posts = backend.posts().slice(-2);
 		expect(posts).toHaveLength(2);
 		expect(posts.map((c) => c.headers.authorization)).toEqual([
 			'Bearer test-access-token-1',
@@ -455,18 +386,18 @@ describe('service authentication', () => {
 		const commerce = client(async (input, init) => {
 			const response = await backend.fetch(input, init);
 			// Request A's first answer (a 401 for the expired token) arrives late.
-			if (hold && String(input).endsWith('/inquiry-form')) {
+			if (hold && String(input).endsWith('/inquiries')) {
 				const late = hold;
 				hold = null;
 				await late;
 			}
 			return response;
 		});
-		await commerce.getInquiryForm();
+		await commerce.createInquiry(inquiry, KEY);
 		backend.expireTokens();
 		hold = new Promise((resolve) => (release = resolve));
 
-		const a = commerce.getInquiryForm();
+		const a = commerce.createInquiry(inquiry, KEY);
 		// Request B also gets a 401, refreshes, and installs token 2.
 		expect((await commerce.createInquiry(inquiry, KEY)).ok).toBe(true);
 		expect(backend.tokens()).toEqual(['test-access-token-1', 'test-access-token-2']);
@@ -477,7 +408,10 @@ describe('service authentication', () => {
 		await commerce.createInquiry(inquiry, KEY);
 		expect(backend.exchanges).toHaveLength(2);
 		expect(
-			backend.calls.filter((c) => c.path === '/inquiry-form').map((c) => c.headers.authorization)
+			backend.calls
+				.slice(1, 4)
+				.filter((c) => c.path === '/inquiries')
+				.map((c) => c.headers.authorization)
 		).toEqual([
 			'Bearer test-access-token-1',
 			'Bearer test-access-token-1',
@@ -487,11 +421,6 @@ describe('service authentication', () => {
 	});
 
 	it.each([
-		[
-			'GET /inquiry-form',
-			'fionas.inquiry-form.read',
-			(c: ReturnType<typeof client>) => c.getInquiryForm()
-		],
 		[
 			'POST /inquiries',
 			'fionas.inquiries.create',
@@ -525,7 +454,7 @@ describe('service authentication', () => {
 				? Response.json({ accessToken: 'test-access-token-x', tokenType: 'Bearer' })
 				: backend.fetch(input, init)
 		);
-		const result = await commerce.getInquiryForm();
+		const result = await commerce.createInquiry(inquiry, KEY);
 		expect(result).toMatchObject({ ok: false, error: { kind: 'service_auth', status: 503 } });
 		expect(backend.calls).toHaveLength(0);
 		expectNoSecrets(result);

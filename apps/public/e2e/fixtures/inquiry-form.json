@@ -1,7 +1,5 @@
 {
 	"definitionVersion": 11,
-	"catalogId": "0cde8e0b-aa9c-4129-9853-8db2cbbb909b",
-	"catalogRevision": 15,
 	"sections": [
 		{
 			"key": "contact",
@@ -124,7 +122,7 @@
 				{
 					"key": "guestCount",
 					"label": "How many guests?",
-					"submissionPointer": "/pricingInputs/guestCount",
+					"submissionPointer": "/serviceInputs/guestCount",
 					"required": true,
 					"input": {
 						"type": "INTEGER",
@@ -138,7 +136,7 @@
 				{
 					"key": "durationMinutes",
 					"label": "How long are we scoopin'?",
-					"submissionPointer": "/pricingInputs/durationMinutes",
+					"submissionPointer": "/serviceInputs/durationMinutes",
 					"required": true,
 					"input": {
 						"type": "INTEGER_CHOICE",
@@ -168,7 +166,7 @@
 				{
 					"key": "offering:soft-serve-flavor",
 					"label": "Choose your soft serve flavors",
-					"submissionPointer": "/pricingInputs/selections",
+					"submissionPointer": "/serviceInputs/selections",
 					"required": true,
 					"input": {
 						"type": "OFFERING_CHOICE",
@@ -195,14 +193,14 @@
 								"category": "soft-serve-flavor",
 								"displayName": "Horchata",
 								"description": "Premium soft serve",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE",
 								"price": {
 									"kind": "PER_QUANTITY",
-									"amount": "0.50",
+									"amount": "1.10",
 									"currency": "USD",
 									"dimension": "guest"
-								},
-								"selectionState": "ENABLED",
-								"availability": "AVAILABLE"
+								}
 							}
 						]
 					},
@@ -213,7 +211,7 @@
 				{
 					"key": "offering:hand-scooped-flavor",
 					"label": "Choose your hand-scooped flavors",
-					"submissionPointer": "/pricingInputs/selections",
+					"submissionPointer": "/serviceInputs/selections",
 					"required": true,
 					"input": {
 						"type": "OFFERING_CHOICE",
@@ -251,30 +249,6 @@
 								"displayName": "Hand-scooped Strawberry",
 								"selectionState": "ENABLED",
 								"availability": "AVAILABLE"
-							},
-							{
-								"key": "hand-scooped-butter-pecan",
-								"category": "hand-scooped-flavor",
-								"displayName": "Hand-scooped Butter Pecan",
-								"selectionState": "ENABLED",
-								"availability": "UNAVAILABLE",
-								"infoNote": "Contains tree nuts"
-							},
-							{
-								"key": "hand-scooped-mint-chip",
-								"category": "hand-scooped-flavor",
-								"displayName": "Hand-scooped Mint Chip",
-								"selectionState": "ENABLED",
-								"availability": "AVAILABLE"
-							},
-							{
-								"key": "hand-scooped-new-york-cheesecake",
-								"category": "hand-scooped-flavor",
-								"displayName": "Hand-scooped New York Cheesecake",
-								"selectionState": "ENABLED",
-								"availability": "UNAVAILABLE",
-								"badge": "Returning soon",
-								"statusNote": "Back on the menu this fall!"
 							}
 						]
 					},
@@ -285,7 +259,7 @@
 				{
 					"key": "offering:topping",
 					"label": "Choose your toppings",
-					"submissionPointer": "/pricingInputs/selections",
+					"submissionPointer": "/serviceInputs/selections",
 					"required": true,
 					"input": {
 						"type": "OFFERING_CHOICE",
@@ -344,7 +318,7 @@
 				{
 					"key": "offering:cone-option",
 					"label": "Choose your cones or cups",
-					"submissionPointer": "/pricingInputs/selections",
+					"submissionPointer": "/serviceInputs/selections",
 					"required": true,
 					"input": {
 						"type": "OFFERING_CHOICE",
@@ -363,14 +337,14 @@
 								"key": "waffle-cone",
 								"category": "cone-option",
 								"displayName": "Waffle cones",
+								"selectionState": "ENABLED",
+								"availability": "AVAILABLE",
 								"price": {
 									"kind": "PER_QUANTITY",
-									"amount": "0.75",
+									"amount": "1.20",
 									"currency": "USD",
 									"dimension": "guest"
-								},
-								"selectionState": "ENABLED",
-								"availability": "AVAILABLE"
+								}
 							}
 						]
 					},
@@ -409,31 +383,31 @@
 		"durationOptions": [
 			{
 				"durationMinutes": 90,
-				"baseServiceAmount": "225.000",
+				"baseServiceAmount": "131.00",
 				"offeringContributions": []
 			},
 			{
 				"durationMinutes": 120,
-				"baseServiceAmount": "250.00",
+				"baseServiceAmount": "141.00",
 				"offeringContributions": []
 			},
 			{
 				"durationMinutes": 150,
-				"baseServiceAmount": "275.000",
-				"baseServiceSubDescription": "2½ hours · setup, staff & local travel",
+				"baseServiceAmount": "151.00",
 				"offeringContributions": []
 			},
 			{
 				"durationMinutes": 180,
-				"baseServiceAmount": "300.00",
+				"baseServiceAmount": "161.00",
 				"offeringContributions": []
 			}
 		],
-		"perGuestAmount": "4.00",
+		"perGuestAmount": "7.00",
 		"toppingAdjustment": {
 			"category": "topping",
 			"includedSelections": 4,
-			"additionalSelectionPerGuestAmount": "0.25"
+			"additionalSelectionPerGuestAmount": "0.30"
 		}
-	}
+	},
+	"priceRevision": "synthetic-1"
 }

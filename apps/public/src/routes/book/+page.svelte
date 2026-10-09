@@ -10,7 +10,6 @@
 		prepareInquiry,
 		site,
 		validateAnswers,
-		type CreateInquiryRequest,
 		type FieldErrors,
 		type InquiryForm,
 		type InquiryFormField,
@@ -28,7 +27,7 @@
 	 * - `editing`: answering (also after a local validation failure)
 	 * - `submitting`: a delivery is in flight
 	 * - `ambiguous`: the last delivery may or may not have been recorded; answers are frozen
-	 * - `review`: the catalog changed; the refreshed form must be reviewed before sending
+	 * - `review`: the prices changed; the refreshed form must be reviewed before sending
 	 * - `failed`: a definite failure; fix or wait, then send again
 	 */
 	type Phase = 'editing' | 'submitting' | 'ambiguous' | 'review' | 'failed';
@@ -61,16 +60,16 @@
 			errors: failed?.errors ?? {},
 			formError: failed?.formError ?? null,
 			submissionToken: failed?.submissionToken ?? data.submissionToken,
-			catalogRevision: failed?.catalogRevision ?? inquiryForm?.catalogRevision ?? 0,
+			priceRevision: failed?.priceRevision ?? inquiryForm?.priceRevision ?? '',
 			restartToken: failed?.restartToken ?? null,
-			replay: failed?.replay?.request ?? null,
+			replay: failed?.replay?.envelope ?? null,
 			outcome: failed?.outcome ?? null,
 			review: reviewOf(failed),
 			phase: phaseOf(failed)
 		};
 	});
 
-	/** The form being answered: the loaded one, or the refreshed one after a catalog change. */
+	/** The form being answered: the loaded one, or the refreshed one after a price revision change. */
 	let inquiryForm = $state.raw<InquiryForm | null>(initial.inquiryForm);
 	let answers = $state<InquiryAnswers | null>(initial.answers);
 	let errors = $state<FieldErrors>(initial.errors);
@@ -81,21 +80,21 @@
 
 	/*
 	 * The logical submission. Its token reaches the backend as `Idempotency-Key` and stays the same
-	 * across double clicks and retries; only a reviewed catalog refresh or a deliberate restart (a new
-	 * submission) replaces it. The revision pins the answers to the catalog they were given against.
+	 * across double clicks and retries; only a reviewed price refresh or a deliberate restart (a new
+	 * submission) replaces it. The revision pins the answers to the prices they were shown.
 	 */
 	let submissionToken = $state(initial.submissionToken);
-	let catalogRevision = $state(initial.catalogRevision);
+	let priceRevision = $state(initial.priceRevision);
 	/** After IDEMPOTENCY_KEY_REUSED or an unknown outcome: the key for a deliberate new submission. */
 	let restartToken = $state<string | null>(initial.restartToken);
-	/** After a catalog change: what the customer must look at again. */
+	/** After a price revision change: what the customer must look at again. */
 	let review = $state<Review | null>(initial.review);
 	/**
 	 * After an unknown outcome: the exact request that was delivered under `submissionToken`. "Try
 	 * sending again" posts it back and the server resends it unchanged, never a request rebuilt from
 	 * the answers. Dropped the moment the customer starts a new submission.
 	 */
-	let replay = $state.raw<CreateInquiryRequest | null>(initial.replay);
+	let replay = $state.raw<string | null>(initial.replay);
 	/** The customer chose to change answers after an unknown outcome: this is a new submission. */
 	let restarted = $state(false);
 	/** The last delivery's outcome is unknown: answers stay frozen until a retry settles it. */
@@ -123,9 +122,9 @@
 		if (failed?.refreshedForm) inquiryForm = failed.refreshedForm;
 		if (failed?.answers) answers = failed.answers;
 		if (failed?.submissionToken) submissionToken = failed.submissionToken;
-		if (failed?.catalogRevision) catalogRevision = failed.catalogRevision;
+		if (failed?.priceRevision) priceRevision = failed.priceRevision;
 		restartToken = failed?.restartToken ?? null;
-		replay = failed?.replay?.request ?? null;
+		replay = failed?.replay?.envelope ?? null;
 		outcome = failed?.outcome ?? null;
 		review = reviewOf(failed);
 		phase = phaseOf(failed);
@@ -170,7 +169,7 @@
 
 	async function focusReview() {
 		await tick();
-		const notice = document.getElementById('catalog-review');
+		const notice = document.getElementById('price-review');
 		notice?.focus();
 		notice?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 	}
@@ -192,6 +191,17 @@
 			<p class="m-0 text-(--text-body)">
 				Please try again in a little while, or reach us directly and we'll get you sorted.
 			</p>
+			{#if frozen && replay}
+				<form method="POST" class="flex flex-col gap-3">
+					<p role="alert" class="m-0 text-sm">{formError}</p>
+					<p class={hintText}>You can retry your original request with the same reviewed prices.</p>
+					<input type="hidden" name="submissionToken" value={submissionToken} />
+					<input type="hidden" name="priceRevision" value={priceRevision} />
+					<input type="hidden" name="outcomeUnknown" value="true" />
+					<input type="hidden" name="replayRequest" value={replay} />
+					<Button type="submit">Try sending again</Button>
+				</form>
+			{/if}
 			<div class="flex flex-wrap gap-3">
 				<Button href={mailtoUrl}>Email us</Button>
 				<Button href={instagramUrl} target="_blank" rel="noopener noreferrer" variant="secondary">
@@ -234,7 +244,7 @@
 				const command =
 					outcomeUnknown && replay
 						? ({ ok: true } as const)
-						: prepareInquiry(inquiryForm!, answers!, { catalogRevision });
+						: prepareInquiry(inquiryForm!, answers!, { priceRevision });
 				if (!command.ok) {
 					cancel();
 					if (command.reason === 'invalid') {
@@ -267,11 +277,11 @@
 			}}
 		>
 			<input type="hidden" name="submissionToken" value={submissionToken} />
-			<input type="hidden" name="catalogRevision" value={catalogRevision} />
+			<input type="hidden" name="priceRevision" value={priceRevision} />
 			{#if frozen}
 				<input type="hidden" name="outcomeUnknown" value="true" />
 				{#if replay}
-					<input type="hidden" name="replayRequest" value={JSON.stringify(replay)} />
+					<input type="hidden" name="replayRequest" value={replay} />
 				{/if}
 			{/if}
 
@@ -281,7 +291,7 @@
 
 			{#if review !== null}
 				<Card
-					id="catalog-review"
+					id="price-review"
 					tabindex={-1}
 					role="alert"
 					variant="flat"

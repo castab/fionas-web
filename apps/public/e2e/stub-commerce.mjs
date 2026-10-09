@@ -4,11 +4,8 @@
 // are opaque random strings, not JWTs, and nothing here is a real credential.
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4174);
-const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
-
 // The test-only SERVICE:fionas-web the app must authenticate as (see playwright.config.ts).
 const serviceId = process.env.COMMERCE_STUB_SERVICE_ID;
 const credential = process.env.COMMERCE_STUB_SERVICE_CREDENTIAL;
@@ -18,52 +15,6 @@ if (!serviceId || !credential) {
 const TOKEN_LIFETIME_SECONDS = 900;
 /** Access tokens issued by POST /auth/service/token; the protected routes accept only these. */
 const issued = new Set();
-
-// Only stale-catalog recovery asks for an uncached form (Cache-Control: no-cache). It gets the
-// "next" catalog: revision 16, where Horchata is temporarily UNAVAILABLE (still listed) and cookie
-// dough was disabled (so absent, as the public form never lists disabled offerings). Every other
-// read stays on revision 15 (gummy bears unavailable), so parallel tests are unaffected.
-const currentForm = fixture('inquiry-form.json');
-const nextForm = (() => {
-	const form = JSON.parse(currentForm);
-	form.catalogRevision = 16;
-	for (const field of form.sections.flatMap((s) => s.fields)) {
-		if (field.input.type === 'OFFERING_CHOICE') {
-			field.input.options = field.input.options
-				.filter((o) => o.key !== 'cookie-dough')
-				.map((o) => (o.key === 'horchata' ? { ...o, availability: 'UNAVAILABLE' } : o));
-		}
-	}
-	return JSON.stringify(form);
-})();
-
-/** Offering keys a customer may pick, per catalog revision. */
-const selectable = Object.fromEntries(
-	[currentForm, nextForm].map((raw) => {
-		const form = JSON.parse(raw);
-		const keys = form.sections
-			.flatMap((s) => s.fields)
-			.flatMap((f) => (f.input.type === 'OFFERING_CHOICE' ? f.input.options : []))
-			.filter((o) => o.selectionState === 'ENABLED' && o.availability === 'AVAILABLE')
-			.map((o) => o.key);
-		return [form.catalogRevision, new Set(keys)];
-	})
-);
-
-/** As the real API: a pick that is unavailable (or unknown) at its revision is a 422. */
-function offeringViolation(pricing) {
-	const allowed = selectable[pricing?.catalogRevision];
-	if (!allowed) return null;
-	const picks = (pricing.selections ?? []).flatMap((s) => s.offerings ?? []);
-	return picks.some((key) => !allowed.has(key)) ? 'OFFERING_UNAVAILABLE' : null;
-}
-
-const unavailableOffering = (res) =>
-	send(res, 422, {
-		code: 'validation_failed',
-		message: 'Offering is unavailable (diagnostic)',
-		violations: [{ code: 'OFFERING_UNAVAILABLE' }]
-	});
 
 const unauthenticated = (res) =>
 	send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
@@ -111,7 +62,6 @@ function bearerOf(req) {
 
 /*
  * Test hooks, chosen by the email's prefix (`seen`: earlier attempts for that email):
- * stale-     → 409 CATALOG_REVISION_STALE until the reviewed revision-16 form is sent
  * lost-      → commit, then drop the connection (the app must retry with the same key)
  * down-      → 503 for the first two attempts
  * reused-    → 409 IDEMPOTENCY_KEY_REUSED for the first key used
@@ -126,8 +76,6 @@ function scenario(body, key) {
 	const seen = attempts.filter((a) => a.email === email);
 	const prefix = email.split('-')[0];
 	switch (prefix) {
-		case 'stale':
-			return (body.pricingInputs?.catalogRevision ?? 0) < 16 ? 'stale' : null;
 		case 'lost':
 			return seen.length === 0 ? 'drop' : null;
 		case 'down':
@@ -190,13 +138,6 @@ createServer(async (req, res) => {
 		);
 	}
 
-	if (req.method === 'GET' && pathname === '/inquiry-form') {
-		if (!bearerOf(req)) return unauthenticated(res);
-		const fresh = /no-cache/.test(req.headers['cache-control'] ?? '');
-		return send(res, 200, fresh ? nextForm : currentForm, {
-			'cache-control': 'private, max-age=60, must-revalidate'
-		});
-	}
 	if (req.method === 'POST' && pathname === '/inquiries') {
 		const body = await readJson(req);
 		const key = req.headers['idempotency-key'];
@@ -210,15 +151,17 @@ createServer(async (req, res) => {
 		if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
 			return send(res, 400, { code: 'malformed_request', message: 'Malformed request: header' });
 		}
-		// As the real API (definition version 7): pricingInputs is required, there is no plain inquiry.
+		// As the real API (definition version 7): requestedService is required, there is no plain inquiry.
 		if (
 			!body?.name ||
 			!body?.email ||
 			!body?.zipCode ||
 			!body?.eventDate ||
 			!body?.eventType ||
-			typeof body?.pricingInputs !== 'object' ||
-			body.pricingInputs === null
+			typeof body?.requestedService !== 'object' ||
+			body.requestedService === null ||
+			!Array.isArray(body.lines) ||
+			!body.lines.length
 		) {
 			return send(res, 400, { code: 'malformed_request', message: 'Malformed request' });
 		}
@@ -230,13 +173,12 @@ createServer(async (req, res) => {
 			send(res, 500, { code: 'internal_failure', message: 'The request could not be completed' });
 		if (hook === 'error500') return internal();
 
-		// Replay detection comes before any catalog check, as in the real API.
+		// Idempotency recognizes the immutable priced command before creating anything new.
 		const prior = committed.get(key);
 		if (prior) {
 			if (prior.fingerprint !== JSON.stringify(body)) return conflict('IDEMPOTENCY_KEY_REUSED');
 			return send(res, 201, prior.receipt, { location: `/inquiries/${prior.receipt.id}` });
 		}
-		if (hook === 'stale') return conflict('CATALOG_REVISION_STALE');
 		if (hook === 'reused') return conflict('IDEMPOTENCY_KEY_REUSED');
 		if (hook === 'down') {
 			return send(res, 503, { code: 'internal_failure', message: 'Unavailable (diagnostic)' });
@@ -247,10 +189,6 @@ createServer(async (req, res) => {
 				message: 'guestCount cannot be priced (diagnostic)',
 				violations: [{ code: 'INVALID_GUEST_COUNT' }]
 			});
-		}
-
-		if (offeringViolation(body.pricingInputs)) {
-			return unavailableOffering(res);
 		}
 
 		const receipt = commit(key, body);

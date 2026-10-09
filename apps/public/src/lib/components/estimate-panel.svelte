@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Badge, Card, capsSm, cn } from '@fionas/ui';
 	import {
-		completePricingInputs,
+		completeServiceInputs,
 		computeAdvisoryEstimate,
 		formatMoney,
 		type InquiryAnswers,
@@ -15,7 +15,7 @@
 	 */
 	let { form, answers }: { form: InquiryForm; answers: InquiryAnswers } = $props();
 
-	const complete = $derived(completePricingInputs(form, answers) !== null);
+	const complete = $derived(completeServiceInputs(form, answers) !== null);
 	const estimate = $derived(computeAdvisoryEstimate(form, answers));
 </script>
 
