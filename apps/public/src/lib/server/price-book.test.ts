@@ -58,12 +58,19 @@ describe('restricted private price book', () => {
 	])('rejects invalid schema, ambiguity or unsupported arithmetic %#', (invalid) =>
 		expect(() => parsePriceBook(invalid)).toThrow()
 	);
-	it('keeps exactly three soft serve and four hand scooped choices and notes always present', () => {
+	it('keeps seven hand scooped, nine topping and three cone choices, no soft serve, notes always present', () => {
 		const fields = MENU_SECTIONS.flatMap((s) => s.fields);
 		const choice = (category: string) =>
 			fields.find((f) => f.input.type === 'OFFERING_CHOICE' && f.input.category === category)!;
-		expect(choice('soft-serve-flavor').input).toHaveProperty('options.length', 3);
-		expect(choice('hand-scooped-flavor').input).toHaveProperty('options.length', 4);
+		expect(
+			fields.some(
+				(f) => f.input.type === 'OFFERING_CHOICE' && f.input.category === 'soft-serve-flavor'
+			)
+		).toBe(false);
+		expect(choice('hand-scooped-flavor').input).toHaveProperty('options.length', 7);
+		expect(choice('topping').input).toHaveProperty('options.length', 9);
+		expect(choice('cone-option').input).toMatchObject({ minSelections: 1, maxSelections: 3 });
+		expect(choice('cone-option').input).toHaveProperty('options.length', 3);
 		expect(fields.find((f) => f.key === 'message')).toMatchObject({
 			required: false,
 			presentation: { control: 'TEXTAREA' }

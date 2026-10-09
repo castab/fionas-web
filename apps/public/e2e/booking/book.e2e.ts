@@ -1,41 +1,69 @@
 import { expect, test } from '@playwright/test';
-import { fillBasics, fillHandScooped, sendButton } from './form.js';
+import { fillBasics, fillContact, fillHandScooped, fillService, sendButton } from './form.js';
 test('code-owned controls, minimum picks and unavailable presentation', async ({ page }) => {
 	await page.goto('/book');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('bring fionas to your event');
 	await expect(page.getByText(/scoop for/i)).toHaveCount(0);
-	const soft = page.getByRole('group', { name: /Soft serve — pick 2/ });
-	expect(await soft.getByRole('checkbox').count()).toBe(3);
+	await expect(page.getByText(/soft serve/i)).toHaveCount(0);
 	const hand = page.getByRole('group', { name: /Hand-scooped — pick 4/ });
-	expect(await hand.getByRole('checkbox').count()).toBe(4);
+	expect(await hand.getByRole('checkbox').count()).toBe(7);
+	const toppings = page.getByRole('group', { name: /Toppings — pick 4 to 6/ });
+	expect(await toppings.getByRole('checkbox').count()).toBe(9);
+	const cones = page.getByRole('group', { name: /Cones & cups — pick 1 or more/ });
+	await expect(cones.getByRole('checkbox')).toHaveCount(3);
 	await expect(page.getByLabel('Anything else?')).toBeVisible();
-	await expect(page.getByRole('checkbox', { name: 'Gummy Bears' })).toBeDisabled();
+	await expect(hand.getByRole('checkbox', { name: 'Cheesecake' })).toBeDisabled();
+	await expect(page.getByRole('checkbox', { name: 'Mini Marshmallows' })).toBeDisabled();
 	await fillBasics(page);
 	await fillHandScooped(page);
 	await expect(hand.getByRole('checkbox', { checked: true })).toHaveCount(4);
 	await expect(page.getByText('Estimated total')).toBeVisible();
 });
-test('soft serve is a pick-two swirl', async ({ page }) => {
+test('cones and cups combine freely, need at least one, and add no charge', async ({ page }) => {
 	await page.goto('/book');
-	const soft = page.getByRole('group', { name: /Soft serve — pick 2/ });
-	await expect(soft).toContainText('The third flavor is always a swirl of your two picks.');
-	await soft.getByRole('checkbox', { name: 'Vanilla', exact: true }).check();
-	await soft.getByRole('checkbox', { name: /^Horchata/ }).check();
-	await expect(soft).toContainText('Your swirl: Vanilla + Horchata — the third handle comes free.');
-	await expect(soft.getByText('2 of 2 picked')).toBeVisible();
-	await expect(soft.getByRole('checkbox', { name: 'Chocolate', exact: true })).toBeDisabled();
+	const cones = page.getByRole('group', { name: /Cones & cups — pick 1 or more/ });
+	// All three can be chosen together; none gets locked out.
+	for (const name of ['Cups', 'Sugar Cones', 'Cake Cones'])
+		await cones.getByRole('checkbox', { name, exact: true }).check();
+	await expect(cones.getByRole('checkbox', { checked: true })).toHaveCount(3);
+	await expect(cones.getByRole('checkbox', { disabled: true })).toHaveCount(0);
+});
+test('an otherwise complete send with no cone or cup asks for one', async ({ page }) => {
+	await page.goto('/book');
+	await fillContact(page, 'no-cone@example.com');
+	await fillService(page);
+	const cones = page.getByRole('group', { name: /Cones & cups — pick 1 or more/ });
+	for (const name of ['Sugar Cones', 'Cups'])
+		await cones.getByRole('checkbox', { name, exact: true }).uncheck();
+	await sendButton(page).click();
+	await expect(page.getByRole('alert').filter({ hasText: 'Please add:' })).toContainText(
+		'at least 1 cone or cup'
+	);
 });
 test('choice metadata uses explanatory popovers', async ({ page }) => {
 	await page.goto('/book');
-	await page.getByRole('button', { name: 'Coming soon', exact: true }).click();
-	await expect(
-		page.locator('[data-popover-content]').filter({ hasText: 'Back on the menu soon!' })
-	).toBeVisible();
-	await page.keyboard.press('Escape');
-	await page.getByRole('button', { name: 'More about Chocolate Chip' }).click();
-	await expect(
-		page.locator('[data-popover-content]').filter({ hasText: 'Contains milk' })
-	).toBeVisible();
+	const soon = page.getByRole('button', { name: 'Coming soon', exact: true });
+	await expect(soon).toHaveCount(2);
+	for (const [i, note] of [
+		[0, 'Back on the menu this fall!'],
+		[1, "S'mores weather soon!"]
+	] as const) {
+		await soon.nth(i).click();
+		await expect(page.locator('[data-popover-content]').filter({ hasText: note })).toBeVisible();
+		await page.keyboard.press('Escape');
+	}
+	for (const [item, note] of [
+		['Butter Pecan', 'Contains tree nuts'],
+		['Crushed Oreo', 'Contains wheat & soy'],
+		['Sliced Almonds', 'Contains tree nuts']
+	]) {
+		await page.getByRole('button', { name: `More about ${item}` }).click();
+		// A closed popover can linger in the DOM and two items share a note: look at the open one.
+		await expect(
+			page.locator('[data-popover-content][data-state="open"]').filter({ hasText: note })
+		).toBeVisible();
+		await page.keyboard.press('Escape');
+	}
 });
 test('an incomplete send lists what to add and focuses the first gap', async ({ page }) => {
 	await page.goto('/book');

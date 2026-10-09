@@ -13,21 +13,25 @@ The supported YAML subset is intentionally small: revision is a nonempty quoted 
 - event.base
 - event.per_guest
 - topping.extra_per_guest
-- soft-serve-flavor.vanilla
-- soft-serve-flavor.chocolate
-- soft-serve-flavor.horchata
 - hand-scooped-flavor.hand-scooped-chocolate-chip
 - hand-scooped-flavor.hand-scooped-chocolate
+- hand-scooped-flavor.hand-scooped-mint-chip
+- hand-scooped-flavor.hand-scooped-butter-pecan
 - hand-scooped-flavor.hand-scooped-vanilla-bean
 - hand-scooped-flavor.hand-scooped-strawberry
-- topping.sprinkles
-- topping.oreos
-- topping.strawberries
-- topping.brownies
+- hand-scooped-flavor.hand-scooped-cheesecake
+- topping.rainbow-sprinkles
+- topping.chocolate-sauce
+- topping.caramel-sauce
+- topping.crushed-oreo
+- topping.whipped-cream
+- topping.sliced-almonds
+- topping.maraschino-cherries
 - topping.gummy-bears
-- topping.cookie-dough
+- topping.mini-marshmallows
 - cone-option.cup
-- cone-option.waffle-cone
+- cone-option.sugar-cone
+- cone-option.cake-cone
 
 Nine integer digits and twelve fractional digits bound input. The public menu offers any integer guest count, so every amount must settle to whole cents. There is no service duration and no hourly rate; an `event.hourly` key is rejected as unknown. The engine rejects nonsettleable extensions without rounding. Precise rates for restricted quantities remain supported by the exact line arithmetic and staff editor. Currency is code-owned USD; line tax is zero because no existing tax policy is configured.
 
@@ -37,7 +41,7 @@ Set FIONAS_REPLAY_SECRET to an independent cryptographically random signing secr
 
 The file is validated and cached as one immutable snapshot after the first successful read in each process. Missing or invalid configuration produces a safe unavailable state. There are no watchers, fallbacks, polling or admin configuration editors. Changing a file requires restarting every replica. Change the opaque revision whenever amounts or public menu/rules change; unchanged-revision changes cannot be detected across restarts, so operators must enforce this contract. Coordinate replicas on the same revision. A stale initial form is refused locally before any backend POST, receives the current projected prices and a fresh submission key, and requires customer review.
 
-The public projection contains only control metadata and applicable advisory rates. It may reveal customer-facing prices; the privacy requirement concerns version control, not customer secrecy. The base-service line is the flat event.base; additional lines charge guests, selected item add-ons and selected toppings beyond four times guests. Neither the inquiry nor its lines carry a service duration. Decimal arithmetic uses BigInt without truncating rates. Form controls ask an estimated guest count (a stepper starting at 50, 1–300 online; larger events are refused with a request to describe them in the note), exactly two of Vanilla/Chocolate/Horchata soft serve (the third handle swirls them), all four Chocolate Chip/Chocolate/Vanilla Bean/Strawberry hand-scooped choices, four to six toppings (Sprinkles, Oreos, Strawberries, Brownies, Gummy Bears, Cookie Dough), and one cup/waffle-cone choice. Gummy Bears remain visible and unavailable (Coming soon). This intentionally removes three extra fixture-only hand-scooped flavors to meet the requested four-flavor scope. The server enforces the same 300-guest online limit before any delivery.
+The public projection contains only control metadata and applicable advisory rates. It may reveal customer-facing prices; the privacy requirement concerns version control, not customer secrecy. The base-service line is the flat event.base; additional lines charge guests, selected item add-ons and selected toppings beyond four times guests. Neither the inquiry nor its lines carry a service duration. Decimal arithmetic uses BigInt without truncating rates. Form controls ask an estimated guest count (a stepper starting at 50, 1–300 online; larger events are refused with a request to describe them in the note), exactly four of Chocolate Chip/Chocolate/Mint Chip/Butter Pecan/Vanilla Bean/Strawberry/Cheesecake hand-scooped flavors, four to six toppings (Rainbow Sprinkles, Chocolate Sauce, Caramel Sauce, Crushed Oreo, Whipped Cream, Sliced Almonds, Maraschino Cherries, Gummy Bears, Mini Marshmallows), and at least one of Cups/Sugar Cones/Cake Cones in any combination at no extra charge. Soft serve is not offered until a machine is sourced. Cheesecake and Mini Marshmallows remain visible and unavailable (Coming soon). Allergen notes (Butter Pecan: tree nuts; Crushed Oreo: wheat & soy; Sliced Almonds: tree nuts) are code-owned info popovers. The server enforces the same 300-guest online limit before any delivery.
 
 The browser submits customer answers and an opaque priceRevision, never trusted financial lines. prepareInquiry validates the complete configured service. The server independently uses its own projection and private snapshot to price and construct requestedService with code-owned labels. POST /inquiries contains name/email/ZIP/date/type, optional message, requestedService and ordered PricedLine records. No totals or backend offering references are sent. A successful request creates an Estimate; it neither books a date nor takes payment.
 

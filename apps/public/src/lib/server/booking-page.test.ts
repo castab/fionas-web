@@ -45,15 +45,14 @@ function form(): FormData {
 	}))
 		f.set(key, value);
 	for (const [key, values] of Object.entries({
-		'offering:soft-serve-flavor': ['vanilla', 'horchata'],
 		'offering:hand-scooped-flavor': [
 			'hand-scooped-chocolate-chip',
 			'hand-scooped-chocolate',
-			'hand-scooped-vanilla-bean',
+			'hand-scooped-butter-pecan',
 			'hand-scooped-strawberry'
 		],
-		'offering:topping': ['sprinkles', 'oreos', 'strawberries', 'brownies'],
-		'offering:cone-option': ['waffle-cone']
+		'offering:topping': ['rainbow-sprinkles', 'chocolate-sauce', 'caramel-sauce', 'crushed-oreo'],
+		'offering:cone-option': ['sugar-cone']
 	}))
 		for (const v of values) f.append(key, v);
 	return f;
@@ -141,23 +140,46 @@ describe('trusted inquiry submission', () => {
 		expect(body.requestedService).not.toHaveProperty('durationMinutes');
 		expect(JSON.stringify(body)).not.toMatch(/duration|hour/i);
 	});
-	it('requires exactly two soft-serve flavors for the swirl', async () => {
+	it('accepts any combination of cones and cups, free, and refuses none or unknown', async () => {
 		const f = form();
-		f.delete('offering:soft-serve-flavor');
+		f.set('offering:cone-option', 'cup');
+		f.append('offering:cone-option', 'sugar-cone');
+		f.append('offering:cone-option', 'cake-cone');
+		expect(await submitInquiry(f)).toMatchObject({ ok: true });
+		const body = backend.posts()[0].body as {
+			requestedService: { items: { key: string }[] };
+			lines: { description: string }[];
+		};
+		expect(
+			body.requestedService.items.filter((i) => ['cup', 'sugar-cone', 'cake-cone'].includes(i.key))
+		).toHaveLength(3);
+		expect(body.lines.map((l) => l.description)).not.toEqual(
+			expect.arrayContaining([expect.stringMatching(/cone|cup/i)])
+		);
+		const bad = form();
+		bad.append('offering:cone-option', 'waffle-cone');
+		expect(await submitInquiry(bad)).toMatchObject({ ok: false, status: 422 });
+	});
+	it('no longer offers soft serve, even when its picks are posted', async () => {
+		const f = form();
 		f.append('offering:soft-serve-flavor', 'vanilla');
-		expect(await submitInquiry(f)).toMatchObject({
-			ok: false,
-			status: 422,
-			failure: { errors: { 'offering:soft-serve-flavor': expect.any(String) } }
-		});
-		expect(backend.posts()).toHaveLength(0);
+		f.append('offering:soft-serve-flavor', 'chocolate');
+		expect(await submitInquiry(f)).toMatchObject({ ok: true });
+		expect(JSON.stringify(backend.posts()[0].body)).not.toMatch(/soft.serve/i);
 	});
 	it('rejects unsupported and unavailable picks locally', async () => {
-		for (const key of ['made-up', 'gummy-bears']) {
+		for (const key of ['made-up', 'mini-marshmallows']) {
 			const f = form();
 			f.append('offering:topping', key);
-			expect(await submitInquiry(f)).toMatchObject({ ok: false, status: 422 });
+			expect(await submitInquiry(f), key).toMatchObject({ ok: false, status: 422 });
 		}
+		// Three real flavors plus the unavailable one: only availability can refuse this.
+		const f = form();
+		f.set('offering:hand-scooped-flavor', 'hand-scooped-chocolate-chip');
+		f.append('offering:hand-scooped-flavor', 'hand-scooped-chocolate');
+		f.append('offering:hand-scooped-flavor', 'hand-scooped-mint-chip');
+		f.append('offering:hand-scooped-flavor', 'hand-scooped-cheesecake');
+		expect(await submitInquiry(f)).toMatchObject({ ok: false, status: 422 });
 		expect(backend.posts()).toHaveLength(0);
 	});
 	it('reviews a stale price revision before any backend POST, with a fresh key', async () => {
@@ -247,7 +269,7 @@ describe('trusted inquiry submission', () => {
 	});
 	it('prices selected add-ons and the fifth topping from validated intent', () => {
 		const f = form();
-		f.append('offering:topping', 'cookie-dough');
+		f.append('offering:topping', 'whipped-cream');
 		const projected = projectForm(state.book!);
 		const intent = prepareInquiry(projected, answersFromFormData(projected, f));
 		if (!intent.ok) throw new Error('Invalid');
@@ -255,8 +277,7 @@ describe('trusted inquiry submission', () => {
 		expect(command.lines.map((l) => [l.description, l.quantity, l.unitPrice])).toEqual([
 			['Base service', undefined, '101.00'],
 			['Ice cream service', '75', '7.00'],
-			['Horchata', '75', '1.10'],
-			['Waffle cone', '75', '1.20'],
+			['Butter Pecan', '75', '0.80'],
 			['Extra toppings (1)', '75', '0.30']
 		]);
 	});

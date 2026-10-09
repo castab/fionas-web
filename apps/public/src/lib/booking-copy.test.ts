@@ -8,7 +8,28 @@ const field = (key: string): InquiryFormField => fields.find((f) => f.key === ke
 const form = { sections: MENU_SECTIONS } as InquiryForm;
 
 describe('swirlNote', () => {
-	const soft = field('offering:soft-serve-flavor');
+	// Soft serve is off the menu until a machine is sourced; the helper stays ready for its return.
+	const flavor = (key: string, displayName: string) => ({
+		key,
+		category: 'soft-serve-flavor',
+		displayName,
+		selectionState: 'ENABLED',
+		availability: 'AVAILABLE'
+	});
+	const soft = {
+		key: 'offering:soft-serve-flavor',
+		label: 'Soft serve — pick 2',
+		submissionPointer: '/serviceInputs/selections',
+		required: true,
+		input: {
+			type: 'OFFERING_CHOICE',
+			category: 'soft-serve-flavor',
+			minSelections: 2,
+			maxSelections: 2,
+			options: [flavor('vanilla', 'Vanilla'), flavor('cookies-and-cream', 'Cookies & Cream')]
+		},
+		presentation: { control: 'CHIPS' }
+	} as unknown as InquiryFormField;
 
 	it('explains the swirl until both flavors are picked, then names it', () => {
 		expect(swirlNote(soft, [])).toEqual({
@@ -16,8 +37,8 @@ describe('swirlNote', () => {
 			done: false
 		});
 		expect(swirlNote(soft, ['vanilla'])?.done).toBe(false);
-		expect(swirlNote(soft, ['vanilla', 'horchata'])).toEqual({
-			text: 'Your swirl: Vanilla + Horchata — the third handle comes free.',
+		expect(swirlNote(soft, ['vanilla', 'cookies-and-cream'])).toEqual({
+			text: 'Your swirl: Vanilla + Cookies & Cream — the third handle comes free.',
 			done: true
 		});
 	});
@@ -32,12 +53,15 @@ describe('missingSummary', () => {
 	it('lists what is missing in form order using the code-owned nouns', () => {
 		expect(
 			missingSummary(form, {
-				'offering:soft-serve-flavor': 'x',
+				'offering:hand-scooped-flavor': 'x',
 				name: 'x',
 				eventDate: 'x',
-				'offering:topping': 'x'
+				'offering:topping': 'x',
+				'offering:cone-option': 'x'
 			})
-		).toBe('Please add: your name, event date, 2 soft serve flavors, at least 4 toppings.');
+		).toBe(
+			'Please add: your name, event date, 4 hand-scooped flavors, at least 4 toppings, at least 1 cone or cup.'
+		);
 	});
 
 	it('is empty when nothing is missing', () => {

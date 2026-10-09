@@ -114,26 +114,6 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 		optional: false,
 		fields: [
 			{
-				key: 'offering:soft-serve-flavor',
-				label: 'Soft serve — pick 2',
-				submissionPointer: '/serviceInputs/selections',
-				required: true,
-				input: {
-					type: 'OFFERING_CHOICE',
-					category: 'soft-serve-flavor',
-					minSelections: 2,
-					maxSelections: 2,
-					options: [
-						item('soft-serve-flavor', 'vanilla', 'Vanilla'),
-						item('soft-serve-flavor', 'chocolate', 'Chocolate'),
-						item('soft-serve-flavor', 'horchata', 'Horchata', {
-							description: 'Premium soft serve'
-						})
-					]
-				},
-				presentation: { control: 'CHIPS', summaryLabel: '2 soft serve flavors' }
-			},
-			{
 				key: 'offering:hand-scooped-flavor',
 				label: 'Hand-scooped — pick 4',
 				submissionPointer: '/serviceInputs/selections',
@@ -144,12 +124,19 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 					minSelections: 4,
 					maxSelections: 4,
 					options: [
-						item('hand-scooped-flavor', 'hand-scooped-chocolate-chip', 'Chocolate Chip', {
-							infoNote: 'Contains milk'
-						}),
+						item('hand-scooped-flavor', 'hand-scooped-chocolate-chip', 'Chocolate Chip'),
 						item('hand-scooped-flavor', 'hand-scooped-chocolate', 'Chocolate'),
+						item('hand-scooped-flavor', 'hand-scooped-mint-chip', 'Mint Chip'),
+						item('hand-scooped-flavor', 'hand-scooped-butter-pecan', 'Butter Pecan', {
+							infoNote: 'Contains tree nuts'
+						}),
 						item('hand-scooped-flavor', 'hand-scooped-vanilla-bean', 'Vanilla Bean'),
-						item('hand-scooped-flavor', 'hand-scooped-strawberry', 'Strawberry')
+						item('hand-scooped-flavor', 'hand-scooped-strawberry', 'Strawberry'),
+						item('hand-scooped-flavor', 'hand-scooped-cheesecake', 'Cheesecake', {
+							unavailable: true,
+							badge: 'Coming soon',
+							statusNote: 'Back on the menu this fall!'
+						})
 					]
 				},
 				presentation: { control: 'CHIPS', summaryLabel: '4 hand-scooped flavors' }
@@ -165,36 +152,44 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 					minSelections: 4,
 					maxSelections: 6,
 					options: [
-						item('topping', 'sprinkles', 'Sprinkles'),
-						item('topping', 'oreos', 'Oreos'),
-						item('topping', 'strawberries', 'Strawberries'),
-						item('topping', 'brownies', 'Brownies'),
-						item('topping', 'gummy-bears', 'Gummy Bears', {
+						item('topping', 'rainbow-sprinkles', 'Rainbow Sprinkles'),
+						item('topping', 'chocolate-sauce', 'Chocolate Sauce'),
+						item('topping', 'caramel-sauce', 'Caramel Sauce'),
+						item('topping', 'crushed-oreo', 'Crushed Oreo', {
+							infoNote: 'Contains wheat & soy'
+						}),
+						item('topping', 'whipped-cream', 'Whipped Cream'),
+						item('topping', 'sliced-almonds', 'Sliced Almonds', {
+							infoNote: 'Contains tree nuts'
+						}),
+						item('topping', 'maraschino-cherries', 'Maraschino Cherries'),
+						item('topping', 'gummy-bears', 'Gummy Bears'),
+						item('topping', 'mini-marshmallows', 'Mini Marshmallows', {
 							unavailable: true,
 							badge: 'Coming soon',
-							statusNote: 'Back on the menu soon!'
-						}),
-						item('topping', 'cookie-dough', 'Cookie Dough')
+							statusNote: "S'mores weather soon!"
+						})
 					]
 				},
 				presentation: { control: 'CHIPS', summaryLabel: 'at least 4 toppings' }
 			},
 			{
 				key: 'offering:cone-option',
-				label: 'Cones & cups',
+				label: 'Cones & cups — pick 1 or more',
 				submissionPointer: '/serviceInputs/selections',
 				required: true,
 				input: {
 					type: 'OFFERING_CHOICE',
 					category: 'cone-option',
 					minSelections: 1,
-					maxSelections: 1,
+					maxSelections: 3,
 					options: [
-						item('cone-option', 'cup', 'Cup'),
-						item('cone-option', 'waffle-cone', 'Waffle cone')
+						item('cone-option', 'cup', 'Cups'),
+						item('cone-option', 'sugar-cone', 'Sugar Cones'),
+						item('cone-option', 'cake-cone', 'Cake Cones')
 					]
 				},
-				presentation: { control: 'CHIPS', summaryLabel: 'a cone or cup' }
+				presentation: { control: 'CHIPS', summaryLabel: 'at least 1 cone or cup' }
 			}
 		]
 	},

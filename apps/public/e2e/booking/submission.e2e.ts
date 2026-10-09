@@ -19,16 +19,27 @@ for (const native of [false, true])
 			expect(body?.requestedService).not.toHaveProperty('durationMinutes');
 			expect(body?.requestedService.items).toEqual(
 				expect.arrayContaining([
-					{ label: 'Horchata', group: 'Soft serve', key: 'horchata' },
 					{ label: 'Chocolate Chip', group: 'Hand-scooped', key: 'hand-scooped-chocolate-chip' },
-					{ label: 'Waffle cone', group: 'Cones & cups', key: 'waffle-cone' }
+					{ label: 'Butter Pecan', group: 'Hand-scooped', key: 'hand-scooped-butter-pecan' },
+					{ label: 'Sugar Cones', group: 'Cones & cups', key: 'sugar-cone' },
+					{ label: 'Cups', group: 'Cones & cups', key: 'cup' }
 				])
 			);
+			expect(JSON.stringify(body)).not.toMatch(/soft.serve/i);
 			expect(body?.lines).toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({ unitPrice: '101.00' }),
-					expect.objectContaining({ quantity: '75', unitPrice: '7.00' })
+					expect.objectContaining({ quantity: '75', unitPrice: '7.00' }),
+					expect.objectContaining({
+						description: 'Butter Pecan',
+						quantity: '75',
+						unitPrice: '0.80'
+					})
 				])
+			);
+			// Cones and cups, in any combination, never add a priced line.
+			expect(body?.lines.map((l) => l.description)).not.toEqual(
+				expect.arrayContaining([expect.stringMatching(/cone|cup/i)])
 			);
 			expect(body).not.toHaveProperty('total');
 			expect(body).not.toHaveProperty('pricingInputs');

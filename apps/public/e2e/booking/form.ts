@@ -46,20 +46,30 @@ export async function fillBasics(page: Page, guests = '75') {
 
 export async function fillHandScooped(page: Page) {
 	const group = page.getByRole('group', { name: /Hand-scooped — pick 4/ });
-	for (const name of ['Chocolate Chip', 'Chocolate', 'Vanilla Bean', 'Strawberry']) {
-		await group.getByRole('checkbox', { name, exact: true }).check();
+	// Butter Pecan carries the one synthetic per-guest add-on in the fixture price book.
+	// A priced chip's accessible name carries its rate ("Butter Pecan · +$0.80/guest").
+	for (const name of ['Chocolate Chip', 'Chocolate', 'Butter Pecan', 'Strawberry']) {
+		await group.getByRole('checkbox', { name: new RegExp(`^${name}( ·|$)`) }).check();
 	}
+}
+
+export async function fillToppings(page: Page) {
+	for (const topping of ['Rainbow Sprinkles', 'Chocolate Sauce', 'Caramel Sauce', 'Crushed Oreo']) {
+		await page.getByRole('checkbox', { name: topping, exact: true }).check();
+	}
+}
+
+/** Cones and cups are free and may be combined; at least one is required. */
+export async function fillCones(page: Page, names = ['Sugar Cones', 'Cups']) {
+	const group = page.getByRole('group', { name: /Cones & cups — pick 1 or more/ });
+	for (const name of names) await group.getByRole('checkbox', { name, exact: true }).check();
 }
 
 export async function fillService(page: Page, guests = '75') {
 	await fillBasics(page, guests);
-	await page.getByRole('checkbox', { name: 'Vanilla', exact: true }).check();
-	await page.getByRole('checkbox', { name: 'Horchata' }).check();
 	await fillHandScooped(page);
-	for (const topping of ['Sprinkles', 'Oreos', 'Strawberries', 'Brownies']) {
-		await page.getByRole('checkbox', { name: topping }).check();
-	}
-	await page.getByRole('radio', { name: /^Waffle cone/ }).check();
+	await fillToppings(page);
+	await fillCones(page);
 }
 
 export const sendButton = (page: Page) =>
