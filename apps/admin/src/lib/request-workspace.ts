@@ -3,6 +3,7 @@ import type {
 	StaffRequestResponse,
 	CurrentStaffRequest
 } from './request-contract.js';
+import { isSupportedCurrency } from './currency.js';
 import { isDepositTerms } from './deposit.js';
 import { isPaymentHistory } from './payment-history.js';
 
@@ -258,7 +259,8 @@ export function isProposalEligible(data: StaffRequestResponse): boolean {
 		data.inquiry.lifecycle.stage === 'REQUESTED' &&
 		data.financial.stage === 'ESTIMATE' &&
 		data.proposal == null &&
-		data.depositRequirement.state === 'NONE'
+		data.depositRequirement.state === 'NONE' &&
+		isSupportedCurrency(data.financial.currency)
 	);
 }
 export function canIssueQuote(data: StaffRequestResponse, permissions: string[]): boolean {

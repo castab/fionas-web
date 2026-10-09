@@ -21,6 +21,7 @@ import {
 import type { PaymentFormValues } from '$lib/payments.js';
 import type { RecordPaymentRequest } from '$lib/payment-contract.js';
 import { matchesReviewedSuggestion } from '$lib/deposit.js';
+import { CURRENCY } from '$lib/currency.js';
 import {
 	initialQuoteValues,
 	buildCommand,
@@ -89,7 +90,6 @@ export const load: PageServerLoad = async ({
 			opening.ok &&
 			isQuotePreview(opening.data, {
 				inquiryId: params.inquiryId,
-				currency: data.financial.currency,
 				documentId: data.financial.id
 			})
 		) {
@@ -139,8 +139,7 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 	const values = parsed;
 	const config = backendConfig(url.origin);
 	const cookie = request.headers.get('cookie');
-	const currency = values.reviewedCurrency;
-	const errors = quoteInputErrors(values, currency);
+	const errors = quoteInputErrors(values);
 	if (Object.keys(errors).length && !issue)
 		return fail(422, {
 			quoteError: 'Check the highlighted fields.',
@@ -150,7 +149,7 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 		});
 	const version = Number(values.deposit.expectedVersion);
 	const command = buildCommand(values);
-	const terms = reviewedTerms(values.deposit, currency);
+	const terms = reviewedTerms(values.deposit);
 	const fingerprint = reviewFingerprint(version, command, terms);
 	async function preview(stale = false) {
 		const result = await previewInquiryQuote(
@@ -165,7 +164,7 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 		}
 		applySetCookies(cookies, result.setCookies);
 		if (
-			!isQuotePreview(result.data, { inquiryId: params.inquiryId, currency }) ||
+			!isQuotePreview(result.data, { inquiryId: params.inquiryId }) ||
 			result.data.reviewedDocumentVersion !== version
 		)
 			return quoteFailure(503, values);
@@ -192,7 +191,7 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 	if (
 		!isProposalEligible(current.data) ||
 		current.data.financial.version !== version ||
-		current.data.financial.currency !== currency ||
+		current.data.financial.currency !== CURRENCY ||
 		(values.deposit.depositChoice === 'suggested' &&
 			!matchesReviewedSuggestion(values.deposit, current.data.suggestedDepositTerms))
 	)

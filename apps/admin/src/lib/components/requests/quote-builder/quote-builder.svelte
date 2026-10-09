@@ -11,6 +11,7 @@
 		type LineDraft
 	} from '$lib/quote-builder.js';
 	import { formatMoney } from '$lib/presentation.js';
+	import { CURRENCY } from '$lib/currency.js';
 	let {
 		request,
 		result,
@@ -51,7 +52,7 @@
 		description: '',
 		unitPrice: '',
 		taxAmount: '0.00',
-		currency: request.financial.currency,
+		currency: CURRENCY,
 		note: ''
 	});
 	const rows = $derived([
@@ -61,7 +62,7 @@
 			description: '',
 			unitPrice: '',
 			taxAmount: '0.00',
-			currency: request.financial.currency,
+			currency: CURRENCY,
 			note: ''
 		}
 	]);

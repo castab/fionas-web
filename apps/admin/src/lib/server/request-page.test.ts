@@ -73,7 +73,7 @@ beforeEach(() => {
 	vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data: current, setCookies: [] });
 	vi.mocked(previewInquiryQuote).mockImplementation(async (_config, _id, body) => {
 		const result = previewQuote({ quoteEpoch: 0 }, current, body);
-		if (!isQuotePreview(result.body, { inquiryId: mayaId, currency: 'USD' }))
+		if (!isQuotePreview(result.body, { inquiryId: mayaId }))
 			throw new Error('Invalid test preview');
 		return { ok: true, data: result.body, setCookies: [] };
 	});
@@ -159,4 +159,31 @@ it('requires all three permissions and never substitutes a newer reviewed versio
 	current.financial.version++;
 	expect(await actions!.issueQuote!(event(values))).toHaveProperty('status', 409);
 	expect(issueInquiryProposal).not.toHaveBeenCalled();
+});
+it('validates as USD whatever the browser posts, refusing other currencies before preview', async () => {
+	const values = { ...initialQuoteValues(current), reviewedCurrency: 'EUR' } as never;
+	expect(await actions!.previewQuote!(event(values))).toHaveProperty('status', 422);
+	expect(previewInquiryQuote).not.toHaveBeenCalled();
+});
+it('refuses to quote a non-USD document: no opening preview and no issuance', async () => {
+	const reviewed = (await actions!.previewQuote!(event())) as { quoteValues: QuoteFormValues };
+	vi.mocked(previewInquiryQuote).mockClear();
+	// A coherent document in another currency, as a generic Commerce could return it.
+	current = JSON.parse(JSON.stringify(current).replaceAll('"USD"', '"EUR"'));
+	vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data: current, setCookies: [] });
+	const e = event() as unknown as { request: Request };
+	e.request = new Request('https://admin.test', {
+		headers: { cookie: '__Host-fionas_session=staff' }
+	});
+	expect(await load(e as never)).toHaveProperty('initialQuote', null);
+	expect(previewInquiryQuote).not.toHaveBeenCalled();
+	expect(await actions!.issueQuote!(event(reviewed.quoteValues))).toHaveProperty('status', 409);
+	expect(issueInquiryProposal).not.toHaveBeenCalled();
+});
+it('refuses a preview that comes back in another currency', async () => {
+	vi.mocked(previewInquiryQuote).mockImplementationOnce(async (_config, _id, body) => {
+		const result = previewQuote({ quoteEpoch: 0 }, current, body);
+		return { ok: true, data: { ...result.body, currency: 'EUR' } as never, setCookies: [] };
+	});
+	expect(await actions!.previewQuote!(event())).toHaveProperty('status', 503);
 });

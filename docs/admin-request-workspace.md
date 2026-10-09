@@ -29,7 +29,9 @@ The inline editor opens with a preview of complete existing financial lines unde
 
 Preview posts expectedDocumentVersion, lines, optional servicePlan and terms without rereading the request. It is write-free and repeatable. The browser acknowledges edits but never calculates Quote totals or deposit. Native forms expose blank rows plus remove/reorder buttons and explicit Update preview; enhanced forms preview edits after a short delay. Exact input validation rejects unsupported precision and nonsettleable rate extensions without rounding.
 
-Issuance rereads the coherent authoritative request, checks its version/currency/deposit suggestion and permission intersection, and compares a SHA-256 fingerprint of the full ordered command/plan/terms with the reviewed form. A changed input or QUOTE_REVIEW_STALE previews again and requires another click. It sends the same lines/plan/terms and reviewToken once, never retries a mutation, and requires reload after an ambiguous outcome. A 303 to the clean path lets the authoritative GET confirm Quote, deposit and approved service plan. Issuance does not imply delivery or booking.
+**USD only.** Fiona's Ice Cream operates exclusively in US dollars (`$lib/currency.ts`). Commerce is currency-generic by design; this console is not, and it never converts or offers a currency choice. Flat prices and line tax must be whole cents; a per-unit rate may carry up to 12 fractional digits when rate × quantity settles exactly to cents; amounts may be signed for discounts and credits; nothing is rounded. Validation always applies USD rules, never a currency posted by the browser: the page's echoed `reviewedCurrency` must be `USD` or the form is refused before any preview, and every line is sent as USD. A request whose financial document isn't USD is not quote-eligible, so it gets no opening preview and issuance is refused, and a preview answered in another currency is rejected.
+
+Issuance rereads the coherent authoritative request, checks its version, USD currency, deposit suggestion and permission intersection, and compares a SHA-256 fingerprint of the full ordered command/plan/terms with the reviewed form. A changed input or QUOTE_REVIEW_STALE previews again and requires another click. It sends the same lines/plan/terms and reviewToken once, never retries a mutation, and requires reload after an ambiguous outcome. A 303 to the clean path lets the authoritative GET confirm Quote, deposit and approved service plan. Issuance does not imply delivery or booking.
 
 Quote/deposit revision controls remain outside the current UI, as before this migration; the backend's corresponding identity-bearing endpoints are not emulated. Manual payments and served/closed workflows below are retained. Current read validators reject absent/corrupt requested service, line identities/amounts/authorship, reconciliation, proposal/deposit pairs and plan notes instead of substituting zero or success.
 
@@ -55,8 +57,8 @@ requires two explicit actions: record $300 deposit, review the reloaded Invoice,
 There is no combined payment operation or independent Mark booked control.
 
 BOOKED/SERVED + INVOICE with positive balance and payment permission exposes **Record payment**.
-Its amount is an exact text input; positive values up to the authoritative balance are accepted at
-the currency's normal minor-unit precision. BigInt comparisons validate input only, never compute
+Its amount is an exact text input; positive values up to the authoritative balance are accepted in
+whole USD cents; any other currency is refused (no payment action is offered). BigInt comparisons validate input only, never compute
 settlement. The form posts amount, manual method and reviewed Invoice version. The action re-reads
 and checks eligibility/version/balance, derives document identity/currency and omits proposal ID.
 The mutation again PRGs to confirmation. Paid and CLOSED requests have no payment action.

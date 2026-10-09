@@ -1,5 +1,10 @@
 import { it, expect } from 'vitest';
-import { initialQuoteValues, buildCommand, quoteInputErrors } from './quote-builder.js';
+import {
+	initialQuoteValues,
+	buildCommand,
+	quoteInputErrors,
+	readQuoteForm
+} from './quote-builder.js';
 import { requestFixtures, mayaId } from '../../e2e/request-fixture.mjs';
 import { previewQuote } from '../../e2e/quote-stub.mjs';
 it('preserves carried identities, direct overrides, removals, order and bespoke signed lines', () => {
@@ -30,7 +35,7 @@ it('preserves carried identities, direct overrides, removals, order and bespoke 
 		}
 	);
 	v.description = 'Churro catering';
-	expect(quoteInputErrors(v, 'USD')).toEqual({});
+	expect(quoteInputErrors(v)).toEqual({});
 	const command = buildCommand(v);
 	expect(command.lines[0].lineItemId).toBe(id);
 	expect(command.lines.at(-1)?.key).toBe('courtesy');
@@ -50,7 +55,7 @@ it.each([
 	const v = initialQuoteValues(requestFixtures()[mayaId]);
 	v.lines[0].unitPrice = unitPrice;
 	v.lines[0].quantity = quantity;
-	expect(quoteInputErrors(v, 'USD')).toHaveProperty('line-0');
+	expect(quoteInputErrors(v)).toHaveProperty('line-0');
 });
 it('preserves stable new keys through previews and rejects duplicate identities', () => {
 	const v = initialQuoteValues(requestFixtures()[mayaId]);
@@ -58,13 +63,13 @@ it('preserves stable new keys through previews and rejects duplicate identities'
 	expect(buildCommand(v).lines.at(-1)?.key).toBe('custom_line');
 	expect(buildCommand(v)).toEqual(buildCommand(v));
 	v.lines.push({ ...v.lines[0] });
-	expect(quoteInputErrors(v, 'USD')).toHaveProperty('lines');
+	expect(quoteInputErrors(v)).toHaveProperty('lines');
 });
 it('accepts a precise 0.125 rate times eight without rounding', () => {
 	const v = initialQuoteValues(requestFixtures()[mayaId]);
 	v.lines[0].unitPrice = '0.125';
 	v.lines[0].quantity = '8';
-	expect(quoteInputErrors(v, 'USD')).toEqual({});
+	expect(quoteInputErrors(v)).toEqual({});
 });
 it('preserves numeric no-ops and makes a service plan optional without discarding notes', () => {
 	const data = requestFixtures()[mayaId];
@@ -82,5 +87,50 @@ it('preserves numeric no-ops and makes a service plan optional without discardin
 		}).body
 	).toMatchObject({ financialChange: false, quoteVersion: 2 });
 	v.lines[1].note = 'Negotiated rate';
-	expect(quoteInputErrors(v, 'USD')).toHaveProperty('service');
+	expect(quoteInputErrors(v)).toHaveProperty('service');
 });
+it.each([
+	['flat price', { unitPrice: '101' }],
+	['flat price in cents', { unitPrice: '101.05' }],
+	['signed credit', { unitPrice: '-11.00' }],
+	['whole-cent tax', { unitPrice: '20.00', taxAmount: '1.65' }],
+	['12-digit rate that settles', { unitPrice: '2.500000000000', quantity: '3' }],
+	['signed fractional rate that settles', { unitPrice: '-0.125', quantity: '8' }]
+])('accepts a USD %s', (_name, fields) => {
+	const v = initialQuoteValues(requestFixtures()[mayaId]);
+	Object.assign(v.lines[0], { quantity: undefined, taxAmount: '0.00' }, fields);
+	expect(quoteInputErrors(v)).toEqual({});
+});
+it.each([
+	['sub-cent flat price', { unitPrice: '1.005' }],
+	['sub-cent tax', { unitPrice: '1.00', taxAmount: '0.001' }],
+	['12-digit rate that does not settle', { unitPrice: '0.333333333333', quantity: '3' }],
+	['13-digit rate', { unitPrice: '0.1250000000000', quantity: '8' }],
+	['non-USD line', { unitPrice: '1.00', currency: 'EUR' }],
+	['three-decimal currency line', { unitPrice: '1.005', currency: 'BHD' }]
+])('refuses a %s rather than rounding or guessing precision', (_name, fields) => {
+	const v = initialQuoteValues(requestFixtures()[mayaId]);
+	Object.assign(v.lines[0], { quantity: undefined, taxAmount: '0.00' }, fields);
+	expect(quoteInputErrors(v)).toHaveProperty('line-0');
+});
+it.each(['EUR', 'JPY', 'usd', ''])(
+	'refuses a posted %j reviewed currency before any preview',
+	(reviewed) => {
+		const v = initialQuoteValues(requestFixtures()[mayaId]);
+		const f = new FormData();
+		for (const [k, value] of Object.entries(v.deposit)) f.set(k, value);
+		for (const [k, value] of Object.entries({
+			planDescription: v.description,
+			planGuestCount: v.guestCount,
+			planDuration: v.durationMinutes,
+			planItems: v.items,
+			reviewToken: '',
+			reviewedFingerprint: ''
+		}))
+			f.set(k, value);
+		f.set('reviewedCurrency', 'USD');
+		expect(readQuoteForm(f)?.reviewedCurrency).toBe('USD');
+		f.set('reviewedCurrency', reviewed);
+		expect(readQuoteForm(f)).toBeNull();
+	}
+);

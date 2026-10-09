@@ -55,8 +55,9 @@ describe('manual payments', () => {
 			expect(invoiceAmountValid(amount, '700.00', 'USD')).toBe(false);
 		for (const amount of ['100', '100.00', '0250.50', '700.00', '0.01'])
 			expect(invoiceAmountValid(amount, '700.00', 'USD')).toBe(true);
-		expect(invoiceAmountValid('1.001', '2.000', 'KWD')).toBe(true);
-		expect(invoiceAmountValid('1.01', '2', 'JPY')).toBe(false);
+		// USD only: other currencies are refused, never validated with their own precision.
+		for (const currency of ['KWD', 'JPY', 'EUR', 'usd'])
+			expect(invoiceAmountValid('1.00', '2.00', currency)).toBe(false);
 		expect(invoiceAmountValid('9007199254740993.02', '9007199254740993.01', 'USD')).toBe(false);
 		expect(invoiceAmountValid('9007199254740993.01', '9007199254740993.01', 'USD')).toBe(true);
 	});
