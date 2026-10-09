@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { onMount, tick, untrack } from 'svelte';
-	import { Button, Card, capsXs, cn, hintText } from '@fionas/ui';
+	import { Button, Card, capsSm, capsXs, cn, hintText } from '@fionas/ui';
 	import {
 		emptyAnswers,
 		instagramUrl,
@@ -15,6 +15,7 @@
 		type InquiryFormField,
 		type InquiryAnswers
 	} from '@fionas/shared';
+	import { missingSummary, swirlNote } from '$lib/booking-copy.js';
 	import EstimatePanel from '$lib/components/estimate-panel.svelte';
 	import InquiryField from '$lib/components/inquiry-field.svelte';
 	import type { SubmissionFailure, SubmissionOutcome } from '$lib/inquiry-submission.js';
@@ -110,6 +111,14 @@
 	 * may already have been recorded, under the same key.
 	 */
 	const frozen = $derived(outcomeUnknown);
+	/** The design's "Please add: …" line under the send button, once a send was attempted. */
+	const missing = $derived(
+		attempted && inquiryForm && !frozen ? missingSummary(inquiryForm, errors) : null
+	);
+	const picksOf = (key: string): string[] => {
+		const value = answers?.values[key];
+		return Array.isArray(value) ? value : [];
+	};
 
 	// Once the visitor has tried to submit, keep the messages in step with their edits.
 	$effect(() => {
@@ -151,6 +160,7 @@
 	const isCompact = (field: InquiryFormField) =>
 		field.presentation.control === 'TEXT' ||
 		field.presentation.control === 'DATE' ||
+		field.presentation.control === 'NUMBER' ||
 		(field.input.type === 'STRING_CHOICE' && field.presentation.control !== 'CHIPS');
 
 	const listOf = (names: string[]) =>
@@ -176,7 +186,7 @@
 </script>
 
 <svelte:head>
-	<title>Request the trailer · {site.name}</title>
+	<title>Book the trailer · {site.name}</title>
 	<meta name="description" content="Tell us about your event and build your ice cream service." />
 </svelte:head>
 
@@ -210,16 +220,15 @@
 			</div>
 		</Card>
 	{:else}
-		<div class="mb-8 flex flex-col gap-3">
+		<div class="mb-7 flex flex-col gap-2.5">
 			<h1
 				class="m-0 font-sans text-[34px] leading-[1.15] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]"
 			>
-				Request the trailer
+				book the trailer
 			</h1>
 			<p class="m-0 text-(--text-body) [font:var(--type-body)]">
-				Tell us about your event, build your ice cream service, and check your estimate at the
-				bottom — we'll review your request and follow up with a firm quote. Sending a request
-				doesn't book anything or charge you.
+				Pick your flavors, tell us about your event, and check your estimate at the bottom — we'll
+				follow up within a day with a firm quote.
 			</p>
 		</div>
 
@@ -335,16 +344,13 @@
 			>
 				{#each currentForm.sections as section (section.key)}
 					<!-- Only a section that may be left blank says so: the service section never can. -->
-					<section class="flex flex-col gap-3.5" aria-labelledby="section-{section.key}">
-						<div class="flex flex-col gap-1">
+					<section class="flex flex-col gap-4" aria-labelledby="section-{section.key}">
+						<div class={cn('flex flex-col gap-1', section.hideTitle && 'sr-only')}>
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-								<h2
-									id="section-{section.key}"
-									class={cn(capsXs, 'm-0 text-[14px] font-bold text-(--text-heading)')}
-								>
+								<h2 id="section-{section.key}" class={cn(capsSm, 'm-0 text-(--text-heading)')}>
 									{section.title}
 								</h2>
-								{#if isSkippable(section)}
+								{#if isSkippable(section) && !section.hideTitle}
 									<span
 										class={cn(
 											capsXs,
@@ -362,13 +368,14 @@
 							{/if}
 						</div>
 
-						<div class="grid gap-x-4 gap-y-4 sm:grid-cols-2">
+						<div class="grid gap-x-3.5 gap-y-4 sm:grid-cols-2">
 							{#each section.fields as field (field.key)}
 								<InquiryField
 									{field}
 									bind:values={answers.values}
 									error={errors[field.key]}
 									preview={currentForm.pricingPreview}
+									note={swirlNote(field, picksOf(field.key))}
 									class={isCompact(field) ? undefined : 'sm:col-span-2'}
 								/>
 							{/each}
@@ -429,15 +436,17 @@
 				</p>
 			{/if}
 
-			<div class="flex flex-wrap items-center justify-between gap-4">
-				<p class={cn(hintText, 'm-0 max-w-[340px]')}>
-					We'll only use your details to reply to this request.
-				</p>
+			<div class="flex flex-col items-start gap-2.5">
 				<!-- Frozen without the delivered request, nothing can safely be resent under this key. -->
 				{#if !frozen || replay}
 					<Button type="submit" size="lg" disabled={submitting}>
-						{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send request'}
+						{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send booking request'}
 					</Button>
+				{/if}
+				{#if missing}
+					<p role="alert" class="m-0 font-sans text-[12.5px] leading-snug text-rust-600">
+						{missing}
+					</p>
 				{/if}
 			</div>
 		</form>

@@ -122,6 +122,17 @@ describe('trusted inquiry submission', () => {
 		expect(await submitInquiry(f)).toMatchObject({ ok: false, status: 422 });
 		expect(backend.posts()).toHaveLength(0);
 	});
+	it('requires exactly two soft-serve flavors for the swirl', async () => {
+		const f = form();
+		f.delete('offering:soft-serve-flavor');
+		f.append('offering:soft-serve-flavor', 'vanilla');
+		expect(await submitInquiry(f)).toMatchObject({
+			ok: false,
+			status: 422,
+			failure: { errors: { 'offering:soft-serve-flavor': expect.any(String) } }
+		});
+		expect(backend.posts()).toHaveLength(0);
+	});
 	it('rejects unsupported and unavailable picks locally', async () => {
 		for (const key of ['made-up', 'gummy-bears']) {
 			const f = form();
@@ -225,7 +236,7 @@ describe('trusted inquiry submission', () => {
 			['Base service', undefined, '151.00'],
 			['Ice cream service', '75', '7.00'],
 			['Horchata', '75', '1.10'],
-			['Waffle cones', '75', '1.20'],
+			['Waffle cone', '75', '1.20'],
 			['Extra toppings (1)', '75', '0.30']
 		]);
 	});

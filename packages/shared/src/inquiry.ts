@@ -69,12 +69,19 @@ export type InquiryFormField = {
 	submissionPointer: string;
 	required: boolean;
 	input: InquiryInput;
-	presentation: { control: InquiryControl };
+	presentation: {
+		control: InquiryControl;
+		placeholder?: string;
+		/** The noun for a "Please add: …" summary, e.g. "event date" or "4 hand-scooped flavors". */
+		summaryLabel?: string;
+	};
 };
 
 export type InquiryFormSection = {
 	key: string;
 	title: string;
+	/** The title still names the section for assistive tech but isn't shown. */
+	hideTitle?: boolean;
 	description?: string;
 	optional: boolean;
 	fields: InquiryFormField[];

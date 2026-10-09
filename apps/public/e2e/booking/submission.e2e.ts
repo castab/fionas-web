@@ -9,13 +9,20 @@ for (const native of [false, true])
 			await page.goto('/book');
 			await fillContact(page, email);
 			await fillService(page);
-			await page.getByLabel('Tell us about your event').fill('Backyard birthday');
+			await page.getByLabel('Anything else?').fill('Backyard birthday');
 			const key = await page.locator('[name=submissionToken]').inputValue();
 			await sendButton(page).click();
 			await expect(page).toHaveURL(/\/book\/received$/);
 			await expect(page.getByRole('status')).toContainText('Request received');
 			const body = await submissionFor(page, email);
 			expect(body?.requestedService.guestCount).toBe(75);
+			expect(body?.requestedService.items).toEqual(
+				expect.arrayContaining([
+					{ label: 'Horchata', group: 'Soft serve', key: 'horchata' },
+					{ label: 'Chocolate Chip', group: 'Hand-scooped', key: 'hand-scooped-chocolate-chip' },
+					{ label: 'Waffle cone', group: 'Cones & cups', key: 'waffle-cone' }
+				])
+			);
 			expect(body?.lines).toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({ unitPrice: '141.00' }),
@@ -54,7 +61,7 @@ test('a changed revision requires review before any delivery', async ({ page }) 
 	await fillService(page);
 	await page.locator('[name=priceRevision]').evaluate((el: HTMLInputElement) => (el.value = 'old'));
 	await sendButton(page).click();
-	await expect(page.getByRole('button', { name: 'Send request' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Send booking request' })).toBeVisible();
 	expect(await attemptsFor(page, email)).toHaveLength(0);
 	expect(await submissionFor(page, email)).toBeUndefined();
 });

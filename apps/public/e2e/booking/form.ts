@@ -33,8 +33,8 @@ export async function attemptsFor(page: Page, email: string): Promise<Attempt[]>
 
 export async function fillContact(page: Page, email: string) {
 	await page.getByLabel('Your name').fill('Jane Doe');
-	await page.getByLabel('Email address').fill(email);
-	await page.getByLabel('ZIP code').fill('02134');
+	await page.getByLabel('Email', { exact: true }).fill(email);
+	await page.getByLabel('Event ZIP code').fill('02134');
 	await page.getByLabel('Event date').fill('2026-12-05');
 	await page.getByLabel('Event type').selectOption('BIRTHDAY');
 }
@@ -46,13 +46,9 @@ export async function fillBasics(page: Page, guests = '75') {
 }
 
 export async function fillHandScooped(page: Page) {
-	const group = page.getByRole('group', { name: /Choose your hand-scooped flavors/ });
+	const group = page.getByRole('group', { name: /Hand-scooped — pick 4/ });
 	for (const name of ['Chocolate Chip', 'Chocolate', 'Vanilla Bean', 'Strawberry']) {
-		await group
-			.getByRole('checkbox', {
-				name: new RegExp('^Hand-scooped ' + name + '(?: Crowd favorite| ·|$)')
-			})
-			.check();
+		await group.getByRole('checkbox', { name, exact: true }).check();
 	}
 }
 
@@ -61,10 +57,11 @@ export async function fillService(page: Page, guests = '75') {
 	await page.getByRole('checkbox', { name: 'Vanilla', exact: true }).check();
 	await page.getByRole('checkbox', { name: 'Horchata' }).check();
 	await fillHandScooped(page);
-	for (const topping of ['sprinkles', 'oreos', 'strawberries', 'brownies']) {
+	for (const topping of ['Sprinkles', 'Oreos', 'Strawberries', 'Brownies']) {
 		await page.getByRole('checkbox', { name: topping }).check();
 	}
-	await page.getByRole('radio', { name: 'Waffle cones' }).check();
+	await page.getByRole('radio', { name: /^Waffle cone/ }).check();
 }
 
-export const sendButton = (page: Page) => page.getByRole('button', { name: 'Send request' });
+export const sendButton = (page: Page) =>
+	page.getByRole('button', { name: 'Send booking request' });

@@ -10,5 +10,5 @@ test('Book CTAs link to the form and the coming-soon badge is hidden', async ({ 
 
 	await page.getByRole('link', { name: 'Book the trailer' }).click();
 	await expect(page).toHaveURL(/\/book$/);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Request the trailer');
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('book the trailer');
 });

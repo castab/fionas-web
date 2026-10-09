@@ -1,218 +1,147 @@
-import type { InquiryFormSection } from '@fionas/shared';
-/** Code-owned menu and controls. Monetary amounts are supplied only by the server. */
+import type { InquiryFormSection, OfferingOption } from '@fionas/shared';
+
+/** One menu item. Every item is priced per guest from its own private price-book key. */
+function item(
+	category: string,
+	key: string,
+	displayName: string,
+	extra: Partial<Pick<OfferingOption, 'description' | 'badge' | 'statusNote' | 'infoNote'>> & {
+		unavailable?: boolean;
+	} = {}
+): OfferingOption {
+	const { unavailable, ...presentation } = extra;
+	return {
+		key,
+		category,
+		displayName,
+		...presentation,
+		selectionState: 'ENABLED',
+		availability: unavailable ? 'UNAVAILABLE' : 'AVAILABLE',
+		priceKey: `${category}.${key}`,
+		pricingKind: 'PER_GUEST'
+	};
+}
+
+/**
+ * Code-owned menu and controls, laid out as the Booking design: "Your event" (contact, event,
+ * guests and length), the ice cream choices, then the optional note. Monetary amounts are supplied
+ * only by the server. Keys are stable: they name price-book entries and submitted selections.
+ */
 export const MENU_SECTIONS: InquiryFormSection[] = [
 	{
-		key: 'contact',
-		title: 'Contact information',
+		key: 'event',
+		title: 'Your event',
 		optional: false,
 		fields: [
 			{
 				key: 'name',
 				label: 'Your name',
-				description: 'Tell us who we should address your inquiry to.',
 				submissionPointer: '/name',
 				required: true,
-				input: {
-					type: 'TEXT',
-					minLength: 1,
-					maxLength: 200
-				},
-				presentation: {
-					control: 'TEXT'
-				}
+				input: { type: 'TEXT', minLength: 1, maxLength: 200 },
+				presentation: { control: 'TEXT', placeholder: 'Fiona', summaryLabel: 'your name' }
 			},
 			{
 				key: 'email',
-				label: 'Email address',
-				description: "We'll use this address to follow up on your inquiry.",
+				label: 'Email',
 				submissionPointer: '/email',
 				required: true,
-				input: {
-					type: 'EMAIL',
-					maxLength: 254
-				},
-				presentation: {
-					control: 'TEXT'
-				}
+				input: { type: 'EMAIL', maxLength: 254 },
+				presentation: { control: 'TEXT', placeholder: 'you@example.com', summaryLabel: 'email' }
 			},
 			{
 				key: 'zipCode',
-				label: 'ZIP code',
-				description:
-					"Your event's five-digit ZIP code helps us review the service area and any travel surcharge.",
+				label: 'Event ZIP code',
+				description: 'Used to check travel distance',
 				submissionPointer: '/zipCode',
 				required: true,
-				input: {
-					type: 'TEXT',
-					minLength: 5,
-					maxLength: 5,
-					pattern: '^[0-9]{5}$'
-				},
-				presentation: {
-					control: 'TEXT'
-				}
-			}
-		]
-	},
-	{
-		key: 'event',
-		title: 'Event details',
-		optional: false,
-		fields: [
+				input: { type: 'TEXT', minLength: 5, maxLength: 5, pattern: '^[0-9]{5}$' },
+				presentation: { control: 'TEXT', placeholder: '93720', summaryLabel: 'event ZIP code' }
+			},
 			{
 				key: 'eventDate',
 				label: 'Event date',
-				description: 'What date is your event?',
+				description: 'Weekends book fast!',
 				submissionPointer: '/eventDate',
 				required: true,
-				input: {
-					type: 'DATE',
-					format: 'date'
-				},
-				presentation: {
-					control: 'DATE'
-				}
+				input: { type: 'DATE', format: 'date' },
+				presentation: { control: 'DATE', summaryLabel: 'event date' }
 			},
 			{
 				key: 'eventType',
 				label: 'Event type',
-				description: 'What kind of event are you planning?',
 				submissionPointer: '/eventType',
 				required: true,
 				input: {
 					type: 'STRING_CHOICE',
 					options: [
-						{
-							value: 'BIRTHDAY',
-							label: 'Birthday'
-						},
-						{
-							value: 'WEDDING',
-							label: 'Wedding'
-						},
-						{
-							value: 'CORPORATE',
-							label: 'Corporate'
-						},
-						{
-							value: 'SCHOOL_EVENT',
-							label: 'School event'
-						},
-						{
-							value: 'NEIGHBORHOOD_EVENT',
-							label: 'Neighborhood event'
-						},
-						{
-							value: 'OTHER',
-							label: 'Other'
-						}
+						{ value: 'BIRTHDAY', label: 'Birthday' },
+						{ value: 'WEDDING', label: 'Wedding' },
+						{ value: 'CORPORATE', label: 'Corporate' },
+						{ value: 'SCHOOL_EVENT', label: 'School event' },
+						{ value: 'NEIGHBORHOOD_EVENT', label: 'Neighborhood event' },
+						{ value: 'OTHER', label: 'Other' }
 					]
 				},
-				presentation: {
-					control: 'SELECT'
-				}
+				presentation: { control: 'SELECT', summaryLabel: 'event type' }
+			},
+			{
+				key: 'guestCount',
+				label: 'How many guests?',
+				description: "An estimate is fine — we'll confirm when we follow up.",
+				submissionPointer: '/serviceInputs/guestCount',
+				required: true,
+				input: { type: 'INTEGER', minimum: 1 },
+				presentation: { control: 'NUMBER', placeholder: '50', summaryLabel: 'guest count' }
+			},
+			{
+				key: 'durationMinutes',
+				label: 'How long should we scoop for?',
+				description: "We'll confirm the exact start time when we follow up.",
+				submissionPointer: '/serviceInputs/durationMinutes',
+				required: true,
+				input: {
+					type: 'INTEGER_CHOICE',
+					options: [
+						{ value: 90, label: '1½ hours' },
+						{ value: 120, label: '2 hours' },
+						{ value: 150, label: '2½ hours' },
+						{ value: 180, label: '3 hours' }
+					]
+				},
+				presentation: { control: 'CHIPS', summaryLabel: 'service length' }
 			}
 		]
 	},
 	{
 		key: 'service',
 		title: 'Build your ice cream service',
-		description: 'Choose your guest count, service duration, and ice cream options.',
+		hideTitle: true,
 		optional: false,
 		fields: [
 			{
-				key: 'guestCount',
-				label: 'How many guests?',
-				submissionPointer: '/serviceInputs/guestCount',
-				required: true,
-				input: {
-					type: 'INTEGER',
-					minimum: 1
-				},
-				presentation: {
-					control: 'NUMBER'
-				},
-				description:
-					'An estimate is totally okay - we can hash out the finer details during quoting.'
-			},
-			{
-				key: 'durationMinutes',
-				label: "How long are we scoopin'?",
-				submissionPointer: '/serviceInputs/durationMinutes',
-				required: true,
-				input: {
-					type: 'INTEGER_CHOICE',
-					options: [
-						{
-							value: 90,
-							label: '1½ hours'
-						},
-						{
-							value: 120,
-							label: '2 hours'
-						},
-						{
-							value: 150,
-							label: '2½ hours'
-						},
-						{
-							value: 180,
-							label: '3 hours'
-						}
-					]
-				},
-				presentation: {
-					control: 'CHIPS'
-				}
-			},
-			{
 				key: 'offering:soft-serve-flavor',
-				label: 'Choose your soft serve flavors',
+				label: 'Soft serve — pick 2',
 				submissionPointer: '/serviceInputs/selections',
 				required: true,
 				input: {
 					type: 'OFFERING_CHOICE',
 					category: 'soft-serve-flavor',
-					minSelections: 1,
+					minSelections: 2,
 					maxSelections: 2,
 					options: [
-						{
-							key: 'vanilla',
-							category: 'soft-serve-flavor',
-							displayName: 'Vanilla',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'soft-serve-flavor.vanilla',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'chocolate',
-							category: 'soft-serve-flavor',
-							displayName: 'Chocolate',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'soft-serve-flavor.chocolate',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'horchata',
-							category: 'soft-serve-flavor',
-							displayName: 'Horchata',
-							description: 'Premium soft serve',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'soft-serve-flavor.horchata',
-							pricingKind: 'PER_GUEST'
-						}
+						item('soft-serve-flavor', 'vanilla', 'Vanilla'),
+						item('soft-serve-flavor', 'chocolate', 'Chocolate'),
+						item('soft-serve-flavor', 'horchata', 'Horchata', {
+							description: 'Premium soft serve'
+						})
 					]
 				},
-				presentation: {
-					control: 'CHIPS'
-				}
+				presentation: { control: 'CHIPS', summaryLabel: '2 soft serve flavors' }
 			},
 			{
 				key: 'offering:hand-scooped-flavor',
-				label: 'Choose your hand-scooped flavors',
+				label: 'Hand-scooped — pick 4',
 				submissionPointer: '/serviceInputs/selections',
 				required: true,
 				input: {
@@ -221,54 +150,19 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 					minSelections: 4,
 					maxSelections: 4,
 					options: [
-						{
-							key: 'hand-scooped-chocolate-chip',
-							category: 'hand-scooped-flavor',
-							displayName: 'Hand-scooped Chocolate Chip',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							badge: 'Crowd favorite',
-							statusNote: 'On the menu',
-							infoNote: 'Contains milk',
-							priceKey: 'hand-scooped-flavor.hand-scooped-chocolate-chip',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'hand-scooped-chocolate',
-							category: 'hand-scooped-flavor',
-							displayName: 'Hand-scooped Chocolate',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'hand-scooped-flavor.hand-scooped-chocolate',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'hand-scooped-vanilla-bean',
-							category: 'hand-scooped-flavor',
-							displayName: 'Hand-scooped Vanilla Bean',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'hand-scooped-flavor.hand-scooped-vanilla-bean',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'hand-scooped-strawberry',
-							category: 'hand-scooped-flavor',
-							displayName: 'Hand-scooped Strawberry',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'hand-scooped-flavor.hand-scooped-strawberry',
-							pricingKind: 'PER_GUEST'
-						}
+						item('hand-scooped-flavor', 'hand-scooped-chocolate-chip', 'Chocolate Chip', {
+							infoNote: 'Contains milk'
+						}),
+						item('hand-scooped-flavor', 'hand-scooped-chocolate', 'Chocolate'),
+						item('hand-scooped-flavor', 'hand-scooped-vanilla-bean', 'Vanilla Bean'),
+						item('hand-scooped-flavor', 'hand-scooped-strawberry', 'Strawberry')
 					]
 				},
-				presentation: {
-					control: 'CHIPS'
-				}
+				presentation: { control: 'CHIPS', summaryLabel: '4 hand-scooped flavors' }
 			},
 			{
 				key: 'offering:topping',
-				label: 'Choose your toppings',
+				label: 'Toppings — pick 4 to 6',
 				submissionPointer: '/serviceInputs/selections',
 				required: true,
 				input: {
@@ -277,69 +171,23 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 					minSelections: 4,
 					maxSelections: 6,
 					options: [
-						{
-							key: 'sprinkles',
-							category: 'topping',
-							displayName: 'sprinkles',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'topping.sprinkles',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'oreos',
-							category: 'topping',
-							displayName: 'oreos',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'topping.oreos',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'strawberries',
-							category: 'topping',
-							displayName: 'strawberries',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'topping.strawberries',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'brownies',
-							category: 'topping',
-							displayName: 'brownies',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'topping.brownies',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'gummy-bears',
-							category: 'topping',
-							displayName: 'gummy-bears',
-							selectionState: 'ENABLED',
-							availability: 'UNAVAILABLE',
-							priceKey: 'topping.gummy-bears',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'cookie-dough',
-							category: 'topping',
-							displayName: 'cookie-dough',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'topping.cookie-dough',
-							pricingKind: 'PER_GUEST'
-						}
+						item('topping', 'sprinkles', 'Sprinkles'),
+						item('topping', 'oreos', 'Oreos'),
+						item('topping', 'strawberries', 'Strawberries'),
+						item('topping', 'brownies', 'Brownies'),
+						item('topping', 'gummy-bears', 'Gummy Bears', {
+							unavailable: true,
+							badge: 'Coming soon',
+							statusNote: 'Back on the menu soon!'
+						}),
+						item('topping', 'cookie-dough', 'Cookie Dough')
 					]
 				},
-				presentation: {
-					control: 'CHIPS'
-				}
+				presentation: { control: 'CHIPS', summaryLabel: 'at least 4 toppings' }
 			},
 			{
 				key: 'offering:cone-option',
-				label: 'Choose your cones or cups',
+				label: 'Cones & cups',
 				submissionPointer: '/serviceInputs/selections',
 				required: true,
 				input: {
@@ -348,55 +196,35 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 					minSelections: 1,
 					maxSelections: 1,
 					options: [
-						{
-							key: 'cup',
-							category: 'cone-option',
-							displayName: 'Cups',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'cone-option.cup',
-							pricingKind: 'PER_GUEST'
-						},
-						{
-							key: 'waffle-cone',
-							category: 'cone-option',
-							displayName: 'Waffle cones',
-							selectionState: 'ENABLED',
-							availability: 'AVAILABLE',
-							priceKey: 'cone-option.waffle-cone',
-							pricingKind: 'PER_GUEST'
-						}
+						item('cone-option', 'cup', 'Cup'),
+						item('cone-option', 'waffle-cone', 'Waffle cone')
 					]
 				},
-				presentation: {
-					control: 'CHIPS'
-				}
+				presentation: { control: 'CHIPS', summaryLabel: 'a cone or cup' }
 			}
 		]
 	},
 	{
 		key: 'additional',
-		title: 'Additional information',
+		title: 'Anything else',
+		hideTitle: true,
 		optional: true,
 		fields: [
 			{
 				key: 'message',
-				label: 'Tell us about your event',
-				description: 'Share the event location or anything else we should know.',
+				label: 'Anything else?',
 				submissionPointer: '/message',
 				required: false,
-				input: {
-					type: 'TEXT',
-					minLength: 0,
-					maxLength: 4000
-				},
+				input: { type: 'TEXT', minLength: 0, maxLength: 4000 },
 				presentation: {
-					control: 'TEXTAREA'
+					control: 'TEXTAREA',
+					placeholder: 'Parking notes, timing, favorite flavors we should know about…'
 				}
 			}
 		]
 	}
 ];
+
 export const PRICE_KEYS = [
 	'event.base',
 	'event.hourly',

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Checkbox, ChoiceChip, Field, Input, Select, Textarea } from '@fionas/ui';
+	import { Checkbox, ChoiceChip, Field, Input, Select, Textarea, cn, hintText } from '@fionas/ui';
 	import {
 		formatOfferingPrice,
 		isDigitsOnly,
@@ -9,23 +9,28 @@
 		type InquiryPricingPreview,
 		type OfferingOption
 	} from '@fionas/shared';
+	import type { FieldNote } from '$lib/booking-copy.js';
 
 	/**
 	 * Renders one code-owned question. The control follows `presentation.control`
 	 * (short choice lists become chips); `input` supplies the constraints. Field `name` is the field
-	 * key so the plain HTML form submits without JavaScript.
+	 * key so the plain HTML form submits without JavaScript. As in the Booking design, required
+	 * questions carry no asterisk (nearly all are required); controls say so with `aria-required`,
+	 * and choice groups with their "pick" wording and counter. `note` is a live line under chips.
 	 */
 	let {
 		field,
 		values = $bindable(),
 		error,
 		preview,
+		note,
 		class: className
 	}: {
 		field: InquiryFormField;
 		values: Record<string, AnswerValue>;
 		error?: string;
 		preview?: InquiryPricingPreview;
+		note?: FieldNote;
 		class?: string;
 	} = $props();
 
@@ -41,6 +46,7 @@
 	);
 
 	const setText = (value: string) => (values[field.key] = value);
+	const placeholder = $derived(field.presentation.placeholder);
 
 	function toggle(option: OfferingOption, checked: boolean, single: boolean) {
 		if (single) values[field.key] = [option.key];
@@ -115,8 +121,8 @@
 		meta={counter}
 		description={hint}
 		{error}
-		required={field.required}
 		group
+		labelTone="heading"
 	>
 		<div class="flex flex-wrap gap-2">
 			{#each input.options as option (option.key)}
@@ -141,6 +147,15 @@
 				/>
 			{/each}
 		</div>
+		{#if note}
+			<p
+				aria-live="polite"
+				class={cn(hintText, 'm-0', note.done && 'text-moss-600')}
+				data-done={note.done ? '' : undefined}
+			>
+				{note.text}
+			</p>
+		{/if}
 	</Field>
 {:else if (input.type === 'INTEGER_CHOICE' || input.type === 'STRING_CHOICE') && (control === 'CHIPS' || (input.type === 'INTEGER_CHOICE' && input.options.length <= MAX_CHIP_OPTIONS))}
 	<Field
@@ -148,8 +163,8 @@
 		label={field.label}
 		description={field.description}
 		{error}
-		required={field.required}
 		group
+		labelTone="heading"
 	>
 		<div class="flex flex-wrap gap-2">
 			{#each input.options as option (option.value)}
@@ -168,13 +183,7 @@
 		</div>
 	</Field>
 {:else}
-	<Field
-		class={className}
-		label={field.label}
-		description={field.description}
-		{error}
-		required={field.required}
-	>
+	<Field class={className} label={field.label} description={field.description} {error}>
 		{#snippet children({ id, describedby, invalid })}
 			{#if control === 'TEXTAREA' && input.type === 'TEXT'}
 				<Textarea
@@ -183,9 +192,11 @@
 					value={text}
 					oninput={(e) => setText(e.currentTarget.value)}
 					maxlength={input.maxLength}
-					placeholder="Parking notes, timing, favorite flavors we should know about…"
+					placeholder={placeholder ??
+						'Parking notes, timing, favorite flavors we should know about…'}
 					aria-describedby={describedby}
 					aria-invalid={invalid}
+					aria-required={field.required || undefined}
 				/>
 			{:else if input.type === 'DATE'}
 				<Input
@@ -196,6 +207,7 @@
 					oninput={(e) => setText(e.currentTarget.value)}
 					aria-describedby={describedby}
 					aria-invalid={invalid}
+					aria-required={field.required || undefined}
 				/>
 			{:else if input.type === 'INTEGER_CHOICE' || input.type === 'STRING_CHOICE'}
 				{@const options =
@@ -209,6 +221,7 @@
 					onchange={(e) => setText(e.currentTarget.value)}
 					aria-describedby={describedby}
 					aria-invalid={invalid}
+					aria-required={field.required || undefined}
 				>
 					<option value="">Pick one</option>
 					{#each options as option (option.value)}
@@ -223,10 +236,12 @@
 					inputmode="numeric"
 					min={input.minimum}
 					step="1"
+					{placeholder}
 					value={text}
 					oninput={(e) => setText(e.currentTarget.value)}
 					aria-describedby={describedby}
 					aria-invalid={invalid}
+					aria-required={field.required || undefined}
 				/>
 			{:else}
 				<Input
@@ -237,12 +252,13 @@
 					inputmode={input.type === 'TEXT' && input.pattern && isDigitsOnly(input.pattern)
 						? 'numeric'
 						: undefined}
-					placeholder={input.type === 'EMAIL' ? 'you@example.com' : undefined}
+					placeholder={placeholder ?? (input.type === 'EMAIL' ? 'you@example.com' : undefined)}
 					maxlength={input.type === 'TEXT' || input.type === 'EMAIL' ? input.maxLength : undefined}
 					value={text}
 					oninput={(e) => setText(e.currentTarget.value)}
 					aria-describedby={describedby}
 					aria-invalid={invalid}
+					aria-required={field.required || undefined}
 				/>
 			{/if}
 		{/snippet}

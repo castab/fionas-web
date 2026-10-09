@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Badge, Card, capsSm, cn } from '@fionas/ui';
 	import {
-		completeServiceInputs,
 		computeAdvisoryEstimate,
 		formatMoney,
 		type InquiryAnswers,
@@ -15,14 +14,13 @@
 	 */
 	let { form, answers }: { form: InquiryForm; answers: InquiryAnswers } = $props();
 
-	const complete = $derived(completeServiceInputs(form, answers) !== null);
 	const estimate = $derived(computeAdvisoryEstimate(form, answers));
 </script>
 
 <Card class="flex flex-col gap-3 px-6 py-[22px]" aria-labelledby="estimate-heading">
 	<div class="flex items-center justify-between gap-3">
 		<h2 id="estimate-heading" class={cn(capsSm, 'm-0 text-(--text-heading)')}>
-			{complete ? 'Your estimate' : 'Your estimate so far'}
+			Your estimate so far
 		</h2>
 		<Badge tone="outline" size="sm">Estimate only</Badge>
 	</div>

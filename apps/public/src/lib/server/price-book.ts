@@ -107,6 +107,9 @@ export function projectForm(book: PriceBook): InquiryForm {
 		}
 	};
 }
+/** Staff read the group without the customer's pick instruction: "Toppings — pick 4 to 6" → "Toppings". */
+const groupName = (label: string) => label.replace(/ — pick .*$/, '');
+
 export function priceInquiry(intent: InquiryIntent, book: PriceBook): CreateInquiryRequest {
 	const form = projectForm(book);
 	const { serviceInputs, ...contact } = intent;
@@ -144,7 +147,7 @@ export function priceInquiry(intent: InquiryIntent, book: PriceBook): CreateInqu
 								(s) => s.category === o.category && s.offerings.includes(o.key)
 							)
 						)
-						.map((o) => ({ label: o.displayName, group: f.label, key: o.key }))
+						.map((o) => ({ label: o.displayName, group: groupName(f.label), key: o.key }))
 				: []
 		)
 	);

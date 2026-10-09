@@ -33,4 +33,16 @@ describe('Field', () => {
 		render(Field, { label: 'Toppings', group: true, children: control });
 		await expect.element(page.getByRole('group', { name: 'Toppings' })).toBeVisible();
 	});
+
+	it('sets a group label as a form sub-heading with labelTone="heading"', async () => {
+		render(Field, {
+			label: 'Soft serve — pick 2',
+			group: true,
+			labelTone: 'heading',
+			children: control
+		});
+		const label = page.getByText('Soft serve — pick 2');
+		await expect.element(label).toHaveClass(/--type-caps-sm/);
+		await expect.element(label).toHaveClass(/--text-heading/);
+	});
 });

@@ -14,7 +14,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                                     |
 | Site details, coming-soon copy           | `packages/shared/src/`                                                                            |
 | Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                                  |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/commerce.ts`                                         |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/menu.ts` (copy + rules); design: `Booking.dc.html`   |
 | Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                          |
 | Public SERVICE auth (token, 401/403)     | `$lib/server/service-auth.ts`, `$lib/server/commerce.ts`, README "Service auth…"                  |
 | Mint the public SERVICE credentials      | `scripts/provision-web-service.mjs` (`npm run provision:service`), `scripts/lib/`                 |
