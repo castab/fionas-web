@@ -46,10 +46,8 @@ export async function fillBasics(page: Page, guests = '75') {
 
 export async function fillHandScooped(page: Page) {
 	const group = page.getByRole('group', { name: /Hand-scooped — pick 4/ });
-	// Butter Pecan carries the one synthetic per-guest add-on in the fixture price book.
-	// A priced chip's accessible name carries its rate ("Butter Pecan · +$0.80/guest").
 	for (const name of ['Chocolate Chip', 'Chocolate', 'Butter Pecan', 'Strawberry']) {
-		await group.getByRole('checkbox', { name: new RegExp(`^${name}( ·|$)`) }).check();
+		await group.getByRole('checkbox', { name, exact: true }).check();
 	}
 }
 

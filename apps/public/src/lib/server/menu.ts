@@ -135,7 +135,7 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 						item('hand-scooped-flavor', 'hand-scooped-cheesecake', 'Cheesecake', {
 							unavailable: true,
 							badge: 'Coming soon',
-							statusNote: 'Back on the menu this fall!'
+							statusNote: 'Creamy, dreamy, on its way!'
 						})
 					]
 				},
@@ -164,10 +164,10 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 						}),
 						item('topping', 'maraschino-cherries', 'Maraschino Cherries'),
 						item('topping', 'gummy-bears', 'Gummy Bears'),
-						item('topping', 'mini-marshmallows', 'Mini Marshmallows', {
+						item('topping', 'marshmallow-sauce', 'Marshmallow Sauce', {
 							unavailable: true,
 							badge: 'Coming soon',
-							statusNote: "S'mores weather soon!"
+							statusNote: 'Gooey goodness, almost here!'
 						})
 					]
 				},

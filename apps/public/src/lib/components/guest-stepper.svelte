@@ -55,8 +55,8 @@
 	}
 
 	const stepButton = cn(
-		'inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full border-0',
-		'bg-olive-700 font-sans text-xl leading-none font-semibold text-cream-200',
+		'inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border-0',
+		'bg-olive-700 font-sans text-lg leading-none font-semibold text-cream-200',
 		'transition-[background-color,opacity] duration-(--dur-fast) ease-(--ease-out) hover:bg-olive-800',
 		'disabled:cursor-not-allowed disabled:bg-transparent disabled:text-(--text-muted) disabled:opacity-40',
 		focusRing
@@ -101,7 +101,7 @@
 				aria-required={field.required || undefined}
 				oninput={(e) => onchange(e.currentTarget.value.replace(/\D/g, '').slice(0, 4))}
 				onkeydown={keydown}
-				class="w-16 border-0 bg-transparent py-1 text-center font-sans text-xl font-bold text-(--text-heading) outline-none"
+				class="w-14 border-0 bg-transparent py-0.5 text-center font-sans text-base font-bold text-(--text-heading) outline-none"
 			/>
 			{#if hydrated}
 				<button
@@ -122,7 +122,7 @@
 						aria-label="{preset} guests"
 						onclick={() => set(preset)}
 						class={cn(
-							'inline-flex cursor-pointer items-center rounded-full border-[1.5px] px-3.5 py-[7px]',
+							'inline-flex cursor-pointer items-center rounded-full border-[1.5px] px-3 py-1',
 							'font-sans text-xs font-semibold tracking-[0.05em]',
 							'transition-[background-color,border-color,color] duration-(--dur-fast) ease-(--ease-out)',
 							'border-olive-300/70 bg-cream-100 text-ink-700 hover:border-olive-500',

@@ -13,7 +13,7 @@ test('code-owned controls, minimum picks and unavailable presentation', async ({
 	await expect(cones.getByRole('checkbox')).toHaveCount(3);
 	await expect(page.getByLabel('Anything else?')).toBeVisible();
 	await expect(hand.getByRole('checkbox', { name: 'Cheesecake' })).toBeDisabled();
-	await expect(page.getByRole('checkbox', { name: 'Mini Marshmallows' })).toBeDisabled();
+	await expect(page.getByRole('checkbox', { name: 'Marshmallow Sauce' })).toBeDisabled();
 	await fillBasics(page);
 	await fillHandScooped(page);
 	await expect(hand.getByRole('checkbox', { checked: true })).toHaveCount(4);
@@ -45,8 +45,8 @@ test('choice metadata uses explanatory popovers', async ({ page }) => {
 	const soon = page.getByRole('button', { name: 'Coming soon', exact: true });
 	await expect(soon).toHaveCount(2);
 	for (const [i, note] of [
-		[0, 'Back on the menu this fall!'],
-		[1, "S'mores weather soon!"]
+		[0, 'Creamy, dreamy, on its way!'],
+		[1, 'Gooey goodness, almost here!']
 	] as const) {
 		await soon.nth(i).click();
 		await expect(page.locator('[data-popover-content]').filter({ hasText: note })).toBeVisible();

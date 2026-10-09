@@ -29,17 +29,12 @@ for (const native of [false, true])
 			expect(body?.lines).toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({ unitPrice: '101.00' }),
-					expect.objectContaining({ quantity: '75', unitPrice: '7.00' }),
-					expect.objectContaining({
-						description: 'Butter Pecan',
-						quantity: '75',
-						unitPrice: '0.80'
-					})
+					expect.objectContaining({ quantity: '75', unitPrice: '7.00' })
 				])
 			);
-			// Cones and cups, in any combination, never add a priced line.
+			// Free flavors, cones and cups, in any combination, never add a priced line.
 			expect(body?.lines.map((l) => l.description)).not.toEqual(
-				expect.arrayContaining([expect.stringMatching(/cone|cup/i)])
+				expect.arrayContaining([expect.stringMatching(/cone|cup|butter/i)])
 			);
 			expect(body).not.toHaveProperty('total');
 			expect(body).not.toHaveProperty('pricingInputs');

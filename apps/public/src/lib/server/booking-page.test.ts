@@ -168,7 +168,7 @@ describe('trusted inquiry submission', () => {
 		expect(JSON.stringify(backend.posts()[0].body)).not.toMatch(/soft.serve/i);
 	});
 	it('rejects unsupported and unavailable picks locally', async () => {
-		for (const key of ['made-up', 'mini-marshmallows']) {
+		for (const key of ['made-up', 'marshmallow-sauce']) {
 			const f = form();
 			f.append('offering:topping', key);
 			expect(await submitInquiry(f), key).toMatchObject({ ok: false, status: 422 });
@@ -267,7 +267,7 @@ describe('trusted inquiry submission', () => {
 			true
 		);
 	});
-	it('prices selected add-ons and the fifth topping from validated intent', () => {
+	it('prices the base, guests and fifth topping from validated intent; free picks add no line', () => {
 		const f = form();
 		f.append('offering:topping', 'whipped-cream');
 		const projected = projectForm(state.book!);
@@ -277,7 +277,6 @@ describe('trusted inquiry submission', () => {
 		expect(command.lines.map((l) => [l.description, l.quantity, l.unitPrice])).toEqual([
 			['Base service', undefined, '101.00'],
 			['Ice cream service', '75', '7.00'],
-			['Butter Pecan', '75', '0.80'],
 			['Extra toppings (1)', '75', '0.30']
 		]);
 	});
