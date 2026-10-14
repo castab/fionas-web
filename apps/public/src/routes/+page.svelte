@@ -31,13 +31,29 @@
 		</p>
 
 		<div class="mt-0.5 flex flex-wrap gap-3 max-[940px]:justify-center">
-			<Button href={instagramUrl} target="_blank" rel="noopener noreferrer" size="lg">
+			<Button
+				href={instagramUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				size="lg"
+				class="min-h-[52px] px-7 py-0 text-[13px]"
+			>
 				Follow on Instagram
 			</Button>
 			{#if data.bookingEnabled}
-				<Button href={resolve('/book')} variant="secondary" size="lg">Book your scoops</Button>
+				<Button
+					href={resolve('/book')}
+					variant="secondary"
+					size="lg"
+					class="min-h-[52px] px-7 py-0 text-[13px]">Book your scoops</Button
+				>
 			{:else}
-				<ComingSoonButton toast={bookingComingSoon} variant="secondary" size="lg">
+				<ComingSoonButton
+					toast={bookingComingSoon}
+					variant="secondary"
+					size="lg"
+					class="min-h-[52px] px-7 py-0 text-[13px]"
+				>
 					Book your scoops
 				</ComingSoonButton>
 			{/if}

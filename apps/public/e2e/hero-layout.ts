@@ -17,6 +17,17 @@ export async function expectResponsiveHero(page: Page) {
 			expect(logo!.x).toBeGreaterThanOrEqual(copy!.x + copy!.width);
 			expect(Math.abs(logo!.y + logo!.height / 2 - copy!.y - copy!.height / 2)).toBeLessThan(1);
 		}
+		const follow = await hero.getByRole('link', { name: 'Follow on Instagram' }).boundingBox();
+		const book = await hero
+			.getByRole('link', { name: 'Book your scoops' })
+			.or(hero.getByRole('button', { name: 'Book your scoops' }))
+			.boundingBox();
+		if (width >= 600) {
+			expect(Math.abs(follow!.y - book!.y)).toBeLessThan(1);
+			expect(book!.x).toBeGreaterThanOrEqual(follow!.x + follow!.width);
+		} else {
+			expect(follow!.y + follow!.height).toBeLessThanOrEqual(book!.y);
+		}
 		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
 			width
 		);
