@@ -40,7 +40,7 @@ const appSources = () =>
 	sources(join(appRoot, 'src')).filter((path) => !/\.test\.ts$|[\\/]testing[\\/]/.test(path));
 
 const secrets =
-	/\$env\/(static|dynamic)\/private|\$lib\/server|NATS_(URL|USER|PASSWORD|CREDS_FILE)|FIONAS_(PRICES_FILE|REPLAY_SECRET)|@nats-io|process\.env/;
+	/\$env\/(static|dynamic)\/private|\$lib\/server|NATS_(URL|USER|PASSWORD|CREDS_FILE)|FIONAS_(PRICES_FILE|REPLAY_SECRET)|PRESENTATION_SERVICE_(BASE_URL|ACCOUNT_ID|GALLERY_NAME|TRACKING_TOKEN)|@nats-io|process\.env/;
 
 describe('server-only event publishing', () => {
 	it('finds client-reachable sources to check', () => {
@@ -60,6 +60,13 @@ describe('server-only event publishing', () => {
 			.filter((path) => /env\.NATS_/.test(readFileSync(path, 'utf8')))
 			.map(rel);
 		expect(readers).toEqual(['src/lib/server/nats.ts']);
+	});
+
+	it('reads presentation settings only in the transport module', () => {
+		const readers = appSources()
+			.filter((path) => /env\.PRESENTATION_SERVICE_/.test(readFileSync(path, 'utf8')))
+			.map(rel);
+		expect(readers).toEqual(['src/lib/server/presentation-service/transport.server.ts']);
 	});
 
 	it('opens NATS connections only in the connection module', () => {
