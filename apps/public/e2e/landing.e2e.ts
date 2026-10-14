@@ -1,4 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { expectResponsiveHero } from './hero-layout.js';
+
+test('the hero keeps copy beside the logo on desktop and below it on narrow viewports', async ({
+	page
+}) => {
+	await expectResponsiveHero(page);
+});
 
 test('the landing page renders the hero and brand chrome', async ({ page }) => {
 	await page.goto('/');

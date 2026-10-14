@@ -10,10 +10,10 @@
 
 <!-- Hero: copy (left) + olive-disc badge (right). Below 940px it stacks, badge on top. -->
 <main
-	class="mx-auto flex w-full max-w-(--container-max) flex-1 flex-wrap items-center justify-center gap-x-14 gap-y-12 px-8 pt-14 pb-10 max-[940px]:flex-col max-[940px]:gap-8 max-[940px]:pt-8 max-[940px]:text-center"
+	class="mx-auto flex w-full max-w-(--container-max) flex-1 flex-wrap-reverse items-center justify-center gap-x-14 gap-y-12 px-8 pt-14 pb-10 max-[940px]:flex-col max-[940px]:gap-8 max-[940px]:pt-8 max-[940px]:text-center"
 >
 	<div
-		class="flex max-w-[560px] flex-[1_1_380px] flex-col items-start gap-[22px] max-[940px]:max-w-none max-[940px]:flex-none max-[940px]:items-center"
+		class="flex max-w-[560px] min-w-0 flex-[1_1_380px] flex-col items-start gap-[22px] max-[940px]:max-w-none max-[940px]:flex-none max-[940px]:items-center"
 	>
 		{#if !data.bookingEnabled}
 			<Badge tone="moss">{bookingLaunchLabel}</Badge>
@@ -30,7 +30,7 @@
 			across Fresno &amp; the Madera Ranchos.
 		</p>
 
-		<div class="mt-0.5 flex flex-wrap gap-3 max-[940px]:justify-center min-[600px]:flex-nowrap">
+		<div class="mt-0.5 flex flex-wrap gap-3 max-[940px]:justify-center">
 			<Button href={instagramUrl} target="_blank" rel="noopener noreferrer" size="lg">
 				Follow on Instagram
 			</Button>

@@ -1,4 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { expectResponsiveHero } from '../hero-layout.js';
+
+test('the enabled hero keeps copy beside the logo on desktop and below it on narrow viewports', async ({
+	page
+}) => {
+	await expectResponsiveHero(page);
+});
 
 test('Book CTAs link to the form and the coming-soon badge is hidden', async ({ page }) => {
 	await page.goto('/');
