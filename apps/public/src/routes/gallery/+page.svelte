@@ -1,6 +1,6 @@
 <script lang="ts">
 	import GalleryClient from './gallery-client.svelte';
-	import { Button, InstagramIcon, capsSm, cn } from '@fionas/ui';
+	import { Button, capsSm, cn } from '@fionas/ui';
 	import { site, instagramUrl } from '@fionas/shared';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
@@ -24,7 +24,7 @@
 			target="_blank"
 			rel="noopener noreferrer"
 			variant="secondary"
-			class="min-h-12 hover:bg-cream-300"><InstagramIcon />Follow @{site.instagramHandle}</Button
+			class="min-h-12 hover:bg-cream-300">Follow @{site.instagramHandle}</Button
 		>
 	</section>
 	{#if data.firstPage.tiles.length > 0}
