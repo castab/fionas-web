@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fiona's Ice Cream — Home</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/fionasicecreamdesignsystem_65d2e1/styles.css">
+<script src="ds/fionasicecreamdesignsystem_65d2e1/components/bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#4a4733}a:hover{color:#3d3a2b}
+.pill-link{transition:background-color 160ms cubic-bezier(0.22,1,0.36,1),color 160ms cubic-bezier(0.22,1,0.36,1)}
+.pill-primary:hover{background:#4a4733 !important}
+.pill-secondary:hover{background:#e2d8c3 !important}
+.pill-link:focus-visible,.foot-link:focus-visible,.toast-close:focus-visible{outline:3px solid rgba(95,91,64,0.45);outline-offset:2px}
+.foot-link:hover{color:#f6f1e4 !important}
+.nav-link{transition:background-color 160ms cubic-bezier(0.22,1,0.36,1)}
+.nav-link:hover{background:#e2d8c3;color:#3d3a2b !important}
+.nav-link:focus-visible{outline:3px solid rgba(95,91,64,0.45);outline-offset:2px}
+.toast-close:hover{background:#e2d8c3 !important;color:#3d3a2b !important}
+@media (max-width: 940px){.hero-copy{align-items:center !important;text-align:center;max-width:none !important}.hero-copy p{max-width:none !important}.hero-actions{justify-content:center}.hero-main{padding-top:32px !important}}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #ede5d3; color: #2b2921; font-family: 'Poppins', 'Helvetica Neue', sans-serif;">
+
+  <header style="position: sticky; top: 0; z-index: 10; background: #ede5d3; border-bottom: 1px solid rgba(61, 58, 43, 0.16);">
+    <div style="max-width: 1080px; margin: 0 auto; padding: 14px 32px; display: flex; align-items: center; gap: 24px;">
+      <a href="Main.dc.html" aria-label="fionas ice cream — home" style="display: inline-flex; color: #3d3a2b;">
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" size="{{headerMark}}"></x-import>
+      </a>
+      <nav aria-label="Main" style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+        <a class="nav-link" href="Gallery.dc.html" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 999px; color: #4a4733; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Gallery</a>
+        <sc-if value="{{bookingOpen}}" hint-placeholder-val="{{ true }}">
+          <a class="pill-link pill-primary" href="Book.dc.html" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; border-radius: 999px; background: #5f5b40; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Book</a>
+        </sc-if>
+        <sc-if value="{{bookingClosed}}" hint-placeholder-val="{{ false }}">
+          <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Button" variant="primary" size="sm" on-click="{{showToast}}">Book</x-import>
+        </sc-if>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" class="hero-main" style="flex: 1; width: 100%; max-width: 1080px; margin: 0 auto; box-sizing: border-box; padding: 56px 32px 40px; display: flex; flex-wrap: wrap-reverse; align-items: center; justify-content: center; column-gap: 56px; row-gap: 32px;">
+    <div class="hero-copy" style="flex: 1 1 380px; max-width: 560px; display: flex; flex-direction: column; align-items: flex-start; gap: 22px;">
+      <sc-if value="{{bookingClosed}}" hint-placeholder-val="{{ false }}">
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Badge" tone="moss">Booking late 2026</x-import>
+      </sc-if>
+      <h1 style="margin: 0; font-size: 42px; line-height: 1.1; font-weight: 700; letter-spacing: -0.015em; color: #3d3a2b; text-wrap: balance;">Classic hand-scooped ice cream and sweet treats!</h1>
+      <p style="margin: 0; max-width: 500px; font-size: 16px; line-height: 1.65; color: #2b2921;">Soft serve &amp; hand-scooped classics brought right to your driveway, park, or backyard across Fresno &amp; the Madera Ranchos.</p>
+      <div class="hero-actions" style="margin-top: 2px; display: flex; flex-wrap: wrap; gap: 12px;">
+        <a class="pill-link pill-primary" href="https://www.instagram.com/fionasicecream/" style="display: inline-flex; align-items: center; min-height: 52px; padding: 0 28px; border-radius: 999px; background: #5f5b40; color: #ede5d3; text-decoration: none; font-size: 13px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Follow on Instagram</a>
+        <sc-if value="{{bookingOpen}}" hint-placeholder-val="{{ true }}">
+          <a class="pill-link pill-secondary" href="Book.dc.html" style="display: inline-flex; align-items: center; min-height: 52px; padding: 0 28px; border-radius: 999px; border: 2px solid #5f5b40; box-sizing: border-box; background: transparent; color: #4a4733; text-decoration: none; font-size: 13px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Book your scoops</a>
+        </sc-if>
+        <sc-if value="{{bookingClosed}}" hint-placeholder-val="{{ false }}">
+          <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Button" variant="secondary" size="lg" on-click="{{showToast}}">Book your scoops</x-import>
+        </sc-if>
+      </div>
+    </div>
+    <div style="flex: 0 1 auto; display: grid; place-items: center; max-width: 100%;">
+      <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" variant="badge" size="{{badgeSize}}" style="max-width: 100%;"></x-import>
+    </div>
+  </main>
+
+  <footer style="margin-top: 48px; background: #5f5b40; color: #ede5d3;">
+    <div style="max-width: 1080px; margin: 0 auto; padding: 48px 32px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px;">
+      <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" size="{{footerMark}}" tone="cream"></x-import>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px; text-align: right;">
+        <a class="foot-link" href="https://www.instagram.com/fionasicecream/" style="display: flex; align-items: center; gap: 8px; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+          @fionasicecream
+        </a>
+        <span style="display: flex; align-items: center; gap: 8px; color: #e2d8c3; font-size: 14px; line-height: 1.6;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          Fresno &amp; Madera Ranchos
+        </span>
+        <a class="foot-link" href="mailto:contact@fionasicecream.com" style="color: #e2d8c3; text-decoration: none; font-size: 14px; line-height: 1.6;">contact@fionasicecream.com</a>
+      </div>
+    </div>
+  </footer>
+
+  <sc-if value="{{toastOpen}}" hint-placeholder-val="{{ false }}">
+    <div role="region" aria-label="Notifications" aria-live="polite" style="position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); width: min(380px, calc(100vw - 32px)); z-index: 60;">
+      <div role="status" style="background: #f6f1e4; border: 1px solid rgba(61, 58, 43, 0.16); border-radius: 16px; box-shadow: 0 2px 6px rgba(61, 58, 43, 0.08), 0 12px 28px rgba(61, 58, 43, 0.10); overflow: hidden;">
+        <div style="display: flex; gap: 12px; padding: 16px 16px 14px;">
+          <div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+            <p style="margin: 0; color: #3d3a2b; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Booking opens soon</p>
+            <p style="margin: 0; color: #55523f; font-size: 14px; line-height: 1.6;">We're still setting up the calendar. Follow along and we'll post the moment we're bookable. 🍦</p>
+            <div style="margin-top: 8px; display: flex;">
+              <a class="pill-link pill-primary" href="https://www.instagram.com/fionasicecream/" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; border-radius: 999px; background: #5f5b40; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Follow on Instagram</a>
+            </div>
+          </div>
+          <button class="toast-close" type="button" aria-label="Dismiss" onClick="{{hideToast}}" style="flex: none; width: 32px; height: 32px; margin: -4px -4px 0 0; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: #55523f; cursor: pointer;">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        <span aria-hidden="true" style="display: block; height: 3px; background: #6f6a4e; opacity: 0.35;"></span>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"bookingOpen":{"editor":"boolean","default":true},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { toastOpen: false };
+  }
+  componentWillUnmount() { clearTimeout(this.timer); }
+  renderVals() {
+    const open = this.props.bookingOpen ?? true;
+    return {
+      bookingOpen: open,
+      bookingClosed: !open,
+      toastOpen: this.state.toastOpen,
+      headerMark: 28,
+      footerMark: 28,
+      badgeSize: 140,
+      showToast: () => {
+        clearTimeout(this.timer);
+        this.setState({ toastOpen: true });
+        this.timer = setTimeout(() => this.setState({ toastOpen: false }), 9000);
+      },
+      hideToast: () => { clearTimeout(this.timer); this.setState({ toastOpen: false }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

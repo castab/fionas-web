@@ -27,6 +27,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Admin quote builder (preview, compose)   | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts` |
 | Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                         |
+| Public site design (home/book/gallery)   | `docs/design/public-site/HANDOFF.md` + `*.dc.html` (reference only, not shipped)                  |
 
 ## Commands (run from the repo root)
 

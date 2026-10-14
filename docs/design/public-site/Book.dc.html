@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bring fionas to your event</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/fionasicecreamdesignsystem_65d2e1/styles.css">
+<script src="ds/fionasicecreamdesignsystem_65d2e1/components/bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#4a4733}a:hover{color:#3d3a2b}
+.pill-link{transition:background-color 160ms cubic-bezier(0.22,1,0.36,1)}
+.pill-primary:hover{background:#4a4733 !important}
+.pill-secondary:hover{background:#e2d8c3 !important}
+.chip,.step-btn,.preset{transition:background-color 120ms cubic-bezier(0.22,1,0.36,1),border-color 120ms cubic-bezier(0.22,1,0.36,1),color 120ms cubic-bezier(0.22,1,0.36,1)}
+.chip:not(:disabled):hover,.preset:hover{border-color:#837e62 !important}
+.chip:disabled{cursor:not-allowed}
+.step-btn:not(:disabled):hover{background:#e2d8c3 !important}
+.step-btn:disabled{opacity:.4;cursor:not-allowed}
+.chip:focus-visible,.step-btn:focus-visible,.preset:focus-visible,.pill-link:focus-visible,.foot-link:focus-visible{outline:3px solid rgba(95,91,64,0.45);outline-offset:2px}
+.guest-box:focus-within{outline:3px solid rgba(95,91,64,0.45);outline-offset:2px}
+.foot-link:hover{color:#f6f1e4 !important}
+.nav-link{transition:background-color 160ms cubic-bezier(0.22,1,0.36,1)}
+.nav-link:hover{background:#e2d8c3;color:#3d3a2b !important}
+.nav-link:focus-visible{outline:3px solid rgba(95,91,64,0.45);outline-offset:2px}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #ede5d3; color: #2b2921; font-family: 'Poppins', 'Helvetica Neue', sans-serif;">
+
+  <header style="position: sticky; top: 0; z-index: 10; background: #ede5d3; border-bottom: 1px solid rgba(61, 58, 43, 0.16);">
+    <div style="max-width: 1080px; margin: 0 auto; padding: 14px 32px; display: flex; align-items: center; gap: 24px;">
+      <a href="Main.dc.html" aria-label="fionas ice cream — home" style="display: inline-flex; color: #3d3a2b;">
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" size="{{headerMark}}"></x-import>
+      </a>
+      <nav aria-label="Main" style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+      <a class="nav-link" href="Gallery.dc.html" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 999px; color: #4a4733; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Gallery</a>
+      <a class="pill-link pill-primary" href="Book.dc.html" aria-current="page" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; border-radius: 999px; background: #5f5b40; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Book</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" style="flex: 1; width: 100%; max-width: 640px; margin: 0 auto; box-sizing: border-box; padding: 44px 20px 72px;">
+
+    <sc-if value="{{editing}}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px;">
+        <h1 style="margin: 0; font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -0.015em; color: #3d3a2b; text-wrap: balance;">bring fionas to your event</h1>
+        <p style="margin: 0; font-size: 16px; line-height: 1.65; color: #2b2921;">Pick your flavors, tell us about your event, and check your estimate at the bottom. We'll follow up with a firm quote.</p>
+      </div>
+
+      <form novalidate="" style="display: flex; flex-direction: column; gap: 28px;">
+
+        <section aria-labelledby="section-event" style="display: flex; flex-direction: column; gap: 16px;">
+          <h2 id="section-event" style="margin: 0; color: #3d3a2b; font-size: 12px; line-height: 1.4; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Your event</h2>
+          <div style="display: flex; flex-wrap: wrap; gap: 16px 14px;">
+            <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Input" label="Your name" placeholder="Fiona" value="{{name}}" on-change="{{setName}}" error="{{errName}}" style="flex: 1 1 240px; min-width: 0;"></x-import>
+            <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Input" label="Email" type="email" placeholder="you@example.com" value="{{email}}" on-change="{{setEmail}}" error="{{errEmail}}" style="flex: 1 1 240px; min-width: 0;"></x-import>
+            <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Input" label="Event ZIP code" placeholder="93720" hint="Used to check travel distance" value="{{zip}}" on-change="{{setZip}}" error="{{errZip}}" style="flex: 1 1 240px; min-width: 0;"></x-import>
+            <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Input" label="Event date" type="date" hint="Weekends book fast!" value="{{date}}" on-change="{{setDate}}" error="{{errDate}}" style="flex: 1 1 240px; min-width: 0;"></x-import>
+            <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Select" label="Event type" options="{{eventTypes}}" value="{{eventType}}" on-change="{{setEventType}}" error="{{errEventType}}" style="flex: 1 1 240px; min-width: 0;"></x-import>
+            <div aria-hidden="true" style="flex: 1 1 240px; min-width: 0;"></div>
+
+            <div style="flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+              <label for="guest-count" style="color: #3d3a2b; font-size: 12px; line-height: 1.4; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">About how many guests?</label>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px;">
+                <div class="guest-box" role="group" aria-label="Guest count" style="display: inline-flex; align-items: center; padding: 4px; border-radius: 999px; border: 1.5px solid {{guestBorder}}; background: #f6f1e4;">
+                  <button class="step-btn" type="button" aria-label="5 fewer guests" disabled="{{guestDownDisabled}}" onClick="{{guestDown}}" style="width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: #3d3a2b; font: 600 20px/1 'Poppins', sans-serif; cursor: pointer;">−</button>
+                  <input id="guest-count" type="text" inputmode="numeric" autocomplete="off" maxlength="4" aria-describedby="guest-help" value="{{guestsText}}" onChange="{{setGuests}}" style="width: 56px; border: 0; background: transparent; padding: 2px 0; text-align: center; font: 700 16px/1.4 'Poppins', sans-serif; color: #3d3a2b; outline: none;">
+                  <button class="step-btn" type="button" aria-label="5 more guests" disabled="{{guestUpDisabled}}" onClick="{{guestUp}}" style="width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: #3d3a2b; font: 600 20px/1 'Poppins', sans-serif; cursor: pointer;">+</button>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  <sc-for list="{{presets}}" as="p" hint-placeholder-count="4">
+                    <button class="preset" type="button" aria-pressed="{{p.pressed}}" aria-label="{{p.aria}}" onClick="{{p.pick}}" style="display: inline-flex; align-items: center; min-height: 36px; padding: 4px 14px; border-radius: 999px; border: 1.5px solid {{p.bd}}; background: {{p.bg}}; color: {{p.fg}}; font: 600 12px/1.4 'Poppins', sans-serif; letter-spacing: 0.05em; cursor: pointer;">{{p.n}}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <p id="guest-help" aria-live="polite" style="margin: 0; font-size: 12px; line-height: 1.45; color: {{guestHelpColor}}; font-weight: {{guestHelpWeight}};">{{guestHelp}}</p>
+            </div>
+          </div>
+        </section>
+
+        <section aria-label="Build your ice cream service" style="display: flex; flex-direction: column; gap: 22px;">
+          <sc-for list="{{groups}}" as="group" hint-placeholder-count="3">
+            <fieldset style="margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+              <legend style="padding: 0; margin-bottom: 10px; width: 100%; display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <span style="color: #3d3a2b; font-size: 12px; line-height: 1.4; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">{{group.label}}</span>
+                <span style="color: {{group.countColor}}; font-size: 12px; font-weight: 600; letter-spacing: 0.05em;">{{group.count}}</span>
+              </legend>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <sc-for list="{{group.items}}" as="item" hint-placeholder-count="6">
+                  <button class="chip" type="button" aria-pressed="{{item.pressed}}" aria-label="{{item.aria}}" title="{{item.title}}" disabled="{{item.disabled}}" onClick="{{item.toggle}}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 9px 16px; box-sizing: border-box; border-radius: 999px; border: 1.5px solid {{item.bd}}; background: {{item.bg}}; color: {{item.fg}}; opacity: {{item.op}}; font: 600 12px/1.4 'Poppins', sans-serif; letter-spacing: 0.05em; cursor: pointer;">
+                    <span>{{item.label}}</span>
+                    <sc-if value="{{item.badge}}" hint-placeholder-val="{{ false }}">
+                      <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Badge" tone="moss">Coming soon</x-import>
+                    </sc-if>
+                    <sc-if value="{{item.info}}" hint-placeholder-val="{{ false }}">
+                      <span aria-hidden="true" style="width: 15px; height: 15px; display: inline-grid; place-items: center; border-radius: 999px; background: rgba(43, 41, 33, 0.15); font-size: 10px; font-weight: 700; letter-spacing: 0;">i</span>
+                    </sc-if>
+                  </button>
+                </sc-for>
+              </div>
+              <sc-if value="{{group.error}}" hint-placeholder-val="{{ false }}">
+                <p style="margin: 0; font-size: 12px; line-height: 1.45; font-weight: 500; color: #a3492f;">{{group.error}}</p>
+              </sc-if>
+            </fieldset>
+          </sc-for>
+        </section>
+
+        <section aria-label="Anything else" style="display: flex; flex-direction: column;">
+          <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Input" label="Anything else?" multiline="{{yes}}" placeholder="Parking notes, timing, favorite flavors we should know about…" value="{{message}}" on-change="{{setMessage}}"></x-import>
+        </section>
+
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Card" padding="22px 24px">
+          <div aria-labelledby="estimate-heading" style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+              <h2 id="estimate-heading" style="margin: 0; color: #3d3a2b; font-size: 12px; line-height: 1.4; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Your estimate so far</h2>
+              <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Badge" tone="olive">Estimate only</x-import>
+            </div>
+            <div aria-live="polite" style="display: flex; flex-direction: column; gap: 12px;">
+              <sc-if value="{{hasEstimate}}" hint-placeholder-val="{{ true }}">
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <sc-for list="{{lines}}" as="line" hint-placeholder-count="2">
+                    <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.MenuRow" name="{{line.desc}}" price="{{line.amount}}" note="{{line.sub}}"></x-import>
+                  </sc-for>
+                </div>
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-top: 10px; border-top: 2px solid #5f5b40;">
+                  <span style="color: #3d3a2b; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Estimated total</span>
+                  <span style="color: #3d3a2b; font-size: 20px; line-height: 1.25; font-weight: 700;">{{total}}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{noEstimate}}" hint-placeholder-val="{{ false }}">
+                <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #55523f;">Add your guest count to start your estimate.</p>
+              </sc-if>
+            </div>
+            <p style="margin: 0; font-size: 11.5px; line-height: 1.55; color: #55523f;">This is an early estimate, not a final quote. Travel within greater Fresno and Madera Ranchos is included in the base service — bookings farther out may carry an added travel fee, confirmed once we chat. No street address needed yet.</p>
+          </div>
+        </x-import>
+
+        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 10px;">
+          <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Button" variant="primary" size="lg" type="button" on-click="{{submit}}">Send booking request</x-import>
+          <sc-if value="{{missing}}" hint-placeholder-val="{{ false }}">
+            <p role="alert" style="margin: 0; font-size: 12.5px; line-height: 1.4; color: #a3492f;">{{missing}}</p>
+          </sc-if>
+        </div>
+      </form>
+    </sc-if>
+
+    <sc-if value="{{submitted}}" hint-placeholder-val="{{ false }}">
+      <div role="status" style="display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 16px 0; text-align: center;">
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Badge" tone="olive">Request received</x-import>
+        <h1 style="margin: 0; font-size: 34px; line-height: 1.2; font-weight: 700; letter-spacing: -0.015em; color: #3d3a2b; text-wrap: balance;">we got your request!</h1>
+        <p style="margin: 0; max-width: 460px; font-size: 16px; line-height: 1.65; color: #2b2921;">{{thanks}} — we're excited about your event. This is just the start of the conversation: we'll follow up within a day to lock in the final details and price, including any travel fee if you're outside our usual area.</p>
+        <p style="margin: 0; max-width: 460px; font-size: 14px; line-height: 1.6; color: #55523f;">No scoops on the calendar just yet! Your date isn't held and you haven't paid a thing. That all comes after we chat.</p>
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Card" padding="24px 26px" style="width: 100%; margin-top: 6px; text-align: left;">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <h2 style="margin: 0; color: #3d3a2b; font-size: 12px; line-height: 1.4; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">What happens next</h2>
+            <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px;">
+              <li style="display: flex; align-items: flex-start; gap: 14px;">
+                <span aria-hidden="true" style="flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 999px; background: #5f5b40; color: #ede5d3; font-size: 11px; font-weight: 600;">1</span>
+                <span style="font-size: 13.5px; line-height: 1.55; color: #2b2921;">We review your request and reach out within a day to confirm timing, location, and finalize pricing.</span>
+              </li>
+              <li style="display: flex; align-items: flex-start; gap: 14px;">
+                <span aria-hidden="true" style="flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 999px; background: #5f5b40; color: #ede5d3; font-size: 11px; font-weight: 600;">2</span>
+                <span style="font-size: 13.5px; line-height: 1.55; color: #2b2921;">Once everything's agreed, we send over a firm quote and collect a deposit to hold your date.</span>
+              </li>
+              <li style="display: flex; align-items: flex-start; gap: 14px;">
+                <span aria-hidden="true" style="flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 999px; background: #5f5b40; color: #ede5d3; font-size: 11px; font-weight: 600;">3</span>
+                <span style="font-size: 13.5px; line-height: 1.55; color: #2b2921;">You're officially on the calendar — we'll send a confirmation with all the final details.</span>
+              </li>
+            </ol>
+          </div>
+        </x-import>
+        <p style="margin: 6px 0 0; font-size: 14px; line-height: 1.6; color: #55523f;">Questions in the meantime? Reach us at <a href="mailto:contact@fionasicecream.com" style="color: #4a4733; text-decoration: underline; text-underline-offset: 2px;">contact@fionasicecream.com</a>.</p>
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Button" variant="secondary" on-click="{{startOver}}">Send another inquiry</x-import>
+      </div>
+    </sc-if>
+  </main>
+
+  <footer style="margin-top: 48px; background: #5f5b40; color: #ede5d3;">
+    <div style="max-width: 1080px; margin: 0 auto; padding: 48px 32px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px;">
+      <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" size="{{footerMark}}" tone="cream"></x-import>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px; text-align: right;">
+        <a class="foot-link" href="https://www.instagram.com/fionasicecream/" style="display: flex; align-items: center; gap: 8px; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+          @fionasicecream
+        </a>
+        <span style="display: flex; align-items: center; gap: 8px; color: #e2d8c3; font-size: 14px; line-height: 1.6;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          Fresno &amp; Madera Ranchos
+        </span>
+        <a class="foot-link" href="mailto:contact@fionasicecream.com" style="color: #e2d8c3; text-decoration: none; font-size: 14px; line-height: 1.6;">contact@fionasicecream.com</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"basePrice":{"editor":"text","default":"","section":"Pricing"},"perGuestPrice":{"editor":"text","default":"","section":"Pricing"},"extraToppingPrice":{"editor":"text","default":"","section":"Pricing"},"$preview":{"width":1280,"height":2200}}'>
+const GROUPS = [
+  { key: 'flavors', label: 'Hand-scooped — pick 4', min: 4, max: 4, summary: '4 hand-scooped flavors', items: [
+    { key: 'chocolate-chip', label: 'Chocolate Chip' },
+    { key: 'chocolate', label: 'Chocolate' },
+    { key: 'mint-chip', label: 'Mint Chip' },
+    { key: 'butter-pecan', label: 'Butter Pecan', info: 'Contains tree nuts' },
+    { key: 'vanilla-bean', label: 'Vanilla Bean' },
+    { key: 'strawberry', label: 'Strawberry' },
+    { key: 'cheesecake', label: 'Cheesecake', unavailable: true, status: 'Creamy, dreamy, on its way!' }
+  ]},
+  { key: 'toppings', label: 'Toppings — pick 4 to 6', min: 4, max: 6, summary: 'at least 4 toppings', items: [
+    { key: 'rainbow-sprinkles', label: 'Rainbow Sprinkles' },
+    { key: 'chocolate-sauce', label: 'Chocolate Sauce' },
+    { key: 'caramel-sauce', label: 'Caramel Sauce' },
+    { key: 'crushed-oreo', label: 'Crushed Oreo', info: 'Contains wheat & soy' },
+    { key: 'whipped-cream', label: 'Whipped Cream' },
+    { key: 'sliced-almonds', label: 'Sliced Almonds', info: 'Contains tree nuts' },
+    { key: 'maraschino-cherries', label: 'Maraschino Cherries' },
+    { key: 'gummy-bears', label: 'Gummy Bears' },
+    { key: 'marshmallow-sauce', label: 'Marshmallow Sauce', unavailable: true, status: 'Gooey goodness, almost here!' }
+  ]},
+  { key: 'cones', label: 'Cones & cups — pick 1 or more', min: 1, max: 3, summary: 'at least 1 cone or cup', items: [
+    { key: 'cup', label: 'Cups' },
+    { key: 'sugar-cone', label: 'Sugar Cones' },
+    { key: 'cake-cone', label: 'Cake Cones' }
+  ]}
+];
+const EVENT_TYPES = [
+  { label: 'Pick one', value: '' },
+  { label: 'Birthday', value: 'BIRTHDAY' },
+  { label: 'Wedding', value: 'WEDDING' },
+  { label: 'Corporate', value: 'CORPORATE' },
+  { label: 'School event', value: 'SCHOOL_EVENT' },
+  { label: 'Neighborhood event', value: 'NEIGHBORHOOD_EVENT' },
+  { label: 'Other', value: 'OTHER' }
+];
+const INITIAL = { name: '', email: '', zip: '', date: '', eventType: '', guests: '50', message: '', flavors: [], toppings: [], cones: [], attempted: false, submitted: false };
+
+function priceOf(v) {
+  const s = String(v ?? '').replace(/[$,\s]/g, '');
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(s)) return null;
+  return Number(s);
+}
+function money(n) {
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = Object.assign({}, INITIAL);
+  }
+
+  errors() {
+    const s = this.state;
+    const e = {};
+    const n = parseInt(s.guests, 10);
+    if (!s.name.trim()) e.name = 'your name';
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.email.trim())) e.email = 'email';
+    if (!/^[0-9]{5}$/.test(s.zip.trim())) e.zip = 'event ZIP code';
+    if (!s.date) e.date = 'event date';
+    if (!s.eventType) e.eventType = 'event type';
+    if (!(n >= 1 && n <= 300)) e.guests = 'an estimated guest count';
+    GROUPS.forEach((g) => {
+      const c = s[g.key].length;
+      if (c < g.min || c > g.max) e[g.key] = g.summary;
+    });
+    return e;
+  }
+
+  renderVals() {
+    const s = this.state;
+    const set = (k) => (ev) => this.setState({ [k]: ev && ev.target ? ev.target.value : ev });
+    const errs = s.attempted ? this.errors() : {};
+    const n = parseInt(s.guests, 10);
+    const guestsValid = n >= 1 && n <= 300;
+
+    // Guest stepper
+    let guestHelp = "A best guess is fine. We'll confirm when we follow up.";
+    let guestProblem = false;
+    if (s.guests !== '' && n > 300) { guestHelp = "We quote up to 300 online — for bigger crowds, add a note below and we'll plan it with you."; guestProblem = true; }
+    else if (errs.guests) { guestHelp = 'Add a rough headcount so we can size your quote.'; guestProblem = true; }
+    const clamp = (v) => Math.max(0, Math.min(300, v));
+    const presets = [25, 50, 100, 200].map((p) => {
+      const on = n === p;
+      return { n: p, aria: p + ' guests', pressed: on ? 'true' : 'false', pick: () => this.setState({ guests: String(p) }),
+        bg: on ? '#5f5b40' : '#f6f1e4', fg: on ? '#ede5d3' : '#2b2921', bd: on ? '#5f5b40' : 'rgba(170, 166, 142, 0.7)' };
+    });
+
+    // Chip groups
+    const groups = GROUPS.map((g) => {
+      const picked = s[g.key];
+      const atMax = picked.length >= g.max;
+      return {
+        label: g.label,
+        count: picked.length + ' of ' + g.max,
+        countColor: picked.length >= g.min && picked.length <= g.max ? '#6b7a4a' : '#55523f',
+        error: errs[g.key] ? 'Pick ' + (g.min === g.max ? g.min : g.min + ' to ' + g.max) + (g.key === 'cones' ? ' or more' : '') + '.' : false,
+        items: g.items.map((it) => {
+          const on = picked.includes(it.key);
+          const disabled = !on && (!!it.unavailable || atMax);
+          const extra = it.unavailable ? ', coming soon — ' + it.status : (it.info ? ', ' + it.info : '');
+          return {
+            label: it.label,
+            aria: it.label + extra,
+            title: it.unavailable ? it.status : (it.info || ''),
+            badge: !!it.unavailable,
+            info: !!it.info,
+            pressed: on ? 'true' : 'false',
+            disabled: disabled,
+            bg: on ? '#5f5b40' : '#f6f1e4',
+            fg: on ? '#ede5d3' : (it.unavailable ? '#55523f' : '#2b2921'),
+            bd: on ? '#5f5b40' : (it.unavailable ? 'rgba(61, 58, 43, 0.16)' : 'rgba(170, 166, 142, 0.7)'),
+            op: disabled ? (it.unavailable ? 0.55 : 0.45) : 1,
+            toggle: () => {
+              const cur = this.state[g.key];
+              const next = cur.includes(it.key) ? cur.filter((k) => k !== it.key) : (cur.length < g.max ? cur.concat(it.key) : cur);
+              this.setState({ [g.key]: next });
+            }
+          };
+        })
+      };
+    });
+
+    // Estimate (prices come from the Pricing tweaks; blank shows a placeholder)
+    const base = priceOf(this.props.basePrice);
+    const per = priceOf(this.props.perGuestPrice);
+    const extraPer = priceOf(this.props.extraToppingPrice);
+    const lines = [];
+    let total = 0;
+    let complete = true;
+    const add = (desc, sub, unit, qty, placeholder) => {
+      if (unit === null) { complete = false; lines.push({ desc, sub, amount: placeholder }); }
+      else { total += unit * qty; lines.push({ desc, sub, amount: money(unit * qty) }); }
+    };
+    if (guestsValid) {
+      add('Base service', '', base, 1, '[BASE PRICE]');
+      add('Ice cream service', n + (n === 1 ? ' guest' : ' guests'), per, n, '[PER-GUEST PRICE]');
+      const extra = Math.max(0, s.toppings.length - 4);
+      if (extra > 0) add('Extra toppings (' + extra + ')', '4 toppings included; each extra is charged per guest', extraPer, n * extra, '[EXTRA TOPPING PRICE]');
+    }
+
+    const allErrs = this.errors();
+    const missingList = s.attempted ? Object.values(allErrs) : [];
+    const first = s.name.trim().split(/\s+/)[0];
+
+    return {
+      yes: true,
+      headerMark: 28,
+      footerMark: 28,
+      editing: !s.submitted,
+      submitted: s.submitted,
+      thanks: first ? 'Thanks, ' + first : 'Thanks',
+      name: s.name, email: s.email, zip: s.zip, date: s.date, eventType: s.eventType, message: s.message,
+      setName: set('name'), setEmail: set('email'), setDate: set('date'), setEventType: set('eventType'), setMessage: set('message'),
+      setZip: (ev) => this.setState({ zip: String(ev && ev.target ? ev.target.value : ev).replace(/\D/g, '').slice(0, 5) }),
+      errName: errs.name ? 'Add your name.' : undefined,
+      errEmail: errs.email ? 'Add an email we can reply to.' : undefined,
+      errZip: errs.zip ? 'Enter a 5-digit ZIP code.' : undefined,
+      errDate: errs.date ? 'Pick your event date.' : undefined,
+      errEventType: errs.eventType ? 'Pick an event type.' : undefined,
+      eventTypes: EVENT_TYPES,
+      guestsText: s.guests,
+      setGuests: (ev) => this.setState({ guests: ev.target.value.replace(/\D/g, '').slice(0, 4) }),
+      guestDown: () => this.setState({ guests: String(clamp((parseInt(this.state.guests, 10) || 0) - 5)) }),
+      guestUp: () => this.setState({ guests: String(clamp((parseInt(this.state.guests, 10) || 0) + 5)) }),
+      guestDownDisabled: !(n > 0),
+      guestUpDisabled: n >= 300,
+      guestBorder: guestProblem ? '#a3492f' : 'rgba(170, 166, 142, 0.7)',
+      guestHelp: guestHelp,
+      guestHelpColor: guestProblem ? '#a3492f' : '#55523f',
+      guestHelpWeight: guestProblem ? 500 : 400,
+      presets: presets,
+      groups: groups,
+      hasEstimate: guestsValid,
+      noEstimate: !guestsValid,
+      lines: lines,
+      total: complete ? money(total) : '[TOTAL]',
+      missing: missingList.length ? 'Please add: ' + missingList.join(', ') + '.' : false,
+      submit: () => {
+        if (Object.keys(this.errors()).length) { this.setState({ attempted: true }); return; }
+        this.setState({ submitted: true, attempted: false });
+        try { window.scrollTo(0, 0); } catch (e) {}
+      },
+      startOver: () => { this.setState(Object.assign({}, INITIAL)); try { window.scrollTo(0, 0); } catch (e) {} }
+    };
+  }
+}
+</script>
+</body>
+</html>

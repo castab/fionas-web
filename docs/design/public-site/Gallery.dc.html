@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gallery</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/fionasicecreamdesignsystem_65d2e1/styles.css">
+<script src="ds/fionasicecreamdesignsystem_65d2e1/components/bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#4a4733}a:hover{color:#3d3a2b}
+.pill-link{transition:background-color 160ms cubic-bezier(0.22,1,0.36,1)}
+.pill-primary:hover{background:#4a4733 !important}
+.pill-secondary:hover{background:#e2d8c3 !important}
+.nav-link{transition:background-color 160ms cubic-bezier(0.22,1,0.36,1)}
+.nav-link:hover{background:#e2d8c3;color:#3d3a2b !important}
+.tile{transition:transform 220ms cubic-bezier(0.22,1,0.36,1),box-shadow 220ms cubic-bezier(0.22,1,0.36,1)}
+.tile:hover{transform:translateY(-2px);box-shadow:0 2px 6px rgba(61,58,43,0.08),0 12px 28px rgba(61,58,43,0.10) !important}
+.lb-btn:hover{background:rgba(18,16,12,0.7) !important}
+.ig-link:hover{text-decoration:underline}
+.pill-link:focus-visible,.nav-link:focus-visible,.foot-link:focus-visible,.tile:focus-visible,.lb-btn:focus-visible,.dot:focus-visible,.ig-link:focus-visible{outline:3px solid rgba(95,91,64,0.45);outline-offset:2px}
+.foot-link:hover{color:#f6f1e4 !important}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #ede5d3; color: #2b2921; font-family: 'Poppins', 'Helvetica Neue', sans-serif;">
+
+  <header style="position: sticky; top: 0; z-index: 10; background: #ede5d3; border-bottom: 1px solid rgba(61, 58, 43, 0.16);">
+    <div style="max-width: 1080px; margin: 0 auto; padding: 14px 32px; display: flex; align-items: center; gap: 24px;">
+      <a href="Main.dc.html" aria-label="fionas ice cream — home" style="display: inline-flex; color: #3d3a2b;">
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" size="{{headerMark}}"></x-import>
+      </a>
+      <nav aria-label="Main" style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+        <a class="nav-link" href="Gallery.dc.html" aria-current="page" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 999px; background: #e2d8c3; color: #3d3a2b; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Gallery</a>
+        <a class="pill-link pill-primary" href="Book.dc.html" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; border-radius: 999px; background: #5f5b40; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">Book</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" style="flex: 1; width: 100%;">
+    <section style="max-width: 720px; margin: 0 auto; box-sizing: border-box; padding: 56px 20px 40px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center;">
+      <span style="color: #6f6a4e; font-size: 12px; line-height: 1.4; font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase;">From the feed</span>
+      <h1 style="margin: 0; font-size: 40px; line-height: 1.15; font-weight: 700; letter-spacing: -0.015em; color: #3d3a2b; text-wrap: balance;">a few favorites from recent events</h1>
+      <p style="margin: 0; max-width: 520px; font-size: 17px; line-height: 1.65; color: #55523f;">A scoop of the good stuff from @fionasicecream — tap any photo or video to see it larger.</p>
+      <a class="pill-link pill-secondary" href="https://www.instagram.com/fionasicecream/" style="margin-top: 4px; display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 24px; border-radius: 999px; border: 2px solid #5f5b40; box-sizing: border-box; color: #4a4733; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+        Follow @fionasicecream
+      </a>
+    </section>
+
+    <section aria-label="Photos and videos" style="max-width: 1080px; margin: 0 auto; box-sizing: border-box; padding: 0 20px 48px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(176px, calc(50% - 6px)), 1fr)); gap: 12px;">
+      <sc-for list="{{tiles}}" as="tile" hint-placeholder-count="12">
+        <button class="tile" type="button" aria-label="{{tile.aria}}" onClick="{{tile.open}}" style="padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(61, 58, 43, 0.16); background: #f6f1e4; box-shadow: 0 1px 3px rgba(61, 58, 43, 0.14); text-align: left; cursor: pointer; font-family: inherit;">
+          <div style="position: relative; width: 100%; aspect-ratio: 1 / 1; background: {{tile.tone}}; display: grid; place-items: center;">
+            <div aria-hidden="true" style="display: flex; flex-direction: column; align-items: center; gap: 6px; color: #6f6a4e;">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"></path></svg>
+              <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase;">{{tile.kind}}</span>
+            </div>
+            <sc-if value="{{tile.isVideo}}" hint-placeholder-val="{{ false }}">
+              <div aria-hidden="true" style="position: absolute; inset: 0; display: grid; place-items: center;">
+                <span style="width: 48px; height: 48px; display: grid; place-items: center; border-radius: 999px; background: rgba(18, 16, 12, 0.55); color: #f6f1e4;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l11-6.5z"></path></svg>
+                </span>
+              </div>
+            </sc-if>
+            <sc-if value="{{tile.isAlbum}}" hint-placeholder-val="{{ false }}">
+              <span aria-hidden="true" style="position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 999px; background: rgba(18, 16, 12, 0.55); color: #f6f1e4;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"></path><path d="m22 12.5-8.97 4.08a2 2 0 0 1-1.66 0L2 12.5"></path><path d="m22 17.5-8.97 4.08a2 2 0 0 1-1.66 0L2 17.5"></path></svg>
+              </span>
+            </sc-if>
+          </div>
+          <p style="margin: 0; padding: 12px 16px; font-size: 14px; line-height: 1.6; color: #55523f;">{{tile.caption}}</p>
+        </button>
+      </sc-for>
+    </section>
+
+    <div style="max-width: 1080px; margin: 0 auto; padding: 0 20px 72px; display: flex; justify-content: center;">
+      <sc-if value="{{hasMore}}" hint-placeholder-val="{{ true }}">
+        <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Button" variant="secondary" on-click="{{loadMore}}">Load more</x-import>
+      </sc-if>
+      <sc-if value="{{caughtUp}}" hint-placeholder-val="{{ false }}">
+        <p role="status" style="margin: 0; font-size: 14px; color: #55523f;">You're all caught up.</p>
+      </sc-if>
+    </div>
+  </main>
+
+  <footer style="background: #5f5b40; color: #ede5d3;">
+    <div style="max-width: 1080px; margin: 0 auto; padding: 48px 32px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px;">
+      <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Wordmark" size="{{footerMark}}" tone="cream"></x-import>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px; text-align: right;">
+        <a class="foot-link" href="https://www.instagram.com/fionasicecream/" style="display: flex; align-items: center; gap: 8px; color: #ede5d3; text-decoration: none; font-size: 12px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+          @fionasicecream
+        </a>
+        <span style="display: flex; align-items: center; gap: 8px; color: #e2d8c3; font-size: 14px; line-height: 1.6;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          Fresno &amp; Madera Ranchos
+        </span>
+        <a class="foot-link" href="mailto:contact@fionasicecream.com" style="color: #e2d8c3; text-decoration: none; font-size: 14px; line-height: 1.6;">contact@fionasicecream.com</a>
+      </div>
+    </div>
+  </footer>
+
+  <sc-if value="{{lightbox}}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="{{active.aria}}" onClick="{{close}}" style="position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(18, 16, 12, 0.65);">
+      <div onClick="{{stop}}" style="position: relative; width: min(480px, 100%); max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; border-radius: 16px; background: #f6f1e4; box-shadow: 0 2px 6px rgba(61, 58, 43, 0.08), 0 12px 28px rgba(61, 58, 43, 0.10);">
+        <div style="position: relative; flex: none; aspect-ratio: {{active.ratio}}; background: {{active.tone}}; display: grid; place-items: center; border-radius: 16px 16px 0 0; overflow: hidden;">
+          <div aria-hidden="true" style="display: flex; flex-direction: column; align-items: center; gap: 8px; color: #6f6a4e;">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"></path></svg>
+            <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase;">{{active.slideLabel}}</span>
+          </div>
+          <button class="lb-btn" type="button" aria-label="Close" onClick="{{close}}" style="position: absolute; top: 12px; right: 12px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 999px; background: rgba(18, 16, 12, 0.55); color: #f6f1e4; cursor: pointer;">
+            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+          <button class="lb-btn" type="button" aria-label="Previous" onClick="{{prev}}" style="position: absolute; top: 50%; left: 12px; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 999px; background: rgba(18, 16, 12, 0.55); color: #f6f1e4; cursor: pointer;">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+          </button>
+          <button class="lb-btn" type="button" aria-label="Next" onClick="{{next}}" style="position: absolute; top: 50%; right: 12px; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 999px; background: rgba(18, 16, 12, 0.55); color: #f6f1e4; cursor: pointer;">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+          </button>
+          <sc-if value="{{active.isVideo}}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: rgba(18, 16, 12, 0.55); color: #f6f1e4;">
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l11-6.5z"></path></svg>
+              <span aria-hidden="true" style="flex: 1; height: 4px; border-radius: 999px; background: rgba(246, 241, 228, 0.35);"><span style="display: block; width: 30%; height: 100%; border-radius: 999px; background: #f6f1e4;"></span></span>
+              <span style="font-size: 12px; font-variant-numeric: tabular-nums;">0:04/0:15</span>
+            </div>
+          </sc-if>
+        </div>
+        <sc-if value="{{active.isAlbum}}" hint-placeholder-val="{{ false }}">
+          <div role="group" aria-label="Carousel position" style="display: flex; justify-content: center; gap: 2px; padding: 4px 0 0;">
+            <sc-for list="{{dots}}" as="dot" hint-placeholder-count="3">
+              <button class="dot" type="button" aria-label="{{dot.aria}}" aria-current="{{dot.current}}" onClick="{{dot.go}}" style="width: 24px; height: 24px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer;">
+                <span style="width: 7px; height: 7px; border-radius: 999px; background: {{dot.color}};"></span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px;">
+          <sc-if value="{{active.isVideo}}" hint-placeholder-val="{{ false }}">
+            <x-import component-from-global-scope="FionaSIceCreamDesignSystem_65d2e1.Badge" tone="olive">Video</x-import>
+          </sc-if>
+          <p style="margin: 0; font-size: 15px; line-height: 1.65; color: #2b2921;">{{active.caption}}</p>
+          <a class="ig-link" href="https://www.instagram.com/fionasicecream/" style="font-size: 14px; font-weight: 600; color: #4a4733; text-decoration: none; text-underline-offset: 4px;">View on Instagram</a>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1640}}'>
+const TONES = ['#d5cec6', '#e2d8c3', '#ddd6cc', '#d9d6c6'];
+const PAGE = 12;
+const TOTAL = 24;
+const CAPTION = 'A moment from @fionasicecream';
+
+function typeOf(i) {
+  if (i % 9 === 2 || i % 9 === 7) return 'VIDEO';
+  if (i % 7 === 4) return 'CAROUSEL_ALBUM';
+  return 'IMAGE';
+}
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { shown: PAGE, active: -1, slide: 0 };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const word = { VIDEO: 'video', CAROUSEL_ALBUM: 'album', IMAGE: 'photo' };
+    const tiles = [];
+    for (let i = 0; i < s.shown; i++) {
+      const type = typeOf(i);
+      tiles.push({
+        kind: type === 'VIDEO' ? 'Video' : 'Photo',
+        isVideo: type === 'VIDEO',
+        isAlbum: type === 'CAROUSEL_ALBUM',
+        tone: TONES[i % TONES.length],
+        caption: CAPTION,
+        aria: 'View ' + word[type] + ' ' + (i + 1) + ' of ' + s.shown + ': ' + CAPTION,
+        open: () => this.setState({ active: i, slide: 0 })
+      });
+    }
+
+    const open = s.active >= 0;
+    let active = { aria: '', ratio: '1 / 1', tone: TONES[0], slideLabel: 'Photo', isVideo: false, isAlbum: false, caption: CAPTION };
+    let dots = [];
+    if (open) {
+      const type = typeOf(s.active);
+      const slides = type === 'CAROUSEL_ALBUM' ? 3 : 1;
+      active = {
+        aria: CAPTION,
+        ratio: type === 'VIDEO' ? '4 / 5' : '1 / 1',
+        tone: TONES[(s.active + s.slide) % TONES.length],
+        slideLabel: type === 'VIDEO' ? 'Video' : (slides > 1 ? 'Photo ' + (s.slide + 1) + ' of ' + slides : 'Photo'),
+        isVideo: type === 'VIDEO',
+        isAlbum: slides > 1,
+        caption: CAPTION
+      };
+      for (let d = 0; d < slides; d++) {
+        dots.push({
+          aria: 'Go to image ' + (d + 1) + ' of ' + slides,
+          current: d === s.slide ? 'true' : 'false',
+          color: d === s.slide ? '#5f5b40' : 'rgba(61, 58, 43, 0.25)',
+          go: () => this.setState({ slide: d })
+        });
+      }
+    }
+
+    // Prev/next walk the slides of an album first, then move between tiles.
+    const step = (dir) => {
+      const cur = this.state;
+      const slides = typeOf(cur.active) === 'CAROUSEL_ALBUM' ? 3 : 1;
+      const ns = cur.slide + dir;
+      if (ns >= 0 && ns < slides) { this.setState({ slide: ns }); return; }
+      const ni = (cur.active + dir + cur.shown) % cur.shown;
+      const nslides = typeOf(ni) === 'CAROUSEL_ALBUM' ? 3 : 1;
+      this.setState({ active: ni, slide: dir < 0 ? nslides - 1 : 0 });
+    };
+
+    return {
+      headerMark: 28,
+      footerMark: 28,
+      tiles: tiles,
+      hasMore: s.shown < TOTAL,
+      caughtUp: s.shown >= TOTAL,
+      loadMore: () => this.setState({ shown: Math.min(TOTAL, this.state.shown + PAGE) }),
+      lightbox: open,
+      active: active,
+      dots: dots,
+      close: () => this.setState({ active: -1, slide: 0 }),
+      stop: (e) => { if (e && e.stopPropagation) e.stopPropagation(); },
+      prev: (e) => { if (e && e.stopPropagation) e.stopPropagation(); step(-1); },
+      next: (e) => { if (e && e.stopPropagation) e.stopPropagation(); step(1); }
+    };
+  }
+}
+</script>
+</body>
+</html>
