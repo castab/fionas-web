@@ -1,6 +1,13 @@
 import { env } from '$env/dynamic/private';
+import { dev } from '$app/environment';
+
+// Cloudflare's published always-pass pair returns fixed metadata, not the widget's host/action.
+const isTestPair = () =>
+	env.TURNSTILE_SITE_KEY?.trim() === '1x00000000000000000000AA' &&
+	env.TURNSTILE_SECRET_KEY?.trim() === '1x0000000000000000000000000000000AA';
 
 export function turnstileSiteKey(): string | null {
+	if (!dev && isTestPair()) return null;
 	return env.TURNSTILE_SITE_KEY?.trim() && env.TURNSTILE_SECRET_KEY?.trim()
 		? env.TURNSTILE_SITE_KEY.trim()
 		: null;
@@ -30,11 +37,16 @@ export async function verifyTurnstile(
 		});
 		if (!response.ok) return false;
 		const result: unknown = await response.json();
+		if (
+			typeof result !== 'object' ||
+			result === null ||
+			!('success' in result) ||
+			result.success !== true
+		)
+			return false;
+		// Still call Siteverify: a widget callback or a dummy-looking token alone is never enough.
+		if (dev && isTestPair() && token === 'XXXX.DUMMY.TOKEN.XXXX') return true;
 		return (
-			typeof result === 'object' &&
-			result !== null &&
-			'success' in result &&
-			result.success === true &&
 			'hostname' in result &&
 			result.hostname === hostname &&
 			'action' in result &&
