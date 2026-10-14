@@ -20,7 +20,7 @@
 	<title>{site.name}</title>
 	<meta
 		name="description"
-		content="Soft serve & hand-scooped classics towed to your driveway, park, or backyard across Fresno & the Madera Ranchos."
+		content="Soft serve & hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos."
 	/>
 </svelte:head>
 

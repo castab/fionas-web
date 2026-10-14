@@ -3,6 +3,15 @@ import { expect, test } from '@playwright/test';
 test('the landing page renders the hero and brand chrome', async ({ page }) => {
 	await page.goto('/');
 
+	await expect(
+		page.getByText(
+			'Soft serve & hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos.'
+		)
+	).toBeVisible();
+	await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+		'content',
+		'Soft serve & hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos.'
+	);
 	await expect(page).toHaveTitle("Fiona's Ice Cream");
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(
 		'Classic hand-scooped ice cream and sweet treats!'
@@ -26,7 +35,7 @@ test('the landing page renders the hero and brand chrome', async ({ page }) => {
 test('booking CTAs stay disabled and only raise the coming-soon toast', async ({ page }) => {
 	await page.goto('/');
 
-	for (const name of ['Book', 'Book the trailer']) {
+	for (const name of ['Book', 'Book your scoops']) {
 		const cta = page.getByRole('button', { name, exact: true });
 		await expect(cta).toHaveAttribute('aria-disabled', 'true');
 		// aria-disabled makes Playwright treat the CTA as disabled; force the click like a visitor would.
