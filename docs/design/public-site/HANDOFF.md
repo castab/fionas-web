@@ -7,11 +7,11 @@ repo, so they will not render here. Read them as markup + inline styles; every c
 token from `packages/design-tokens/src/tokens.css` written out as hex (map back to tokens, see the
 table at the end). Nothing in this folder ships.
 
-| File               | Route            | Status vs. `main`                                                         |
-| ------------------ | ---------------- | ------------------------------------------------------------------------- |
-| `Main.dc.html`     | `/`              | Copy changes + new header nav. Layout otherwise matches today's page.     |
-| `Book.dc.html`     | `/book`          | Header nav only. Form, estimate and states are a port of today's page.    |
-| `Received.dc.html` | `/book/received` | Header nav only.                                                          |
+| File               | Route            | Status vs. `main`                                                          |
+| ------------------ | ---------------- | -------------------------------------------------------------------------- |
+| `Main.dc.html`     | `/`              | Copy changes + new header nav. Layout otherwise matches today's page.      |
+| `Book.dc.html`     | `/book`          | Header nav only. Form, estimate and states are a port of today's page.     |
+| `Received.dc.html` | `/book/received` | Header nav only.                                                           |
 | `Gallery.dc.html`  | `/gallery`       | **New page**, modelled on `castab/madres-ui` `apps/madres-web` `/gallery`. |
 
 ## 1. Site header (all pages) — `apps/public/src/lib/components/site-header.svelte`
@@ -112,21 +112,21 @@ Today's footer links Instagram externally; keep that on every page (no madres-st
 
 ## Token map for the hex values in the `.dc.html` files
 
-| Hex                         | Token                                    |
-| --------------------------- | ---------------------------------------- |
-| `#3d3a2b`                   | `olive-900` / `--text-heading`           |
-| `#4a4733`                   | `olive-800` / `--brand-strong`           |
-| `#5f5b40`                   | `olive-700` / `--brand`                  |
-| `#6f6a4e`                   | `olive-600`                              |
-| `#aaa68e` (`rgba(170,166,142,.7)`) | `olive-300` (at 70%)              |
-| `#f6f1e4`                   | `cream-100` / `--surface-card`           |
-| `#ede5d3`                   | `cream-200` / `--surface-page`           |
-| `#e2d8c3`                   | `cream-300`                              |
-| `#d5cec6` `#ddd6cc` `#d9d6c6` | `paper-200` `paper-100` `olive-100` (placeholders only) |
-| `#2b2921`                   | `ink-700` / `--text-body`                |
-| `#55523f`                   | `ink-500` / `--text-muted`               |
-| `rgba(18,16,12,…)`          | `ink-900` with opacity                   |
-| `#a3492f`                   | `rust-600`                               |
-| `#6b7a4a`                   | `moss-600`                               |
-| `rgba(61,58,43,.16)`        | `--border-soft`                          |
-| `rgba(95,91,64,.45)`        | `--focus-ring`                           |
+| Hex                                | Token                                                   |
+| ---------------------------------- | ------------------------------------------------------- |
+| `#3d3a2b`                          | `olive-900` / `--text-heading`                          |
+| `#4a4733`                          | `olive-800` / `--brand-strong`                          |
+| `#5f5b40`                          | `olive-700` / `--brand`                                 |
+| `#6f6a4e`                          | `olive-600`                                             |
+| `#aaa68e` (`rgba(170,166,142,.7)`) | `olive-300` (at 70%)                                    |
+| `#f6f1e4`                          | `cream-100` / `--surface-card`                          |
+| `#ede5d3`                          | `cream-200` / `--surface-page`                          |
+| `#e2d8c3`                          | `cream-300`                                             |
+| `#d5cec6` `#ddd6cc` `#d9d6c6`      | `paper-200` `paper-100` `olive-100` (placeholders only) |
+| `#2b2921`                          | `ink-700` / `--text-body`                               |
+| `#55523f`                          | `ink-500` / `--text-muted`                              |
+| `rgba(18,16,12,…)`                 | `ink-900` with opacity                                  |
+| `#a3492f`                          | `rust-600`                                              |
+| `#6b7a4a`                          | `moss-600`                                              |
+| `rgba(61,58,43,.16)`               | `--border-soft`                                         |
+| `rgba(95,91,64,.45)`               | `--focus-ring`                                          |
