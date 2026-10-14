@@ -80,7 +80,7 @@
 			preview?.toppingAdjustment.category === input.category &&
 			input.maxSelections !== undefined &&
 			input.maxSelections > preview.toppingAdjustment.includedSelections
-				? `First ${preview.toppingAdjustment.includedSelections} are included — each extra adds a little per guest.`
+				? `First ${preview.toppingAdjustment.includedSelections} are included. Each extra adds a little per guest.`
 				: undefined;
 		const selectable = input.options.filter(isSelectable).length;
 		const short =

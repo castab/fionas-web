@@ -31,13 +31,17 @@ vi.mock('$lib/server/nats.js', async (importOriginal) => ({
 		state.stream!.publish(...args),
 	isNatsReady: async () => state.natsReady
 }));
-const { submitInquiry } = await import('$lib/server/inquiry-submission.js');
+const { submitInquiry: submit } = await import('$lib/server/inquiry-submission.js');
+const siteverify = vi.fn<typeof fetch>();
+const submitInquiry = (data: FormData) =>
+	submit(data, { hostname: 'booking.test', fetch: siteverify });
 const { load } = await import('../../routes/book/+page.server.js');
 const KEY = 'test-logical-key';
 function form(): FormData {
 	const f = new FormData();
 	for (const [key, value] of Object.entries({
 		submissionToken: KEY,
+		'cf-turnstile-response': 'test-token',
 		priceRevision: 'synthetic-1',
 		name: 'Jane Doe',
 		email: 'jane@example.com',
@@ -67,6 +71,8 @@ const sent = () => stream.deliveries.map((d) => d.event);
 beforeEach(() => {
 	Object.assign(state.env, {
 		BOOKING_ENABLED: 'true',
+		TURNSTILE_SITE_KEY: 'test-site-key',
+		TURNSTILE_SECRET_KEY: 'test-secret-key',
 		NATS_URL: 'nats://nats.internal.test:4222',
 		NATS_USER: 'fionas-web',
 		NATS_PASSWORD: 'test-only-nats-password-not-a-secret',
@@ -77,6 +83,11 @@ beforeEach(() => {
 	);
 	stream = state.stream = fakeJetStream();
 	state.natsReady = true;
+	siteverify
+		.mockReset()
+		.mockImplementation(async () =>
+			Response.json({ success: true, hostname: 'booking.test', action: 'booking' })
+		);
 	vi.spyOn(console, 'warn').mockImplementation(() => {});
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -84,6 +95,63 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 describe('trusted inquiry submission', () => {
+	it.each(['missing', 'filled', 'duplicate', 'file'])(
+		'blocks %s security fields without publishing',
+		async (mode) => {
+			const f = form();
+			if (mode === 'missing') f.delete('cf-turnstile-response');
+			if (mode === 'filled') f.set('website', 'https://spam.test');
+			if (mode === 'duplicate') f.append('cf-turnstile-response', 'extra');
+			if (mode === 'file') f.set('cf-turnstile-response', new Blob(['bad']), 'token.txt');
+			expect(await submitInquiry(f)).toMatchObject({ ok: false });
+			expect(stream.deliveries).toHaveLength(0);
+			expect(siteverify).not.toHaveBeenCalled();
+		}
+	);
+	it.each([
+		{ success: false },
+		{ success: true, hostname: 'wrong.test', action: 'booking' },
+		{ success: true, hostname: 'booking.test', action: 'login' },
+		null
+	])('refuses unsuccessful or mismatched verification %j', async (response) => {
+		siteverify.mockResolvedValue(Response.json(response));
+		expect(await submitInquiry(form())).toMatchObject({ status: 422 });
+		expect(stream.deliveries).toHaveLength(0);
+	});
+	it('preserves a verified replay and answers when its fresh challenge is rejected', async () => {
+		stream.script('timeout', 'timeout');
+		const first = await submitInquiry(form());
+		if (first.ok) throw new Error('Expected ambiguous');
+		const f = form();
+		f.set('outcomeUnknown', 'true');
+		f.set('replayRequest', first.failure.replay!.envelope);
+		siteverify.mockResolvedValueOnce(Response.json({ success: false }));
+		expect(await submitInquiry(f)).toMatchObject({
+			failure: {
+				outcome: 'ambiguous',
+				replay: first.failure.replay,
+				answers: expect.any(Object)
+			}
+		});
+		expect(stream.deliveries).toHaveLength(2);
+		expect(await submitInquiry(f)).toMatchObject({ ok: true });
+		expect(stream.deliveries[2].bytes).toBe(stream.deliveries[0].bytes);
+	});
+	it.each(['network', 'http', 'json', 'configuration'])(
+		'fails closed on verification %s failure',
+		async (mode) => {
+			if (mode === 'network') siteverify.mockRejectedValue(new Error('private transport details'));
+			if (mode === 'http') siteverify.mockResolvedValue(new Response('', { status: 503 }));
+			if (mode === 'json') siteverify.mockResolvedValue(new Response('not json'));
+			if (mode === 'configuration') delete state.env.TURNSTILE_SECRET_KEY;
+			expect(await submitInquiry(form())).toMatchObject({ status: 422 });
+			expect(stream.deliveries).toHaveLength(0);
+			if (mode === 'configuration') {
+				const data = await load({ setHeaders: () => {} } as never);
+				expect(data?.form).toBeNull();
+			}
+		}
+	);
 	it('prices intent from the private snapshot, publishes descriptive service and no totals', async () => {
 		const result = await submitInquiry(form());
 		const [delivery] = stream.deliveries;
@@ -351,6 +419,7 @@ describe('trusted inquiry submission', () => {
 			state.env.NATS_URL,
 			state.env.NATS_PASSWORD,
 			state.env.FIONAS_REPLAY_SECRET,
+			state.env.TURNSTILE_SECRET_KEY,
 			'FIONAS_PRICES_FILE',
 			'priceKey'
 		])

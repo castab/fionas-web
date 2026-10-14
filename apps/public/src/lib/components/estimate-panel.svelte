@@ -67,7 +67,7 @@
 
 	<p class="m-0 text-[11.5px] leading-[1.55] text-(--text-muted)">
 		This is an early estimate, not a final quote. Travel within greater Fresno and Madera Ranchos is
-		included in the base service — bookings farther out may carry an added travel fee, confirmed
-		once we chat. No street address needed yet.
+		included in the base service. Bookings farther out may carry an added travel fee, confirmed once
+		we chat. No street address needed yet.
 	</p>
 </Card>

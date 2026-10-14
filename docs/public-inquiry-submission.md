@@ -85,3 +85,11 @@ nsc generate creds --name fionas-web > fionas-web.creds   # mount it and set NAT
 ```
 
 Give stream administration (`npm run nats:setup`) and each consumer their own users. Consumers read with durable consumers on `FIONAS_INQUIRIES`, deduplicate on the event `id`, and follow the versioning policy in asyncapi.yaml. Nothing in this repository changes deployed streams, users, price files or databases on its own; run `nats:setup` deliberately against each environment.
+
+## Spam protection
+
+Set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY in the public app's runtime environment. Create a Managed widget in Cloudflare Turnstile and allow only the site's production hostnames (use a separate widget for staging). Only the site key is projected to the browser; missing either key makes the booking form unavailable. For local development, use a separate widget allowing your development hostname. There is no runtime bypass or fallback; browser tests use isolated transport fixtures outside the production code.
+
+The flexible, light Turnstile widget fills the width beneath the send button. JavaScript is required for verification; without it the page explains how to continue. The off-screen website honeypot is excluded from keyboard navigation and assistive technology. Filled traps are refused before delivery. Server-side Siteverify validation requires success, the current request hostname and the booking action, with a 10-second timeout and no automatic retry. Missing, duplicate, expired, reused or rejected tokens and verification outages cannot publish an inquiry. Verification tokens and secrets are never logged or included in inquiry events.
+
+Every server submission attempt, including a signed replay, requires a fresh challenge. The widget resets after each enhanced response. A rejected replay retains its verified envelope and frozen answers; completing another check resends the identical event under the original logical key. Native POSTs use the same validation; they still require JavaScript to obtain the challenge token.

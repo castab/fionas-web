@@ -17,6 +17,9 @@ const offlinePort = process.env.PUBLIC_PLAYWRIGHT_OFFLINE_PORT ?? '4176';
 // The booking preview publishes to a real NATS + JetStream (see e2e/global-setup.ts) as the
 // least-privileged web user, with synthetic prices and a test-only replay secret.
 const booking = {
+	TURNSTILE_SITE_KEY: 'e2e-site-key',
+	TURNSTILE_SECRET_KEY: 'e2e-secret-key',
+	NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${new URL('./e2e/turnstile-siteverify-mock.mjs', import.meta.url).href}`,
 	FIONAS_PRICES_FILE: fileURLToPath(
 		new URL('./e2e/fixtures/prices.synthetic.yaml', import.meta.url)
 	),

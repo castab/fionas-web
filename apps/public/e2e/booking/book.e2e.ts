@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test.js';
 import { fillBasics, fillContact, fillHandScooped, fillService, sendButton } from './form.js';
 test('code-owned controls, minimum picks and unavailable presentation', async ({ page }) => {
 	await page.goto('/book');

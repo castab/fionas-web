@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test.js';
 import { fillContact, fillService, sendButton, submissionFor, deliveriesFor } from './form.js';
 
 /*
@@ -11,7 +11,6 @@ import { fillContact, fillService, sendButton, submissionFor, deliveriesFor } fr
 
 for (const native of [false, true])
 	test.describe(`submission native=${native}`, () => {
-		test.use({ javaScriptEnabled: !native });
 		test(`configured service, exact prices and receipt; native=${native}`, async ({ page }) => {
 			const email = `priced-${randomUUID()}@example.com`;
 			await page.goto('/book');
@@ -19,7 +18,13 @@ for (const native of [false, true])
 			await fillService(page);
 			await page.getByLabel('Anything else?').fill('Backyard birthday');
 			const key = await page.locator('[name=submissionToken]').inputValue();
-			await sendButton(page).click();
+			await expect(page.locator('[data-turnstile-complete]')).toHaveAttribute(
+				'data-turnstile-complete',
+				'true'
+			);
+			if (native)
+				await page.locator('main form').evaluate((form: HTMLFormElement) => form.submit());
+			else await sendButton(page).click();
 			await expect(page).toHaveURL(/\/book\/received$/);
 			await expect(page.getByRole('status')).toContainText('Request received');
 			const [delivery] = await deliveriesFor(email);

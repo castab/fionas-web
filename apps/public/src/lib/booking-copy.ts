@@ -22,7 +22,7 @@ export function swirlNote(
 		.map((key) => input.options.find((o) => o.key === key)?.displayName)
 		.filter((name): name is string => !!name);
 	return names.length === 2
-		? { text: `Your swirl: ${names.join(' + ')} — the third handle comes free.`, done: true }
+		? { text: `Your swirl: ${names.join(' + ')}. The third handle comes free.`, done: true }
 		: { text: 'The third flavor is always a swirl of your two picks.', done: false };
 }
 
