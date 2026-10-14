@@ -439,7 +439,7 @@
 			<div class="flex flex-col items-start gap-2.5">
 				<!-- Frozen without the delivered request, nothing can safely be resent under this key. -->
 				{#if !frozen || replay}
-					<Button type="submit" size="lg" disabled={submitting}>
+					<Button type="submit" size="lg" class="w-full" disabled={submitting}>
 						{submitting ? 'Sending…' : frozen ? 'Try sending again' : 'Send booking request'}
 					</Button>
 				{/if}
