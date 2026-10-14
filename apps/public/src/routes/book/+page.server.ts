@@ -3,6 +3,7 @@ import { getPriceBook, projectForm } from '$lib/server/price-book.js';
 import { replaySecret } from '$lib/server/inquiry-replay.js';
 import { assertBookingEnabled } from '$lib/server/booking.js';
 import { isNatsReady } from '$lib/server/nats.js';
+import { turnstileSiteKey } from '$lib/server/turnstile.js';
 
 import { newSubmissionToken, storeReceipt, submitInquiry } from '$lib/server/inquiry-submission.js';
 import type { Actions, PageServerLoad } from './$types';
@@ -19,14 +20,15 @@ export const load: PageServerLoad = async ({ setHeaders }) => {
 		console.error('[booking] Private pricing or replay configuration unavailable');
 	}
 	// Don't let a customer fill in a form that can't be sent. nats.ts logs why, once per outage.
-	if (form && !(await isNatsReady())) form = null;
-	return { form, submissionToken: newSubmissionToken() };
+	const siteKey = turnstileSiteKey();
+	if (form && (!siteKey || !(await isNatsReady()))) form = null;
+	return { form, submissionToken: newSubmissionToken(), turnstileSiteKey: siteKey };
 };
 
 export const actions: Actions = {
-	default: async ({ request, cookies, url }) => {
+	default: async ({ request, cookies, url, fetch }) => {
 		assertBookingEnabled();
-		const result = await submitInquiry(await request.formData());
+		const result = await submitInquiry(await request.formData(), { hostname: url.hostname, fetch });
 		if (!result.ok) return fail(result.status, result.failure);
 
 		storeReceipt(cookies, url, result.receipt, result.firstName);

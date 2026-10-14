@@ -228,7 +228,7 @@ describe('validateAnswers', () => {
 		const answers = answered();
 		answers.values['offering:soft-serve-flavor'] = ['mango'];
 		expect(validateAnswers(form, answers)['offering:soft-serve-flavor']).toBe(
-			'Mango is unavailable right now — please choose another.'
+			'Mango is unavailable right now. Please choose another.'
 		);
 		expect(answers.values['offering:soft-serve-flavor']).toEqual(['mango']);
 	});

@@ -10,6 +10,7 @@ import {
 } from './inquiry-event.js';
 import { getPriceBook, projectForm, priceInquiry } from './price-book.js';
 import { replaySecret, sealReplay, openReplay } from './inquiry-replay.js';
+import { verifyTurnstile } from './turnstile.js';
 export const newSubmissionToken = (): string => crypto.randomUUID();
 
 /** The logical submission key, sent as `Nats-Msg-Id`: opaque, 1–128 of [A-Za-z0-9_-]. UUIDs fit. */
@@ -19,7 +20,10 @@ export const isSubmissionKey = (value: unknown): value is string =>
 export type SubmitResult =
 	| { ok: true; receipt: InquiryReceipt; firstName: string | null }
 	| { ok: false; status: number; failure: SubmissionFailure };
-export async function submitInquiry(data: FormData): Promise<SubmitResult> {
+export async function submitInquiry(
+	data: FormData,
+	context: { hostname: string; fetch: typeof fetch }
+): Promise<SubmitResult> {
 	const restart = data.get('restartToken');
 	const restarting = typeof restart === 'string' && restart !== '';
 	const token = restarting ? restart : data.get('submissionToken');
@@ -39,6 +43,9 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 		}
 	});
 	if (!isSubmissionKey(token) || typeof revision !== 'string' || !revision)
+		return failed(400, 'malformed', { formError: submissionCopy.malformed });
+	// Off-screen text input, excluded from keyboard navigation and assistive technology.
+	if (data.getAll('website').some((value) => typeof value !== 'string' || value !== ''))
 		return failed(400, 'malformed', { formError: submissionCopy.malformed });
 	const replaying = !restarting && data.get('outcomeUnknown') === 'true';
 	let secret: string;
@@ -102,6 +109,13 @@ export async function submitInquiry(data: FormData): Promise<SubmitResult> {
 		}
 		envelope = sealReplay(event, token, secret);
 	}
+	// Replays still need a fresh challenge, but keep their original signed command and frozen state.
+	if (!(await verifyTurnstile(data, context.hostname, context.fetch)))
+		return failed(422, replaying ? 'ambiguous' : 'invalid', {
+			answers,
+			formError: 'Please complete the security check below and try sending again.',
+			...(replaying ? { replay: { envelope }, restartToken: newSubmissionToken() } : {})
+		});
 	const result = await publishInquiry(event, token, { fresh: !replaying });
 	if (result.ok)
 		return { ok: true, receipt: receiptOf(event), firstName: firstNameOf(event.data.name) };

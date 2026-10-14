@@ -58,7 +58,7 @@ export const submissionCopy = {
 	unavailable:
 		"We couldn't reach our request system, so your request hasn't been sent. Please try again in a moment.",
 	ambiguous:
-		"We couldn't confirm your request was received. Please try sending it again — if it did reach us, we won't record it twice.",
+		"We couldn't confirm your request was received. Please try sending it again. If it did reach us, we won't record it twice.",
 	keyReused:
 		"We couldn't safely verify this submission. Please restart the request or contact us if you're unsure whether it was received.",
 	staleWithoutForm:

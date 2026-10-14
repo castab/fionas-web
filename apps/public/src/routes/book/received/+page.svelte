@@ -9,7 +9,7 @@
 	const steps = [
 		'We review your request and reach out within a day to confirm timing, location, and finalize pricing.',
 		"Once everything's agreed, we send over a firm quote and collect a deposit to hold your date.",
-		"You're officially on the calendar — we'll send a confirmation with all the final details."
+		"You're officially on the calendar! We'll send a confirmation with all the final details."
 	];
 </script>
 
@@ -29,9 +29,9 @@
 			we got your request!
 		</h1>
 		<p class="m-0 max-w-[460px] text-(--text-body) [font:var(--type-body)]">
-			Thanks{data.firstName ? `, ${data.firstName}` : ''} — we're excited about your event. This is just
-			the start of the conversation: we'll follow up within a day to lock in the final details and price,
-			including any travel fee if you're outside our usual area.
+			Thanks{data.firstName ? `, ${data.firstName}` : ''}! We're excited about your event. This is
+			just the start of the conversation: we'll follow up within a day to lock in the final details
+			and price, including any travel fee if you're outside our usual area.
 		</p>
 		<p class="m-0 max-w-[460px] text-(--text-muted) [font:var(--type-body-sm)]">
 			No scoops on the calendar just yet! Your date isn't held and you haven't paid a thing. That

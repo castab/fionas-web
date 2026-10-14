@@ -18,6 +18,7 @@
 	import { missingSummary, swirlNote } from '$lib/booking-copy.js';
 	import EstimatePanel from '$lib/components/estimate-panel.svelte';
 	import InquiryField from '$lib/components/inquiry-field.svelte';
+	import BookingProtection from '$lib/components/booking-protection.svelte';
 	import type { SubmissionFailure, SubmissionOutcome } from '$lib/inquiry-submission.js';
 	import type { ActionData, PageData } from './$types';
 
@@ -102,6 +103,8 @@
 	let outcomeUnknown = $state(initial.phase === 'ambiguous');
 	/** Controls that only work with JavaScript render after hydration. */
 	let hydrated = $state(false);
+	let turnstileToken = $state('');
+	let securityAttempt = $state(0);
 	onMount(() => (hydrated = true));
 
 	const submitting = $derived(phase === 'submitting');
@@ -210,6 +213,7 @@
 					<input type="hidden" name="outcomeUnknown" value="true" />
 					<input type="hidden" name="replayRequest" value={replay} />
 					<Button type="submit">Try sending again</Button>
+					<BookingProtection siteKey={data.turnstileSiteKey} />
 				</form>
 			{/if}
 			<div class="flex flex-wrap gap-3">
@@ -266,9 +270,17 @@
 					return;
 				}
 				errors = {};
+				if (!turnstileToken) {
+					cancel();
+					formError = 'Please complete the security check below and try sending again.';
+					return;
+				}
 				const previous = phase;
 				phase = 'submitting';
 				return async ({ result, update }) => {
+					// Tokens are single-use, including after a rejected or uncertain submission.
+					turnstileToken = '';
+					securityAttempt++;
 					// Success redirects to /book/received; anything else stays on this form.
 					await update({ reset: false });
 					if (result.type === 'failure') {
@@ -280,7 +292,7 @@
 						phase = previous === 'ambiguous' || outcomeUnknown ? 'ambiguous' : 'failed';
 						outcomeUnknown = phase === 'ambiguous';
 						formError =
-							"We couldn't confirm your request was received. Please try sending it again — if it did reach us, we won't record it twice.";
+							"We couldn't confirm your request was received. Please try sending it again. If it did reach us, we won't record it twice.";
 					}
 				};
 			}}
@@ -321,14 +333,14 @@
 					{#if review.unavailable.length > 0}
 						<p class="m-0 text-(--text-body) [font:var(--type-body-sm)]">
 							{listOf(review.unavailable)}
-							{review.unavailable.length === 1 ? 'is' : 'are'} unavailable right now — check back later.
+							{review.unavailable.length === 1 ? 'is' : 'are'} unavailable right now. Check back later.
 							We've unselected {review.unavailable.length === 1 ? 'it' : 'them'} so you can choose again.
 						</p>
 					{/if}
 					<p class="m-0 text-(--text-body) [font:var(--type-body-sm)]">
 						We haven't sent your request yet. We've updated the options and your estimate to what we
 						offer now, and some choices or prices may have changed{review.fields.length > 0
-							? ` — please look again at: ${review.fields.join(', ')}`
+							? `. Please look again at: ${review.fields.join(', ')}`
 							: ''}. Check your choices and the estimate below, then send your request again.
 					</p>
 				</Card>
@@ -448,6 +460,9 @@
 						{missing}
 					</p>
 				{/if}
+				{#key securityAttempt}
+					<BookingProtection siteKey={data.turnstileSiteKey} bind:token={turnstileToken} />
+				{/key}
 			</div>
 		</form>
 	{/if}

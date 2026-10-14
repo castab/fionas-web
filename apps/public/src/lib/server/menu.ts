@@ -101,7 +101,7 @@ export const MENU_SECTIONS: InquiryFormSection[] = [
 					messages: {
 						belowMinimum: 'Add a rough headcount so we can size your quote.',
 						aboveMaximum:
-							"We quote up to 300 online — for bigger crowds, add a note below and we'll plan it with you."
+							"We quote up to 300 online. For bigger crowds, add a note below and we'll plan it with you."
 					}
 				}
 			}

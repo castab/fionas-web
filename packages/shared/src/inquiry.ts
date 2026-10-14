@@ -367,7 +367,7 @@ function validateField(
 					return 'One of those options is no longer offered.';
 				const unavailable = picked.map((key) => options.get(key)!).find((o) => !isSelectable(o));
 				if (unavailable) {
-					return `${unavailable.displayName} is unavailable right now — please choose another.`;
+					return `${unavailable.displayName} is unavailable right now. Please choose another.`;
 				}
 			}
 			if (new Set(picked).size !== picked.length) return 'Choose each option only once.';

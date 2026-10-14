@@ -38,7 +38,7 @@ describe('swirlNote', () => {
 		});
 		expect(swirlNote(soft, ['vanilla'])?.done).toBe(false);
 		expect(swirlNote(soft, ['vanilla', 'cookies-and-cream'])).toEqual({
-			text: 'Your swirl: Vanilla + Cookies & Cream — the third handle comes free.',
+			text: 'Your swirl: Vanilla + Cookies & Cream. The third handle comes free.',
 			done: true
 		});
 	});
