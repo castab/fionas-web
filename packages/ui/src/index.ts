@@ -32,3 +32,13 @@ export { Field, type FieldControlProps } from './components/field/index.js';
 export { Input } from './components/input/index.js';
 export { Select } from './components/select/index.js';
 export { Textarea } from './components/textarea/index.js';
+
+export {
+	ChevronLeftIcon,
+	ChevronRightIcon,
+	PlayIcon,
+	PauseIcon,
+	MutedIcon,
+	UnmutedIcon,
+	StackedLayersIcon
+} from './components/icons/index.js';

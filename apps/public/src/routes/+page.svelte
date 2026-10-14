@@ -10,10 +10,10 @@
 
 <!-- Hero: copy (left) + olive-disc badge (right). Below 940px it stacks, badge on top. -->
 <main
-	class="mx-auto flex w-full max-w-(--container-max) flex-1 flex-wrap items-center justify-center gap-x-14 gap-y-12 px-8 pt-14 pb-10 max-[940px]:flex-col max-[940px]:gap-8 max-[940px]:pt-8 max-[940px]:text-center"
+	class="mx-auto flex w-full max-w-(--container-max) flex-1 flex-wrap-reverse items-center justify-center gap-x-14 gap-y-12 px-8 pt-14 pb-10 max-[940px]:flex-col max-[940px]:gap-8 max-[940px]:pt-8 max-[940px]:text-center"
 >
 	<div
-		class="flex max-w-[560px] flex-[1_1_380px] flex-col items-start gap-[22px] max-[940px]:max-w-none max-[940px]:flex-none max-[940px]:items-center"
+		class="flex max-w-[560px] min-w-0 flex-[1_1_380px] flex-col items-start gap-[22px] max-[940px]:max-w-none max-[940px]:flex-none max-[940px]:items-center"
 	>
 		{#if !data.bookingEnabled}
 			<Badge tone="moss">{bookingLaunchLabel}</Badge>
@@ -26,19 +26,35 @@
 		</h1>
 
 		<p class="m-0 max-w-[500px] text-(--text-body) [font:var(--type-body)] max-[940px]:max-w-none">
-			Soft serve &amp; hand-scooped classics towed to your driveway, park, or backyard across Fresno
-			&amp; the Madera Ranchos. Our little website is churning — follow along while we set up.
+			Soft serve &amp; hand-scooped classics brought right to your driveway, park, or backyard
+			across Fresno &amp; the Madera Ranchos.
 		</p>
 
-		<div class="mt-0.5 flex flex-wrap gap-3 max-[940px]:justify-center min-[600px]:flex-nowrap">
-			<Button href={instagramUrl} target="_blank" rel="noopener noreferrer" size="lg">
+		<div class="mt-0.5 flex flex-wrap gap-3 max-[940px]:justify-center">
+			<Button
+				href={instagramUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				size="lg"
+				class="min-h-[52px] px-7 py-0 text-[13px]"
+			>
 				Follow on Instagram
 			</Button>
 			{#if data.bookingEnabled}
-				<Button href={resolve('/book')} variant="secondary" size="lg">Book the trailer</Button>
+				<Button
+					href={resolve('/book')}
+					variant="secondary"
+					size="lg"
+					class="min-h-[52px] px-7 py-0 text-[13px]">Book your scoops</Button
+				>
 			{:else}
-				<ComingSoonButton toast={bookingComingSoon} variant="secondary" size="lg">
-					Book the trailer
+				<ComingSoonButton
+					toast={bookingComingSoon}
+					variant="secondary"
+					size="lg"
+					class="min-h-[52px] px-7 py-0 text-[13px]"
+				>
+					Book your scoops
 				</ComingSoonButton>
 			{/if}
 		</div>

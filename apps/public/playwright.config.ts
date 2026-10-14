@@ -3,6 +3,13 @@ import { defineConfig, devices } from '@playwright/test';
 import { NATS_URL, WEB_USER } from './e2e/nats.js';
 
 // Previews of one build: "gated" (BOOKING_ENABLED off, the default), "booking" (on) and "offline".
+const mockPort = process.env.PRESENTATION_SERVICE_MOCK_PORT ?? '4030';
+const presentation = {
+	PRESENTATION_SERVICE_BASE_URL: `http://127.0.0.1:${mockPort}`,
+	PRESENTATION_SERVICE_ACCOUNT_ID: 'e2e-fionas-account',
+	PRESENTATION_SERVICE_GALLERY_NAME: 'Fionas Ice Cream',
+	PRESENTATION_SERVICE_TRACKING_TOKEN: 'e2e-presentation-service-tracking-token'
+};
 const gatedPort = process.env.PUBLIC_PLAYWRIGHT_PORT ?? '4173';
 const bookingPort = process.env.PUBLIC_PLAYWRIGHT_BOOKING_PORT ?? '4175';
 // A third preview with booking on but NATS unreachable (nothing listens on its port).
@@ -55,28 +62,44 @@ export default defineConfig({
 			name: 'desktop-chromium-booking-offline',
 			testMatch: offlineTests,
 			use: { ...devices_.desktop, baseURL: offlineUrl }
+		},
+		{
+			name: 'mobile-chromium-booking-offline',
+			testMatch: '**/booking-offline/gallery.e2e.ts',
+			use: { ...devices_.mobile, baseURL: offlineUrl }
 		}
 	],
 	webServer: [
 		{
+			command: 'node e2e/presentation-service-mock.mjs',
+			url: `${presentation.PRESENTATION_SERVICE_BASE_URL}/__test__/health`,
+			env: { PRESENTATION_SERVICE_MOCK_PORT: mockPort },
+			reuseExistingServer: false
+		},
+		{
 			command: `npm run build && npm run preview -- --port ${gatedPort} --host 127.0.0.1`,
 			url: gatedUrl,
 			// No NATS settings: the marketing site must run without them while booking is off.
-			env: { BOOKING_ENABLED: 'false' },
+			env: { ...presentation, BOOKING_ENABLED: 'false' },
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		},
 		{
 			command: `node e2e/start-booking-preview.mjs ${gatedUrl} ${bookingPort}`,
 			url: bookingUrl,
-			env: booking,
+			env: { ...booking, ...presentation },
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		},
 		{
 			command: `node e2e/start-booking-preview.mjs ${gatedUrl} ${offlinePort}`,
 			url: offlineUrl,
-			env: { ...booking, NATS_URL: 'nats://127.0.0.1:4299' },
+			env: {
+				...booking,
+				...presentation,
+				PRESENTATION_SERVICE_GALLERY_NAME: 'empty',
+				NATS_URL: 'nats://127.0.0.1:4299'
+			},
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000
 		}
