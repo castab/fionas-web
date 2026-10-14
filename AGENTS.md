@@ -15,7 +15,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Components (Button, Badge, Card, toast…) | `packages/ui/src/components/`                                                                     |
 | Site details, coming-soon copy           | `packages/shared/src/`                                                                            |
 | Inquiry form types, validation, mapping  | `packages/shared/src/inquiry.ts`                                                                  |
-| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/menu.ts` (copy + rules); design: `Booking.dc.html`   |
+| Booking form (`/book`)                   | `apps/public/src/routes/book/`, `$lib/server/menu.ts` (copy + rules)                              |
 | Inquiry submission, idempotency, stale   | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                          |
 | Inquiry event contract (AsyncAPI 3.1.0)  | `asyncapi.yaml`, `$lib/server/inquiry-event.ts` (+ `.test.ts` validates against the spec)         |
 | Publishing to NATS (outcomes, retry)     | `$lib/server/event-bus.ts`, `$lib/server/nats.ts` (env, connection), `$lib/server/testing/`       |
@@ -28,7 +28,6 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                |
 | Gallery                                  | `apps/public/src/routes/gallery/`, `$lib/server/presentation-service/`                            |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                         |
-| Public site design (home/book/gallery)   | `docs/design/public-site/HANDOFF.md` + `*.dc.html` (reference only, not shipped)                  |
 
 ## Commands (run from the repo root)
 
