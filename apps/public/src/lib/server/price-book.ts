@@ -52,8 +52,11 @@ export function parsePriceBook(source: string): PriceBook {
 let cached: PriceBook | null = null;
 export function getPriceBook(): PriceBook {
 	if (cached) return cached;
-	if (!env.FIONAS_PRICES_FILE) throw new Error('Prices unavailable');
-	cached = parsePriceBook(readFileSync(env.FIONAS_PRICES_FILE, 'utf8'));
+	// Inline YAML overrides the file; a set-but-invalid inline value never falls back to the file.
+	if (env.FIONAS_PRICES_YML?.trim()) cached = parsePriceBook(env.FIONAS_PRICES_YML);
+	else if (env.FIONAS_PRICES_FILE)
+		cached = parsePriceBook(readFileSync(env.FIONAS_PRICES_FILE, 'utf8'));
+	else throw new Error('Prices unavailable');
 	return cached;
 }
 

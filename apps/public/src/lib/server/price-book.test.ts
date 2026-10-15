@@ -39,6 +39,37 @@ describe('restricted private price book', () => {
 		expect(read()).toBe(book);
 		delete state.env.FIONAS_PRICES_FILE;
 	});
+	it('loads inline FIONAS_PRICES_YML ahead of FIONAS_PRICES_FILE', async () => {
+		const fixturePath = fileURLToPath(
+			new URL('../../../e2e/fixtures/prices.synthetic.yaml', import.meta.url)
+		);
+		const fresh = async () => {
+			vi.resetModules();
+			return (await import('./price-book.js')).getPriceBook;
+		};
+		try {
+			state.env.FIONAS_PRICES_YML = source;
+			state.env.FIONAS_PRICES_FILE = 'missing-file.yaml';
+			expect((await fresh())().revision).toBe('synthetic-1');
+
+			state.env.FIONAS_PRICES_YML = source.replace('synthetic-1', 'inline-2');
+			state.env.FIONAS_PRICES_FILE = fixturePath;
+			expect((await fresh())().revision).toBe('inline-2');
+
+			state.env.FIONAS_PRICES_YML = ' \n\t ';
+			expect((await fresh())().revision).toBe('synthetic-1');
+
+			state.env.FIONAS_PRICES_YML = 'revision: nope';
+			expect(await fresh()).toThrow();
+
+			delete state.env.FIONAS_PRICES_FILE;
+			state.env.FIONAS_PRICES_YML = '';
+			expect(await fresh()).toThrow();
+		} finally {
+			delete state.env.FIONAS_PRICES_YML;
+			delete state.env.FIONAS_PRICES_FILE;
+		}
+	});
 	it.each([
 		source.replace("revision: 'synthetic-1'", ''),
 		source.replace("revision: 'synthetic-1'", "revision: ''"),
