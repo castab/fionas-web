@@ -36,7 +36,8 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 - `npm run test:unit -- --run`; `npm run test:e2e` (builds each app, runs Playwright desktop + mobile;
   the public suite starts NATS with Docker, or uses `E2E_NATS_URL`).
 - `npm run nats:up` / `nats:down` / `nats:setup` / `nats:tail` (both prompt for URL + token in a terminal;
-  `--non-interactive` skips); `npm run asyncapi:validate`.
+  `--non-interactive` skips); `nats:purge` (empties the stream; terminal-only, always asks twice, never add a
+  bypass flag); `npm run asyncapi:validate`.
 
 ## Rules
 
