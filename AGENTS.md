@@ -35,7 +35,8 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 - `npm run check` must report 0 errors and 0 warnings; `npm run lint` must be clean.
 - `npm run test:unit -- --run`; `npm run test:e2e` (builds each app, runs Playwright desktop + mobile;
   the public suite starts NATS with Docker, or uses `E2E_NATS_URL`).
-- `npm run nats:up` / `nats:down` / `nats:setup` / `nats:tail`; `npm run asyncapi:validate`.
+- `npm run nats:up` / `nats:down` / `nats:setup` / `nats:tail` (both prompt for URL + token in a terminal;
+  `--non-interactive` skips); `npm run asyncapi:validate`.
 
 ## Rules
 
