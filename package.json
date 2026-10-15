@@ -14,7 +14,7 @@
 	"scripts": {
 		"dev": "npm run dev --workspace=@fionas/public",
 		"dev:admin": "npm run dev --workspace=@fionas/admin",
-		"nats:up": "docker compose up --detach --wait nats && node scripts/nats-setup.mjs",
+		"nats:up": "docker compose up --detach --wait nats && node scripts/nats-setup.mjs --non-interactive --server nats://127.0.0.1:4222 --user fionas-admin --password fionas-admin-dev",
 		"nats:down": "docker compose down",
 		"nats:setup": "node scripts/nats-setup.mjs",
 		"nats:tail": "node scripts/nats-tail.mjs",

@@ -7,6 +7,7 @@
 //   npm run nats:setup [-- options]
 
 import { jetstreamManager } from '@nats-io/jetstream';
+import { promptSetupConnection } from './lib/nats-setup-prompt.mjs';
 import {
 	CONNECTION_OPTIONS,
 	CONNECTION_USAGE,
@@ -26,6 +27,10 @@ import {
 const USAGE = `Usage: npm run nats:setup -- [options]
 
 Creates the ${STREAM} stream if it is missing, or verifies an existing one.
+In a terminal, prompts for a missing target (default local Docker) and a hidden token.
+Provided flags/environment credentials skip the token prompt. Without a terminal, uses flags/env.
+
+  --non-interactive  skip prompts (for automation)
 
 Stream
   --replicas <n>      replicas, 1 to 5                          default 1
@@ -39,6 +44,7 @@ ${CONNECTION_USAGE}
 const values = parseCommandLine(
 	{
 		...CONNECTION_OPTIONS,
+		'non-interactive': { type: 'boolean', default: false },
 		replicas: { type: 'string' },
 		'max-age': { type: 'string' },
 		update: { type: 'boolean', default: false }
@@ -60,7 +66,14 @@ try {
 const show = (key, value) =>
 	key === 'max_age' || key === 'duplicate_window' ? formatDuration(value) : JSON.stringify(value);
 
-const nc = await connectOrExit('fionas-nats-setup', values);
+let connectionValues;
+try {
+	connectionValues = await promptSetupConnection(values);
+} catch {
+	console.error('Setup cancelled. Nothing was changed.');
+	process.exit(1);
+}
+const nc = await connectOrExit('fionas-nats-setup', connectionValues);
 let exitCode = 0;
 try {
 	const jsm = await jetstreamManager(nc);
@@ -102,8 +115,10 @@ try {
 	console.log(
 		`  subjects ${config.subjects.join(', ')} · ${state.messages} messages · duplicate window ${formatDuration(config.duplicate_window)} · max age ${formatDuration(config.max_age)} · replicas ${config.num_replicas}`
 	);
-} catch (e) {
-	console.error(`✗ ${e.message}`);
+} catch {
+	console.error(
+		'✗ Stream setup failed. Check JetStream availability and stream-management permissions.'
+	);
 	exitCode = 1;
 } finally {
 	await nc.close();
