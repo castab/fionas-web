@@ -56,6 +56,7 @@ The event contract is [`asyncapi.yaml`](asyncapi.yaml) ([AsyncAPI 3.1.0](https:/
 npm run nats:up      # start NATS (Docker) and create or verify the stream
 npm run nats:tail    # print inquiry events as /book publishes them; prompts for URL and token (add -- --all for history)
 npm run nats:setup   # create or verify the stream on any server (-- --help for options)
+npm run nats:purge   # delete every event in the stream (asks twice; terminal only)
 npm run nats:down    # stop NATS (data stays in the nats-data volume)
 ```
 
@@ -71,6 +72,8 @@ Use `--non-interactive` to skip prompts in automation; redirected/non-terminal r
 npm run nats:setup -- --non-interactive --server tls://nats.dev.example:4222
 npm run nats:tail -- --non-interactive --server tls://nats.dev.example:4222
 ```
+
+`npm run nats:purge` deletes all events but keeps the stream and its settings, on local Docker or any server you point it at. It uses the same target and credential prompts as `nats:tail`, then asks twice: a yes/no that states how many events will be lost, and the stream name typed out. Anything else cancels. It only runs in a terminal, and there is no flag to skip the questions. The credentials need permission to purge the stream (stream-management access). A deleted event can't be recovered.
 
 `nats:setup` never silently rewrites an existing stream. It reports any difference and changes nothing unless you pass `--update`. Setup requires credentials with JetStream stream-management access. These operator settings don't configure the public app's separate `NATS_*` connection.
 
@@ -103,6 +106,7 @@ so they need no running backend.
 | `npm run nats:up` / `down`   | Start / stop the local NATS + JetStream (see "Events & local NATS")              |
 | `npm run nats:setup`         | Create or verify the `FIONAS_INQUIRIES` stream                                   |
 | `npm run nats:tail`          | Print inquiry events as they are published                                       |
+| `npm run nats:purge`         | Delete every event in `FIONAS_INQUIRIES` after two confirmations                 |
 | `npm run asyncapi:validate`  | Validate `asyncapi.yaml` and its examples                                        |
 
 The public e2e tests start the compose NATS themselves. To use an already running server
