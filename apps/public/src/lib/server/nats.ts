@@ -8,6 +8,7 @@ import { jetstream } from '@nats-io/jetstream';
  *
  * - NATS_URL: one server URL, or several comma-separated for a cluster
  * - NATS_CREDS_FILE: a .creds file (decentralized JWT auth; preferred in production), or
+ * - NATS_TOKEN: a preshared token, or
  * - NATS_USER + NATS_PASSWORD
  *
  * The connection opens lazily when /book first loads or submits (so the marketing site starts
@@ -44,7 +45,7 @@ export type JetStreamPublish = (
 
 const CONNECT_TIMEOUT_MS = 3000;
 
-type Settings = { servers: string[]; creds?: string; user?: string; pass?: string };
+type Settings = { servers: string[]; creds?: string; token?: string; user?: string; pass?: string };
 
 function settingsFromEnv(): Settings | null {
 	const servers = (env.NATS_URL ?? '')
@@ -54,6 +55,8 @@ function settingsFromEnv(): Settings | null {
 	if (servers.length === 0) return null;
 	const creds = env.NATS_CREDS_FILE?.trim();
 	if (creds) return { servers, creds };
+	const token = env.NATS_TOKEN;
+	if (token) return { servers, token };
 	return {
 		servers,
 		user: env.NATS_USER?.trim() || undefined,
@@ -61,7 +64,7 @@ function settingsFromEnv(): Settings | null {
 	};
 }
 
-async function open({ servers, creds, user, pass }: Settings): Promise<NatsConnection> {
+async function open({ servers, creds, token, user, pass }: Settings): Promise<NatsConnection> {
 	return connect({
 		servers,
 		name: 'fionas-web',
@@ -70,9 +73,11 @@ async function open({ servers, creds, user, pass }: Settings): Promise<NatsConne
 		maxReconnectAttempts: -1,
 		...(creds
 			? { authenticator: credsAuthenticator(readFileSync(creds)) }
-			: user
-				? { user, pass }
-				: {})
+			: token
+				? { token }
+				: user
+					? { user, pass }
+					: {})
 	});
 }
 
