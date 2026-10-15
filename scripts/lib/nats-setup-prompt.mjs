@@ -31,13 +31,31 @@ export function askTerminal(
 	});
 }
 
-/** Fill missing connection options interactively; flags/env remain usable without a terminal. */
+/** Non-token authentication: a .creds file, else a username and hidden password, else none. */
+async function promptOtherAuth(result, ask) {
+	// Windows "Copy as path" wraps the path in quotes.
+	const creds = (await ask('Path to a .creds file [Enter to skip]: '))
+		.trim()
+		.replace(/^"(.*)"$/, '$1');
+	if (creds) return { ...result, creds };
+	const user = (await ask('NATS username [Enter to connect without authentication]: ')).trim();
+	if (!user) return result;
+	const password = await ask('NATS password: ', { secret: true });
+	return { ...result, user, password };
+}
+
+/**
+ * Fill missing connection options interactively; flags/env remain usable without a terminal.
+ * With `otherAuth`, an empty token on a remote target falls through to a .creds file, then a
+ * username/password, instead of insisting on a token.
+ */
 export async function promptSetupConnection(
 	values,
 	{
 		env = process.env,
 		interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY),
-		ask = askTerminal
+		ask = askTerminal,
+		otherAuth = false
 	} = {}
 ) {
 	if (values['non-interactive'] || !interactive) return values;
@@ -58,12 +76,15 @@ export async function promptSetupConnection(
 	if (authSupplied) return result;
 	const local = settings.servers.length === 1 && settings.servers[0] === LOCAL_SERVER;
 	while (true) {
-		const token = await ask(
-			local ? 'NATS token [Enter for local Docker credentials]: ' : 'NATS preshared token: ',
-			{ secret: true }
-		);
+		const tokenPrompt = local
+			? 'NATS token [Enter for local Docker credentials]: '
+			: otherAuth
+				? 'NATS preshared token [Enter to use a .creds file or username/password]: '
+				: 'NATS preshared token: ';
+		const token = await ask(tokenPrompt, { secret: true });
 		if (token) return { ...result, token };
 		if (local) return result;
+		if (otherAuth) return promptOtherAuth(result, ask);
 		process.stdout.write(
 			'A token is required for this target; use flags/env for other authentication.\n'
 		);

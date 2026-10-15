@@ -53,6 +53,60 @@ describe('setup prompts', () => {
 		}
 	});
 
+	describe('with otherAuth (nats:tail)', () => {
+		const remote = { server: 'tls://dev.example:4222' };
+		const tail = (ask) => ({ ...options(ask), otherAuth: true });
+
+		it('asks only for the token when one is given', async () => {
+			const ask = vi.fn().mockResolvedValueOnce('secret');
+			const values = await promptSetupConnection(remote, tail(ask));
+			expect(values.token).toBe('secret');
+			expect(ask).toHaveBeenCalledTimes(1);
+		});
+
+		it('falls back to a .creds file, tolerating quoted paths', async () => {
+			const ask = vi
+				.fn()
+				.mockResolvedValueOnce('')
+				.mockResolvedValueOnce(' "C:\\keys\\dev.creds" ');
+			const values = await promptSetupConnection(remote, tail(ask));
+			expect(connectionSettings(values, {})).toEqual({
+				servers: [remote.server],
+				creds: 'C:\\keys\\dev.creds'
+			});
+			expect(ask).toHaveBeenCalledTimes(2);
+		});
+
+		it('falls back to a username and hidden password', async () => {
+			const ask = vi
+				.fn()
+				.mockResolvedValueOnce('')
+				.mockResolvedValueOnce('')
+				.mockResolvedValueOnce(' ops ')
+				.mockResolvedValueOnce('hunter2');
+			const values = await promptSetupConnection(remote, tail(ask));
+			expect(connectionSettings(values, {})).toEqual({
+				servers: [remote.server],
+				user: 'ops',
+				pass: 'hunter2'
+			});
+			expect(ask.mock.calls[3][1]).toEqual({ secret: true });
+		});
+
+		it('connects without authentication when every credential is skipped', async () => {
+			const ask = vi.fn().mockResolvedValue('');
+			expect(await promptSetupConnection(remote, tail(ask))).toEqual(remote);
+			expect(ask).toHaveBeenCalledTimes(3);
+		});
+
+		it('still uses Docker credentials for the local target', async () => {
+			const ask = vi.fn().mockResolvedValue('');
+			const values = await promptSetupConnection({}, tail(ask));
+			expect(ask).toHaveBeenCalledTimes(2);
+			expect(connectionSettings(values, {}).user).toBe('fionas-admin');
+		});
+	});
+
 	it('skips questions already answered by flags or env credentials', async () => {
 		const ask = vi.fn();
 		const values = { server: 'tls://dev.example:4222', token: 'flag-token' };
