@@ -59,7 +59,18 @@ npm run nats:setup   # create or verify the stream on any server (-- --help for 
 npm run nats:down    # stop NATS (data stays in the nats-data volume)
 ```
 
-`nats:setup` never silently rewrites an existing stream. It reports any difference and changes nothing unless you pass `--update`. To point it at another server, pass `--server`/`--creds`, or set `NATS_ADMIN_URL`/`NATS_ADMIN_CREDS`.
+Run `npm run nats:setup` in a terminal to choose the target: press Enter for the local Docker instance, or enter a remote NATS URL (comma-separated URLs for a cluster). The next prompt asks for a preshared token with input hidden. For local Docker, press Enter again to use its dev-only admin credentials. The token is kept in memory for this run and is never saved. `nats:up` always sets up local Docker without prompts.
+
+For a configured target, use `--server` or `NATS_ADMIN_URL`; the latter becomes the target prompt's default. Supply credentials with `NATS_ADMIN_TOKEN`, `--creds` / `NATS_ADMIN_CREDS`, or `--user` / `--password` / `NATS_ADMIN_USER` / `NATS_ADMIN_PASSWORD` to skip the token prompt. `--token` is also supported by setup and tail, but the hidden prompt or environment avoids putting secrets in shell history. Explicit authentication flags override environment authentication; within either source, a credentials file takes precedence over a token, then username/password. Local dev credentials are only defaulted for the exact local Docker URL.
+
+Use `--non-interactive` to skip prompts in automation; redirected/non-terminal runs also use flags/env without prompting. For example, with `NATS_ADMIN_TOKEN` set privately:
+
+```sh
+npm run nats:setup -- --non-interactive --server tls://nats.dev.example:4222
+npm run nats:tail -- --server tls://nats.dev.example:4222
+```
+
+`nats:setup` never silently rewrites an existing stream. It reports any difference and changes nothing unless you pass `--update`. Setup requires credentials with JetStream stream-management access. These operator settings don't configure the public app's separate `NATS_*` connection.
 
 ## Admin console
 
