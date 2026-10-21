@@ -27,7 +27,7 @@ test('override, reorder, remove, bespoke service and separate credit retain revi
 	await waitForPreview(page);
 	await rows.nth(2).getByRole('button', { name: 'Remove', exact: true }).click();
 	await waitForPreview(page);
-	await page.getByRole('button', { name: '+ New service', exact: true }).click();
+	await page.getByRole('button', { name: '+ Add service', exact: true }).click();
 	const bespoke = rows.nth(2);
 	await bespoke.getByLabel('Description', { exact: true }).fill('Bespoke churros');
 	await bespoke.getByLabel('Unit price', { exact: true }).fill('111.00');

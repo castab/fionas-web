@@ -14,3 +14,7 @@ export const fieldInput = `${fieldSurface} box-border min-w-0 px-3 py-2.5 text-s
 export const dashedPill = `inline-flex min-h-[38px] items-center rounded-full border-[1.5px] border-dashed border-olive-500 bg-transparent px-4 py-2 font-sans text-[11px] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase transition-[background-color] duration-(--dur-fast) ease-(--ease-out) hover:bg-cream-300/50 disabled:cursor-not-allowed disabled:opacity-45 ${focusRing}`;
 export const roundIconButton = `inline-flex shrink-0 items-center justify-center rounded-full border-[1.5px] border-olive-300 bg-transparent text-(--text-muted) transition-[border-color,color] duration-(--dur-fast) ease-(--ease-out) hover:border-rust-600 hover:text-rust-600 disabled:opacity-45 ${focusRing}`;
 export const errorText = 'm-0 text-xs text-rust-600';
+/** Field label above a control (12px semibold). */
+export const fieldLabel = 'flex min-w-0 flex-col gap-1 text-xs font-semibold text-(--text-body)';
+/** Quiet icon + text button for per-line tools (Move up, Move down, Remove). */
+export const lineTool = `inline-flex min-h-11 items-center gap-1 rounded-sm border-0 bg-transparent px-2.5 font-sans text-[11.5px] leading-[1.4] font-semibold text-olive-800 transition-[background-color] duration-(--dur-fast) ease-(--ease-out) not-disabled:hover:bg-cream-300/60 disabled:opacity-45 ${focusRing}`;

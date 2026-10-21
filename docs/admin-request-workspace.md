@@ -17,9 +17,21 @@ Their rows say **Collected when booking**: workflow copy, not a missing-data err
 domain model. ZIP remains the coarse inquiry location. No details are inferred from messages.
 
 The Serving plan renders backend-ordered financial lines, quantities, unit prices, line totals,
-subtotal, tax, total, currency, stage/version, and reconciliation balance. Exact decimal strings go
-directly to Intl formatting; no repricing or financial arithmetic occurs. Missing reconciliation or
-inconsistent document ownership is unavailable rather than an assumed zero balance.
+subtotal, tax, total and stage/version; only an Invoice shows its reconciliation balance. Once an
+approved plan exists it appears inside the Serving plan ("What you'll serve") and replaces the
+customer's original picks on the page. Exact decimal strings go directly to Intl formatting; no
+repricing or financial arithmetic occurs. Missing reconciliation or inconsistent document ownership
+is unavailable rather than an assumed zero balance.
+
+**Right now** words the current stage for staff. Its headline and description come from
+`requestSummary`/`requestSummaryDescription` with the business-timezone date the load supplies
+(`businessDate`), so a countdown ("scooping in 25 days") never depends on the host or browser
+clock. Its figures are backend values only: Estimate or Quote total and the active deposit while
+QUOTED; Invoice total, `reconciliation.netApplied` (Paid) and balance afterwards. Its action row
+holds Build quote / Decline, Mark event served / Close event, and Record deposit / Record payment.
+Payment entry opens below the card from `?payment` (a plain link, so it works without JavaScript)
+or stays open while a returned payment result is shown; success PRGs to the clean path, which
+closes it.
 
 ## Issue Quote (quote builder)
 

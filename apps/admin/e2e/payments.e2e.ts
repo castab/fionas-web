@@ -30,6 +30,14 @@ async function open(
 	await session(context, { request: paymentFixture(state) });
 	await page.goto(route);
 }
+/** The design keeps payment entry behind Record deposit / Record payment (?payment without JS). */
+async function openPayment(page: Page) {
+	await page.getByTestId('open-payment').click();
+	await expect(page.getByTestId('payment-form')).toBeVisible();
+}
+const headline = (page: Page) => page.getByTestId('request-summary').getByRole('heading');
+const submitPayment = (page: Page) =>
+	page.getByRole('button', { name: /^Record (\$\S+ )?payment$/ });
 async function noOverflow(page: Page) {
 	expect(
 		await page.evaluate(
@@ -49,9 +57,10 @@ test('a backend credit balance remains readable with its full history and no pay
 	appendPayment(request, '115.01', 'CHECK', 3);
 	await session(context, { request });
 	await page.goto(route);
-	await expect(page.getByTestId('request-summary')).toContainText('Balance: -$0.01');
+	await expect(page.getByTestId('request-balance')).toContainText('-$0.01');
 	await expect(page.getByTestId('payment-receipt')).toHaveCount(2);
 	await expect(page.getByTestId('payment-form')).toHaveCount(0);
+	await expect(page.getByTestId('open-payment')).toHaveCount(0);
 });
 
 for (const native of [false, true]) {
@@ -72,33 +81,35 @@ for (const native of [false, true]) {
 				`/staff/requests/${mayaId}`
 			]);
 			await expect(page.getByTestId('deposit-summary')).toContainText('$300');
-			await expect(page.getByTestId('payment-form')).toContainText('Must be recorded in full');
+			await expect(page.getByTestId('payment-form')).toHaveCount(0);
+			await openPayment(page);
+			await expect(page.locator('#record-payment')).toContainText('Must be recorded in full');
 			await expect(
-				page.getByTestId('payment-form').locator('input:not([type=hidden])')
+				page.getByTestId('payment-form').locator('input:not([type=hidden]):not([type=radio])')
 			).toHaveCount(0);
-			await expect(page.getByLabel('Payment method').locator('option')).toHaveText([
-				'Cash',
-				'Check',
-				'Other'
-			]);
+			const methods = page.getByRole('group', { name: 'Payment method' }).getByRole('radio');
+			await expect(methods).toHaveCount(3);
+			for (const name of ['Cash', 'Check', 'Other'])
+				await expect(page.getByRole('radio', { name, exact: true })).toBeVisible();
+			await expect(page.getByRole('radio', { name: 'Cash', exact: true })).toBeChecked();
 			await noOverflow(page);
 			await page.screenshot({ path: testInfo.outputPath('quoted-payments.png'), fullPage: true });
 			const post = page.waitForResponse(
 				(response) =>
 					response.request().method() === 'POST' && response.url().includes('recordDeposit')
 			);
-			await page.getByLabel('Payment method').selectOption('CASH');
+			await page.getByRole('radio', { name: 'Cash', exact: true }).check();
 			await page.getByRole('button', { name: 'Record $300 deposit' }).click();
 			expect((await post).status()).toBe(native ? 303 : 200);
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Event booked');
-			await expect(page.getByTestId('financial-document')).toContainText('Invoice');
-			await expect(page.getByTestId('financial-document')).toContainText('Version 3');
-			await expect(page.getByTestId('payment-history')).toContainText('$300 received · Cash');
-			await expect(page.getByTestId('payment-history')).toContainText(
-				'Booking deposit · Originally allocated $300 to Quote version 2'
-			);
-			await expect(page.getByTestId('payment-form')).toContainText('Invoice balance: $115');
+			await expect(headline(page)).toContainText('On the calendar');
+			await expect(page.getByTestId('financial-version')).toHaveText('Invoice v3');
+			const deposit = page.getByTestId('payment-receipt').filter({ hasText: 'Deposit · Cash' });
+			await expect(deposit).toContainText('$300');
+			await expect(deposit).toContainText('applied to Quote v2');
+			await expect(page.getByTestId('request-balance')).toContainText('$115');
+			await openPayment(page);
+			await expect(page.getByTestId('payment-form')).toContainText('Up to $115');
 			expect((await session(context)).paymentAttempts).toEqual([
 				{
 					documentId: mayaDocumentId,
@@ -111,13 +122,17 @@ for (const native of [false, true]) {
 				}
 			]);
 			await page.getByLabel('Payment amount (USD)').fill('100.00');
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+			await submitPayment(page).click();
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Event booked');
-			await expect(page.getByTestId('payment-form')).toContainText('Invoice balance: $15');
+			await expect(headline(page)).toContainText('On the calendar');
+			await expect(page.getByTestId('request-balance')).toContainText('$15');
+			await expect(page.getByTestId('payment-form')).toHaveCount(0);
+			await openPayment(page);
 			await expect(page.getByLabel('Payment amount (USD)')).toHaveValue('');
 			await expect(page.getByTestId('payment-receipt')).toHaveCount(2);
-			await expect(page.getByTestId('payment-history')).toContainText('$100 received · Cash');
+			await expect(
+				page.getByTestId('payment-receipt').filter({ hasText: 'Payment · Cash' })
+			).toContainText('$100');
 			await noOverflow(page);
 			await page.screenshot({ path: testInfo.outputPath('booked-payments.png'), fullPage: true });
 			await page.getByTestId('payment-history').scrollIntoViewIfNeeded();
@@ -142,6 +157,7 @@ for (const native of [false, true]) {
 			context
 		}) => {
 			await open(page, context);
+			await openPayment(page);
 			const newer = paymentFixture();
 			newer.proposal!.id = '30000000-0000-0000-0000-000000000099';
 			newer.proposal!.documentVersion = 3;
@@ -154,6 +170,8 @@ for (const native of [false, true]) {
 			await expect(page.getByRole('button', { name: 'Record $300 deposit' })).toBeDisabled();
 			expect((await session(context)).paymentAttempts).toHaveLength(0);
 			await page.getByRole('link', { name: 'Reload to review' }).click();
+			// The clean GET closes the panel; reopening it shows the reviewed state, enabled.
+			await openPayment(page);
 			await expect(page.getByRole('button', { name: 'Record $300 deposit' })).toBeEnabled();
 		});
 		test('invalid Invoice amount cannot mutate, then an exact corrected amount succeeds', async ({
@@ -161,10 +179,11 @@ for (const native of [false, true]) {
 			context
 		}) => {
 			await open(page, context, 'booked');
+			await openPayment(page);
 			const input = page.getByLabel('Payment amount (USD)');
 			for (const amount of ['0', '115.01', '100.001']) {
 				await input.fill(amount);
-				await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+				await submitPayment(page).click();
 				if (native) {
 					await expect(page.getByRole('alert')).toContainText('Enter a valid payment');
 					await expect(input).toHaveValue(amount);
@@ -176,9 +195,10 @@ for (const native of [false, true]) {
 				expect((await session(context)).paymentAttempts).toHaveLength(0);
 			}
 			await input.fill('115.00');
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+			await submitPayment(page).click();
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
-			await expect(page.getByTestId('request-summary')).toContainText('Event booked');
+			await expect(headline(page)).toContainText('On the calendar');
+			await expect(page.getByTestId('open-payment')).toHaveCount(0);
 			expect((await session(context)).paymentAttempts).toHaveLength(1);
 		});
 		for (const state of ['quoted', 'booked'] as const) {
@@ -187,14 +207,14 @@ for (const native of [false, true]) {
 				context
 			}) => {
 				await open(page, context, state);
+				await openPayment(page);
 				await session(context, { mode: 'payment-ambiguous' });
 				if (state === 'booked') await page.getByLabel('Payment amount (USD)').fill('100.00');
-				await page
-					.getByRole('button', {
-						name: state === 'quoted' ? 'Record $300 deposit' : 'Record payment',
-						exact: true
-					})
-					.click();
+				await (
+					state === 'quoted'
+						? page.getByRole('button', { name: 'Record $300 deposit', exact: true })
+						: submitPayment(page)
+				).click();
 				await expect(page.getByRole('alert')).toContainText(
 					'couldn’t confirm whether the payment was recorded'
 				);
@@ -202,7 +222,7 @@ for (const native of [false, true]) {
 				expect((await session(context)).paymentAttempts).toHaveLength(1);
 				await page.getByRole('link', { name: 'Reload to review' }).click();
 				await expect(page).toHaveURL(route);
-				await expect(page.getByTestId('request-summary')).toContainText('Event booked');
+				await expect(headline(page)).toContainText('On the calendar');
 				await expect(page.getByTestId('payment-receipt')).toHaveCount(state === 'quoted' ? 1 : 2);
 				expect((await session(context)).paymentAttempts).toHaveLength(1);
 			});
@@ -212,33 +232,39 @@ for (const native of [false, true]) {
 			context
 		}) => {
 			await open(page, context, 'served');
+			await openPayment(page);
 			await page.getByLabel('Payment amount (USD)').fill('15.00');
-			await page.getByLabel('Payment method').selectOption('CHECK');
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
-			await expect(page.getByTestId('request-summary')).toContainText('Event served');
-			await expect(page.getByTestId('payment-form')).toContainText('Invoice balance: $100');
+			await page.getByRole('radio', { name: 'Check', exact: true }).check();
+			await submitPayment(page).click();
+			await expect(headline(page)).toHaveText('Served · balance due');
+			await expect(page.getByTestId('request-balance')).toContainText('$100');
+			await openPayment(page);
 			await page.getByLabel('Payment amount (USD)').fill('100');
-			await page.getByLabel('Payment method').selectOption('OTHER');
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+			await page.getByRole('radio', { name: 'Other', exact: true }).check();
+			await submitPayment(page).click();
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
-			await expect(page.getByTestId('request-summary')).toContainText('Event served');
-			await expect(page.getByTestId('payment-history')).toContainText('$15 received · Check');
-			await expect(page.getByTestId('payment-history')).toContainText('$100 received · Other');
+			await expect(page.getByTestId('open-payment')).toHaveCount(0);
+			await expect(headline(page)).toHaveText('Served and paid in full');
+			await expect(
+				page.getByTestId('payment-receipt').filter({ hasText: 'Payment · Check' })
+			).toContainText('$15');
+			await expect(
+				page.getByTestId('payment-receipt').filter({ hasText: 'Payment · Other' })
+			).toContainText('$100');
 		});
 		test('Invoice stale version blocks mutation and native invalid amount needs review if projection changed', async ({
 			page,
 			context
 		}) => {
 			await open(page, context, 'booked');
+			await openPayment(page);
 			await page.getByLabel('Payment amount (USD)').fill(native ? '100.001' : '100');
 			const newer = paymentFixture('booked');
 			newer.financial.version = 4;
 			await session(context, { request: newer });
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+			await submitPayment(page).click();
 			await expect(page.getByRole('alert')).toContainText('Reload');
-			await expect(
-				page.getByRole('button', { name: 'Record payment', exact: true })
-			).toBeDisabled();
+			await expect(submitPayment(page)).toBeDisabled();
 			expect((await session(context)).paymentAttempts).toHaveLength(0);
 		});
 	});
@@ -252,7 +278,10 @@ test('Administrator without payment permission sees deposit/history but no contr
 	await signIn(page, 'request-no-payment');
 	await open(page, context);
 	await expect(page.getByTestId('deposit-summary')).toContainText('$300');
-	await expect(page.getByTestId('payment-history')).toBeVisible();
+	// No receipts yet, so the design shows no history card; no payment entry either.
+	await expect(page.getByTestId('payment-history')).toHaveCount(0);
+	await expect(page.getByTestId('open-payment')).toHaveCount(0);
+	await page.goto(`${route}?payment`);
 	await expect(page.getByTestId('payment-form')).toHaveCount(0);
 	const result = await context.request.post(`${route}?/recordDeposit`, {
 		form: {
@@ -272,14 +301,15 @@ test('refunded historical deposit stays readable and never resurrects a deposit 
 	context
 }) => {
 	await open(page, context, 'refunded');
-	await expect(page.getByTestId('request-summary')).toContainText('Event booked');
-	await expect(page.getByTestId('deposit-summary')).toContainText('Historical accepted deposit');
-	await expect(page.getByTestId('payment-history')).toContainText('$300 received · Cash');
-	await expect(page.getByTestId('payment-history')).toContainText(
-		'Refunded: $300 · Net received: $0'
-	);
+	await expect(headline(page)).toContainText('On the calendar');
+	// The design drops the deposit tile once booked; the receipt and its refund stay in history.
+	await expect(page.getByTestId('deposit-summary')).toHaveCount(0);
+	const deposit = page.getByTestId('payment-receipt').filter({ hasText: 'Deposit · Cash' });
+	await expect(deposit).toContainText('$300');
+	await expect(deposit).toContainText('Refunded $300 · Net received $0');
+	await expect(page.getByTestId('open-payment')).toHaveText('Record payment');
+	await openPayment(page);
 	await expect(page.getByRole('button', { name: /Record .* deposit/ })).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Record payment', exact: true })).toBeVisible();
 	await noOverflow(page);
 });
 test('history shows only this document’s original allocation, not the whole receipt as applied here', async ({
@@ -303,12 +333,12 @@ test('history shows only this document’s original allocation, not the whole re
 	});
 	await session(context, { request: data });
 	await page.goto(route);
-	await expect(page.getByTestId('payment-history')).toContainText(
-		'$400 received · Unknown payment method'
-	);
-	await expect(page.getByTestId('payment-history')).toContainText('Originally allocated $300');
-	await expect(page.getByTestId('payment-history')).not.toContainText('Originally allocated $400');
-	await expect(page.getByTestId('payment-history')).not.toContainText('Originally allocated $100');
+	const receipt = page.getByTestId('payment-receipt').first();
+	await expect(receipt).toContainText('Unknown payment method');
+	await expect(receipt).toContainText('$400');
+	await expect(receipt).toContainText('$300 applied to Quote v2');
+	await expect(page.getByTestId('payment-history')).not.toContainText('$400 applied');
+	await expect(page.getByTestId('payment-history')).not.toContainText('$100 applied');
 });
 for (const mode of [
 	'payment-forbidden',
@@ -322,6 +352,7 @@ for (const mode of [
 		context
 	}) => {
 		await open(page, context);
+		await openPayment(page);
 		await session(context, { mode });
 		await page.getByRole('button', { name: 'Record $300 deposit' }).click();
 		await expect(page.getByRole('alert')).toBeVisible();

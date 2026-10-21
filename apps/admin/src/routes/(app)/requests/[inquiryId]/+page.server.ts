@@ -22,6 +22,7 @@ import type { PaymentFormValues } from '$lib/payments.js';
 import type { RecordPaymentRequest } from '$lib/payment-contract.js';
 import { matchesReviewedSuggestion } from '$lib/deposit.js';
 import { CURRENCY } from '$lib/currency.js';
+import { businessDate } from '$lib/presentation.js';
 import {
 	initialQuoteValues,
 	buildCommand,
@@ -59,6 +60,8 @@ export const load: PageServerLoad = async ({
 	const config = backendConfig(url.origin);
 	const cookie = request.headers.get('cookie');
 	const quoteOpen = url.searchParams.has('quote');
+	const paymentOpen = url.searchParams.has('payment');
+	const today = businessDate(new Date());
 	const result = await getStaffRequest(config, params.inquiryId, cookie);
 	if (!result.ok && result.error.status === 401) redirect(303, '/login');
 	if (!result.ok || !isCurrentStaffRequest(result.data, params.inquiryId))
@@ -67,6 +70,8 @@ export const load: PageServerLoad = async ({
 			staffRequest: null,
 			requestError: result.ok ? ('unavailable' as const) : requestErrorKind(result.error.status),
 			quoteOpen,
+			paymentOpen,
+			today,
 			initialQuote: null
 		};
 	applySetCookies(cookies, result.setCookies);
@@ -109,6 +114,8 @@ export const load: PageServerLoad = async ({
 		staffRequest: data,
 		requestError: null,
 		quoteOpen,
+		paymentOpen,
+		today,
 		initialQuote
 	};
 };

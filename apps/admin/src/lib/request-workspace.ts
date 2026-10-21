@@ -6,6 +6,14 @@ import type {
 import { isSupportedCurrency } from './currency.js';
 import { isDepositTerms } from './deposit.js';
 import { isPaymentHistory } from './payment-history.js';
+import {
+	countdownLabel,
+	daysUntil,
+	eventDateLabel,
+	formatMoney,
+	guestCountLabel,
+	submittedDateLabel
+} from './presentation.js';
 
 export const PROPOSAL_PERMISSIONS = [
 	'commerce.financial-document.create',
@@ -72,28 +80,84 @@ const lifecycleLabels: Record<InquiryLifecycle['stage'], string> = {
 export function lifecycleLabel(stage: InquiryLifecycle['stage']): string {
 	return lifecycleLabels[stage];
 }
-export function requestSummary(stage: InquiryLifecycle['stage']): string {
+/** The badge tone that marks each lifecycle stage in the workspace header. */
+export function lifecycleTone(
+	stage: InquiryLifecycle['stage']
+): 'inverse' | 'olive' | 'moss' | 'outline' {
 	return stage === 'REQUESTED'
-		? 'Needs a quote'
+		? 'inverse'
 		: stage === 'QUOTED'
-			? 'Quote issued'
-			: `Event ${lifecycleLabel(stage).toLowerCase()}`;
+			? 'olive'
+			: stage === 'CLOSED'
+				? 'outline'
+				: 'moss';
 }
-export function requestSummaryDescription(data: CurrentStaffRequest): string {
+function balanceSign(balance: string): 'zero' | 'negative' | 'positive' {
+	return isExactZero(balance) ? 'zero' : balance.startsWith('-') ? 'negative' : 'positive';
+}
+/** The "Right now" headline; `today` is the business-timezone calendar date. */
+export function requestSummary(data: CurrentStaffRequest, today: string): string {
 	const stage = data.inquiry.lifecycle.stage;
-	if (stage === 'REQUESTED') return 'Review the current Estimate below before issuing a quote.';
+	if (stage === 'REQUESTED') return 'Needs a quote';
+	if (stage === 'QUOTED') {
+		const deposit = data.depositRequirement;
+		if (deposit.state === 'ACTIVE' && deposit.satisfied)
+			return 'Quote issued — deposit requirement met';
+		const firstName = data.inquiry.name.trim().split(/\s+/)[0];
+		return firstName ? `Quote issued — waiting on ${firstName}’s deposit` : 'Quote issued';
+	}
+	if (stage === 'BOOKED') {
+		const countdown = countdownLabel(daysUntil(data.inquiry.eventDate, today));
+		return countdown
+			? `On the calendar · scooping ${countdown}`
+			: 'On the calendar · event date has passed';
+	}
+	if (stage === 'SERVED') {
+		const sign = balanceSign(data.financial.reconciliation.balance);
+		return sign === 'zero'
+			? 'Served and paid in full'
+			: sign === 'positive'
+				? 'Served · balance due'
+				: 'Served · balance needs review';
+	}
+	return 'Event closed';
+}
+export function requestSummaryDescription(data: CurrentStaffRequest, today: string): string {
+	const { inquiry, financial, proposal } = data;
+	const stage = inquiry.lifecycle.stage;
+	if (stage === 'REQUESTED') {
+		const countdown = countdownLabel(daysUntil(inquiry.eventDate, today));
+		return `Submitted ${submittedDateLabel(inquiry.createdAt)} · ${
+			countdown ? `event is ${countdown}` : 'the event date has passed'
+		}. Review the current Estimate below before issuing a quote.`;
+	}
 	if (stage === 'QUOTED')
-		return 'The full approved deposit is required to hold the date and book this event.';
+		return `${proposal ? `Quote v${proposal.documentVersion} issued ${submittedDateLabel(proposal.issuedAt)}. ` : ''}The full approved deposit is required to hold the date and book this event.`;
 	if (stage === 'CLOSED')
 		return 'Service and payment are complete. Review the financial and payment history below.';
+	const balance = financial.reconciliation.balance;
+	const sign = balanceSign(balance);
 	if (stage === 'SERVED') {
-		const balance = data.financial.reconciliation.balance;
-		if (isExactZero(balance)) return 'The Invoice is settled and this event may be closed.';
-		return balance.startsWith('-')
+		if (sign === 'zero') return 'The Invoice is settled and this event may be closed.';
+		return sign === 'negative'
 			? 'The Invoice balance must be exactly zero before closing this event.'
 			: 'This event has been served. Record the remaining payment before closing it.';
 	}
-	return 'Review the current Invoice and any remaining balance below.';
+	const guests = data.servicePlan?.guestCount;
+	const event = [
+		eventDateLabel(inquiry.eventDate),
+		guests
+			? guestCountLabel(guests, false)
+			: guestCountLabel(
+					inquiry.requestedService.guestCount,
+					inquiry.requestedService.guestCountIsMinimum
+				)
+	].join(' · ');
+	return sign === 'positive'
+		? `${event} · ${formatMoney(balance, financial.currency)} can be recorded any time, before or after the event.`
+		: sign === 'zero'
+			? `${event} · The Invoice is paid in full.`
+			: `${event} · The Invoice balance is below zero. Review the payment history below.`;
 }
 export function financialStageLabel(stage: string): string {
 	return (
