@@ -55,7 +55,7 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page.getByTestId('event-card')).toContainText('40 guests');
 	await expect(page.getByTestId('event-card')).not.toContainText(/minutes|hours|scooping/i);
 	await expect(page.getByTestId('event-card')).toContainText('93720');
-	await expect(page.getByText('Collected when booking', { exact: true })).toHaveCount(2);
+	await expect(page.getByText('Not on file', { exact: true })).toHaveCount(2);
 	await expect(page.getByTestId('original-request')).toContainText('My daughter loves strawberry!');
 	await expect(page.getByTestId('original-request')).toContainText('Vanilla');
 	const financial = page.getByTestId('financial-document');

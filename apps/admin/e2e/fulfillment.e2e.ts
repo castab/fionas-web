@@ -83,6 +83,13 @@ for (const native of [false, true])
 				await page.setViewportSize({ width: 1444, height: 1600 });
 			await open(page, context);
 			await expect(page.getByRole('button', { name: 'Mark event served' })).toBeVisible();
+			// The guidance is on screen, not hover-only, and is the button's accessible description.
+			await expect(page.getByText('The event date never changes this status')).toBeVisible();
+			await expect(
+				page.getByRole('button', { name: 'Mark event served' })
+			).toHaveAccessibleDescription(
+				/once it has been fulfilled\. The event date never changes this status on its own\./
+			);
 			await expect(page.getByTestId('open-payment')).toHaveText('Record payment');
 			await expect(headline(page)).toContainText('On the calendar · scooping in');
 			await expect(page.getByTestId('fulfillment-form').locator('[name]')).toHaveCount(0);
@@ -123,6 +130,9 @@ for (const native of [false, true])
 			await expect(headline(page)).toHaveText('Served and paid in full');
 			await expect(page.getByTestId('request-balance')).toHaveText(/Balance\s*\$0$/);
 			await expect(page.getByRole('button', { name: 'Close event' })).toBeEnabled();
+			await expect(page.getByRole('button', { name: 'Close event' })).toHaveAccessibleDescription(
+				/Closing completes this request/
+			);
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
 			await noOverflow(page);
 			await page.getByTestId('request-summary').scrollIntoViewIfNeeded();

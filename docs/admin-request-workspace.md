@@ -12,9 +12,10 @@ name/email, submission date, date-only event date, type, ZIP, guests/minimum fla
 escaped notes. The original requested service shows recorded human-readable item labels.
 Financial lines describe charges; the approved plan separately describes what Fiona will serve.
 
-Full event address and event-contact details are intentionally collected later when booking.
-Their rows say **Collected when booking**: workflow copy, not a missing-data error or placeholder
-domain model. ZIP remains the coarse inquiry location. No details are inferred from messages.
+There is no collection workflow for the full event address or event contact yet; recording the
+deposit books the inquiry without one. Their rows say **Not on file**, at every stage, rather than
+implying a step that never happens. ZIP remains the coarse inquiry location. No details are
+inferred from messages.
 
 The Serving plan renders backend-ordered financial lines, quantities, unit prices, line totals,
 subtotal, tax, total and stage/version; only an Invoice shows its reconciliation balance. Once an

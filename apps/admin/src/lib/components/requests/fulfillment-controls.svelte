@@ -78,9 +78,7 @@
 		<Button
 			type="submit"
 			class="min-h-12 w-full"
-			title={serve
-				? 'Use this after the event has been fulfilled. The event date never changes this status automatically.'
-				: undefined}
+			aria-describedby="fulfillment-help"
 			disabled={pending || blocked}
 		>
 			{submitting
@@ -92,4 +90,13 @@
 					: 'Close event'}
 		</Button>
 	</form>
+	<!-- Visible guidance under the whole action row, and the button's accessible description. -->
+	<p
+		id="fulfillment-help"
+		class="order-last m-0 basis-full text-xs leading-[1.55] text-(--text-muted)"
+	>
+		{serve
+			? 'Mark the event served once it has been fulfilled. The event date never changes this status on its own.'
+			: 'Closing completes this request. Its Invoice is settled, so nothing else is due.'}
+	</p>
 {/if}

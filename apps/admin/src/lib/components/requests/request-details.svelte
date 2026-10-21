@@ -57,11 +57,11 @@
 		{/if}
 		<div>
 			<dt class={micro}>Event contact</dt>
-			<dd class="m-0 mt-0.5 text-[13.5px] text-(--text-muted)">Collected when booking</dd>
+			<dd class="m-0 mt-0.5 text-[13.5px] text-(--text-muted)">Not on file</dd>
 		</div>
 		<div class={served ? 'col-span-2' : ''}>
 			<dt class={micro}>Event location</dt>
-			<dd class="m-0 mt-0.5 text-[13.5px] text-(--text-muted)">Collected when booking</dd>
+			<dd class="m-0 mt-0.5 text-[13.5px] text-(--text-muted)">Not on file</dd>
 		</div>
 	</dl>
 	<div class="border-t border-(--border-soft) pt-3">
