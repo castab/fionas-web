@@ -18,6 +18,29 @@ export async function session(context: BrowserContext, update?: unknown) {
 	return update === undefined ? response.json() : null;
 }
 
+/**
+ * A hand-made form-action POST sent from inside the signed-in page. Playwright's API request
+ * context would carry neither a same-origin Origin (SvelteKit's CSRF guard answers 403 first) nor
+ * the Secure session cookie over http, so its refusals never reach the action. This one does, and
+ * asserts the result is the action's own failure without backend diagnostics.
+ */
+export async function postAction(page: Page, path: string, form: Record<string, string>) {
+	const result = await page.evaluate(
+		async ({ path, form }) => {
+			const response = await fetch(path, {
+				method: 'POST',
+				headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+				body: new URLSearchParams(form)
+			});
+			return response.json();
+		},
+		{ path, form }
+	);
+	expect(result.type).toBe('failure');
+	expect(result.data).not.toContain('PRIVATE');
+	return result as { status: number; data: string };
+}
+
 export async function signIn(page: Page, username = 'brayan') {
 	await page.goto('/login');
 	await page.getByLabel('User').fill(username);

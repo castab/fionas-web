@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { mayaId, paymentFixture, appendPayment } from './request-fixture.mjs';
+import { postAction } from './request-helpers.js';
 
 const stubUrl = `http://127.0.0.1:${process.env.ADMIN_STUB_PORT ?? '4176'}`;
 const route = `/requests/${mayaId}`;
@@ -264,11 +265,14 @@ test('payment permission never authorizes fulfillment; direct POST denied before
 		if (state === 'booked')
 			await expect(page.getByTestId('open-payment')).toHaveText('Record payment');
 		const before = await session(context);
-		const response = await context.request.post(
+		const response = await postAction(
+			page,
 			`${route}?/${state === 'booked' ? 'markServed' : 'closeInquiry'}`,
-			{ form: {}, headers: { accept: 'application/json', 'x-sveltekit-action': 'true' } }
+			{}
 		);
-		expect(response.status()).toBe(403);
+		// The action's own permission refusal, not the CSRF guard or a missing session.
+		expect(response.status).toBe(403);
+		expect(response.data).toContain('This account cannot update event fulfillment.');
 		const after = await session(context);
 		expect(after.fulfillmentAttempts).toHaveLength(0);
 		expect(after.requestReads - before.requestReads).toBe(0);

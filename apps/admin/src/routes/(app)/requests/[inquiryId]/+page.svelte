@@ -8,6 +8,7 @@
 	import PaymentControls from '$lib/components/requests/payment-controls.svelte';
 	import PaymentHistory from '$lib/components/requests/payment-history.svelte';
 	import FulfillmentControls from '$lib/components/requests/fulfillment-controls.svelte';
+	import DeclineControls from '$lib/components/requests/decline-controls.svelte';
 	import { canRecordDeposit, canRecordInvoicePayment, receivedTimeLabel } from '$lib/payments.js';
 	import { isDecimal } from '$lib/payment-history.js';
 	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
@@ -15,12 +16,13 @@
 	import { formatMoney, submittedDateLabel } from '$lib/presentation.js';
 	import {
 		canCloseInquiry,
+		canDeclineInquiry,
 		canIssueQuote,
 		canMarkServed,
 		requestSummaryDescription,
 		lifecycleLabel,
-		lifecycleStages,
 		lifecycleTone,
+		progressSteps,
 		requestErrorMessage,
 		quoteErrorMessage,
 		requestSummary
@@ -55,6 +57,10 @@
 			reviewRequired ||
 			!!form?.fulfillmentReviewRequired ||
 			!!form?.paymentReviewRequired ||
+			!!form?.declineReviewRequired ||
+			(!!form?.declineValues &&
+				!!request &&
+				form.declineValues.expectedDocumentVersion !== String(request.financial.version)) ||
 			(!!form?.paymentValues &&
 				!!request &&
 				(form.paymentValues.expectedVersion !== String(request.financial.version) ||
@@ -72,8 +78,13 @@
 		!!request &&
 			(form?.paymentError !== undefined || !!form?.paymentValues || (data.paymentOpen && canPay))
 	);
-	const stageIndex = $derived(
-		request ? lifecycleStages.indexOf(request.inquiry.lifecycle.stage) : -1
+	const canDecline = $derived(!!request && canDeclineInquiry(request, data.user.permissions));
+	// Opened by ?decline (works without JavaScript); a returned decline result keeps it open.
+	const showDecline = $derived(
+		!!request &&
+			(form?.declineError !== undefined ||
+				!!form?.declineValues ||
+				(data.declineOpen && canDecline))
 	);
 	const milestone = $derived.by(() => {
 		const lifecycle = request?.inquiry.lifecycle;
@@ -82,7 +93,9 @@
 				? ['Closed', lifecycle.closed]
 				: lifecycle?.stage === 'SERVED'
 					? ['Marked served', lifecycle.served]
-					: [null, undefined];
+					: lifecycle?.stage === 'DECLINED'
+						? ['Declined', lifecycle.declined]
+						: [null, undefined];
 		return label && value && Number.isFinite(Date.parse(value.occurredAt))
 			? { label, at: value.occurredAt }
 			: null;
@@ -118,16 +131,26 @@
 				Submitted {submittedDateLabel(request.inquiry.createdAt)} · {request.inquiry.email}
 			</p>
 		</header>
-		<ol class="m-0 flex list-none gap-1 p-0 sm:gap-1.5" aria-label="Request lifecycle">
-			{#each lifecycleStages as step, i (step)}
-				<li aria-current={i === stageIndex ? 'step' : undefined} class="min-w-0 flex-1">
+		<!-- The booking path only. A declined request left it after Requested: later steps read as
+		     skipped, none is current, and the badge and Right now card state the outcome. -->
+		<ol
+			class="m-0 flex list-none gap-1 p-0 sm:gap-1.5"
+			aria-label={stage === 'DECLINED'
+				? 'Request lifecycle: declined after Requested'
+				: 'Request lifecycle'}
+		>
+			{#each progressSteps(stage) as step (step.stage)}
+				<li
+					aria-current={step.state === 'current' ? 'step' : undefined}
+					class={['min-w-0 flex-1', step.state === 'skipped' && 'opacity-50']}
+				>
 					<div
 						aria-hidden="true"
 						class={[
 							'mb-1.5 h-1 rounded-full',
-							i < stageIndex
+							step.state === 'done'
 								? 'bg-olive-300'
-								: i === stageIndex
+								: step.state === 'current'
 									? 'bg-olive-700'
 									: 'bg-(--border-soft)'
 						]}
@@ -135,12 +158,13 @@
 					<span
 						class={[
 							'block font-sans text-[8.5px] leading-[1.4] tracking-[0.05em] uppercase sm:text-[9.5px] sm:tracking-[0.1em]',
-							i === stageIndex
+							step.state === 'current'
 								? 'font-bold text-(--text-heading)'
-								: i < stageIndex
+								: step.state === 'done'
 									? 'font-semibold text-(--text-muted)'
-									: 'font-medium text-(--text-muted)'
-						]}>{lifecycleLabel(step)}</span
+									: 'font-medium text-(--text-muted)',
+							step.state === 'skipped' && 'line-through'
+						]}>{lifecycleLabel(step.stage)}</span
 					>
 				</li>
 			{/each}
@@ -149,7 +173,11 @@
 			variant="flat"
 			class={[
 				'flex flex-col gap-3.5 border-2 p-[18px] sm:p-5',
-				stage === 'REQUESTED' || stage === 'QUOTED' ? 'border-olive-700' : 'border-moss-600'
+				stage === 'REQUESTED' || stage === 'QUOTED'
+					? 'border-olive-700'
+					: stage === 'DECLINED'
+						? 'border-(--border-strong)'
+						: 'border-moss-600'
 			]}
 			data-testid="request-summary"
 		>
@@ -193,7 +221,11 @@
 				{:else}
 					<div class="flex min-w-0 flex-1 flex-col gap-0.5">
 						<span class={micro}
-							>{financial.stage === 'ESTIMATE' ? 'Estimate total' : 'Quote total'}</span
+							>{stage === 'DECLINED'
+								? 'Declined estimate'
+								: financial.stage === 'ESTIMATE'
+									? 'Estimate total'
+									: 'Quote total'}</span
 						>
 						<span class="text-[22px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
 							>{formatMoney(financial.total, financial.currency)}</span
@@ -216,25 +248,30 @@
 					{/if}
 				{/if}
 			</div>
-			{#if canIssueQuote(request, data.user.permissions)}
+			{#if canIssueQuote(request, data.user.permissions) || canDecline}
+				<!-- Separate permissions: either action can appear without the other. -->
 				<div class="flex flex-wrap gap-2.5">
-					<!-- Once the panel is open, Build quote brings it into view instead of reloading it. -->
-					<Button
-						href={showBuilder ? '#quote-builder' : `${route}?quote`}
-						class="min-h-12 flex-[1.4_1_150px]"
-						data-testid="build-quote">Build quote</Button
-					>
-					<!-- Placeholder until declining requests exists: visible as in the design, never actionable. -->
-					<Button
-						type="button"
-						variant="secondary"
-						disabled
-						title="Declining requests is coming soon"
-						class="min-h-12 flex-[1_1_120px] border-rust-600 text-rust-600"
-						data-testid="decline-request">Decline</Button
-					>
+					{#if canIssueQuote(request, data.user.permissions)}
+						<!-- Once the panel is open, Build quote brings it into view instead of reloading it. -->
+						<Button
+							href={showBuilder ? '#quote-builder' : `${route}?quote`}
+							disabled={mutationPending || mutationReviewRequired}
+							class="min-h-12 flex-[1.4_1_150px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+							data-testid="build-quote">Build quote</Button
+						>
+					{/if}
+					{#if canDecline}
+						<Button
+							href={showDecline ? '#decline-request' : `${route}?decline`}
+							variant="secondary"
+							disabled={mutationPending || mutationReviewRequired}
+							class="min-h-12 flex-[1_1_120px] border-rust-600 text-rust-600 not-disabled:hover:bg-rust-600/10 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+							data-testid="decline-request">Decline</Button
+						>
+					{/if}
 				</div>
-			{:else if quoteResult?.reviewRequired && !showBuilder}
+			{/if}
+			{#if quoteResult?.reviewRequired && !showBuilder}
 				<div role="alert" class="flex flex-col items-start gap-3">
 					<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>
 					<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
@@ -271,6 +308,63 @@
 					{/if}
 				</div>{/if}
 		</Card>
+		{#if showDecline}
+			<DeclineControls
+				{request}
+				permissions={data.user.permissions}
+				{route}
+				error={form?.declineError}
+				fieldError={form?.declineField === 'reason' || form?.declineReviewRequired === false}
+				reviewRequired={mutationReviewRequired}
+				values={form?.declineValues}
+				focusOnOpen={data.declineOpen && !form}
+				bind:pending={mutationPending}
+				onReviewRequired={() => {
+					clientReviewRequired = true;
+				}}
+			/>
+		{/if}
+		{#if stage === 'DECLINED' && request.inquiry.lifecycle.declined}
+			{@const decision = request.inquiry.lifecycle.declined}
+			<Card
+				role="region"
+				aria-labelledby="decline-record-title"
+				class="flex flex-col gap-3 p-[18px] sm:p-5"
+				data-testid="decline-record"
+			>
+				<h2 id="decline-record-title" class={caps}>Decline decision</h2>
+				<dl class="m-0 grid grid-cols-1 gap-x-4 gap-y-3 min-[480px]:grid-cols-2">
+					<div>
+						<dt class={micro}>Declined</dt>
+						<dd class="m-0 mt-0.5 text-[13.5px] font-semibold">
+							<time datetime={decision.occurredAt}>{receivedTimeLabel(decision.occurredAt)}</time>
+							(Pacific)
+						</dd>
+					</div>
+					<div>
+						<dt class={micro}>Recorded by</dt>
+						<dd class="m-0 mt-0.5 text-[13.5px] font-semibold">
+							{decision.principalId === data.user.id ? 'You' : 'Staff'}
+							<span class="block text-[11px] font-normal wrap-anywhere text-(--text-muted)"
+								>Account {decision.principalId}</span
+							>
+						</dd>
+					</div>
+					<div class="min-[480px]:col-span-2">
+						<dt class={micro}>Reason (internal)</dt>
+						<dd
+							class="m-0 mt-1 rounded-input bg-cream-200 px-3.5 py-3 text-[13.5px] leading-[1.6] wrap-anywhere whitespace-pre-line"
+						>
+							{decision.reason}
+						</dd>
+					</div>
+					<div class="min-[480px]:col-span-2">
+						<dt class={micro}>Reviewed</dt>
+						<dd class="m-0 mt-0.5 text-[13.5px]">Estimate v{decision.documentVersion}</dd>
+					</div>
+				</dl>
+			</Card>
+		{/if}
 		{#if showPayment}
 			<PaymentControls
 				{request}
@@ -298,7 +392,7 @@
 		{/if}
 		<RequestDetails
 			inquiry={request.inquiry}
-			showPicks={stage === 'REQUESTED' || !request.servicePlan}
+			showPicks={stage === 'REQUESTED' || stage === 'DECLINED' || !request.servicePlan}
 		/>
 		<FinancialDocumentCard
 			{financial}
@@ -311,9 +405,11 @@
 		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request unavailable</h1>
 		<Card role="alert" class="flex flex-col items-start gap-4">
 			<p class="m-0 text-sm text-(--text-muted)">
-				{form?.fulfillmentError ?? requestErrorMessage(data.requestError ?? 'unavailable')}
+				{form?.fulfillmentError ??
+					form?.declineError ??
+					requestErrorMessage(data.requestError ?? 'unavailable')}
 			</p>
-			{#if form?.fulfillmentReviewRequired}
+			{#if form?.fulfillmentReviewRequired || form?.declineReviewRequired}
 				<Button href={route} data-sveltekit-reload size="sm">Reload to review</Button>
 			{:else if data.requestError === 'unavailable'}<Button
 					href={route}

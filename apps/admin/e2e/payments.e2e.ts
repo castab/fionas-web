@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { mayaId, mayaDocumentId, paymentFixture, appendPayment } from './request-fixture.mjs';
+import { postAction } from './request-helpers.js';
 
 const stubUrl = `http://127.0.0.1:${process.env.ADMIN_STUB_PORT ?? '4176'}`;
 const route = `/requests/${mayaId}`;
@@ -283,14 +284,14 @@ test('Administrator without payment permission sees deposit/history but no contr
 	await expect(page.getByTestId('open-payment')).toHaveCount(0);
 	await page.goto(`${route}?payment`);
 	await expect(page.getByTestId('payment-form')).toHaveCount(0);
-	const result = await context.request.post(`${route}?/recordDeposit`, {
-		form: {
-			expectedVersion: '2',
-			expectedProposalId: paymentFixture().proposal!.id,
-			method: 'CASH'
-		}
+	const result = await postAction(page, `${route}?/recordDeposit`, {
+		expectedVersion: '2',
+		expectedProposalId: paymentFixture().proposal!.id,
+		method: 'CASH'
 	});
-	expect(result.status()).toBe(403);
+	// The action's own permission refusal, not the CSRF guard or a missing session.
+	expect(result.status).toBe(403);
+	expect(result.data).toContain('This account cannot record payments.');
 	expect((await session(context)).paymentAttempts).toHaveLength(0);
 	await open(page, context, 'booked');
 	await expect(page.getByTestId('payment-receipt')).toHaveCount(1);

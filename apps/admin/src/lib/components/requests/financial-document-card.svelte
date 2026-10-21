@@ -56,9 +56,11 @@
 		<div class="flex flex-col gap-1">
 			<h2 class={caps}>Serving plan</h2>
 			<p class="m-0 text-[11.5px] text-(--text-muted)">
-				{served
-					? 'What you scooped and what you charged.'
-					: 'What you’ll scoop and what you’re charging.'}
+				{lifecycleStage === 'DECLINED'
+					? 'The Estimate on file when this request was declined. It was never quoted or invoiced.'
+					: served
+						? 'What you scooped and what you charged.'
+						: 'What you’ll scoop and what you’re charging.'}
 			</p>
 		</div>
 		<span

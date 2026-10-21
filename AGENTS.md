@@ -24,6 +24,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`               |
 | Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`             |
 | Staff request workspace, Quote/deposit   | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`    |
+| Decline a request (confirm, reason)      | `docs/admin-request-workspace.md`, `$lib/decline.ts`, `decline-controls.svelte`                   |
 | Admin quote builder (preview, compose)   | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts` |
 | Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                |
 | Gallery                                  | `apps/public/src/routes/gallery/`, `$lib/server/presentation-service/`                            |
@@ -65,3 +66,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   the full authoritative amount with reviewed version + proposal ID; Invoice partial payments omit
   proposal ID. Never retry a payment mutation; stale/ambiguous outcomes require reload/review. Success
   PRGs to the coherent staff-request GET (including `payments`); only it confirms BOOKED/Invoice.
+- Admin Decline requires only `fionas.inquiries.manage` and a coherent REQUESTED inquiry; it posts the
+  reviewed Estimate version (never rebased) and a trimmed 1–500 character internal reason, once, then
+  PRGs. Uncertain outcomes block every mutation until reload. DECLINED is terminal and never a step
+  in the booking progress strip; the validator rejects any incoherent declined projection.

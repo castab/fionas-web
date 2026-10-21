@@ -38,11 +38,11 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page).toHaveURL(route);
 	await expect(page.getByTestId('request-summary')).toContainText('Needs a quote');
 	await expect(page.getByTestId('build-quote')).toBeVisible();
-	// Declining is a visible placeholder only: disabled and wired to nothing.
+	// Decline sits beside Build quote; it only opens a confirmation (see decline.e2e.ts).
 	const decline = page.getByTestId('decline-request');
 	await expect(decline).toBeVisible();
-	await expect(decline).toBeDisabled();
 	await expect(decline).toHaveText('Decline');
+	await expect(decline).toHaveAttribute('href', `${route}?decline`);
 	const [buildBox, declineBox] = await Promise.all([
 		page.getByTestId('build-quote').boundingBox(),
 		decline.boundingBox()
@@ -226,7 +226,7 @@ for (const mode of [
 	});
 }
 
-test('same Administrator role without financial-create permission can read but sees no issuance action', async ({
+test('same Administrator role without financial-create permission can read and decline but never issue', async ({
 	page,
 	context
 }) => {
@@ -235,7 +235,8 @@ test('same Administrator role without financial-create permission can read but s
 	await openMaya(page);
 	await expect(page.getByTestId('financial-version')).toContainText('Estimate');
 	await expect(page.getByTestId('build-quote')).toHaveCount(0);
-	await expect(page.getByTestId('decline-request')).toHaveCount(0);
+	// Declining needs only fionas.inquiries.manage, which this account still has.
+	await expect(page.getByTestId('decline-request')).toBeVisible();
 	await page.goto(`${route}?quote`);
 	await expect(page.getByTestId('quote-builder')).toHaveCount(0);
 	const state = await session(context);
