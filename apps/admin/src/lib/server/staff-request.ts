@@ -1,4 +1,5 @@
 import type {
+	DeclineInquiryRequest,
 	InquiryLifecycle,
 	StaffRequestResponse,
 	DepositTermsRequest,
@@ -23,6 +24,20 @@ export function markInquiryServed(config: BackendConfig, inquiryId: string, cook
 export function closeInquiry(config: BackendConfig, inquiryId: string, cookie: string | null) {
 	return request<InquiryLifecycle>(config, `/inquiries/${encodeURIComponent(inquiryId)}/close`, {
 		method: 'POST',
+		cookie
+	});
+}
+
+/** One attempt per call: `request()` never retries, and callers must not either. */
+export function declineInquiry(
+	config: BackendConfig,
+	inquiryId: string,
+	json: DeclineInquiryRequest,
+	cookie: string | null
+) {
+	return request<InquiryLifecycle>(config, `/inquiries/${encodeURIComponent(inquiryId)}/decline`, {
+		method: 'POST',
+		json: { expectedDocumentVersion: json.expectedDocumentVersion, reason: json.reason },
 		cookie
 	});
 }

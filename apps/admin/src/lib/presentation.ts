@@ -26,6 +26,34 @@ export function eventDateLabel(iso: string): string {
 	}).format(calendarDate(iso));
 }
 
+/** Today's calendar date (YYYY-MM-DD) in the business timezone. */
+export function businessDate(now: Date): string {
+	const parts = new Intl.DateTimeFormat('en-US', {
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		timeZone: BUSINESS_TIME_ZONE
+	}).formatToParts(now);
+	const part = (type: Intl.DateTimeFormatPartTypes) =>
+		parts.find((p) => p.type === type)?.value ?? '';
+	return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+/** Whole calendar days from `today` to the event; negative once the date has passed. */
+export function daysUntil(eventDate: string, today: string): number {
+	return Math.round(
+		(calendarDate(eventDate).getTime() - calendarDate(today).getTime()) / 86_400_000
+	);
+}
+
+/** "today", "tomorrow" or "in N days"; null once the event date has passed. */
+export function countdownLabel(days: number): string | null {
+	if (days < 0) return null;
+	if (days === 0) return 'today';
+	if (days === 1) return 'tomorrow';
+	return `in ${days} days`;
+}
+
 export function submittedDateLabel(instant: string): string {
 	return new Intl.DateTimeFormat('en-US', {
 		month: 'short',

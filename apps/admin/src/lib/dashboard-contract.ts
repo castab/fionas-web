@@ -1,3 +1,5 @@
+import type { InquiryStage } from './request-contract.js';
+
 /** Transport types from the supplied fionas-commerce OpenAPI /staff/dashboard schemas. */
 export type StaffDashboardItem = {
 	inquiryId: string;
@@ -5,7 +7,8 @@ export type StaffDashboardItem = {
 	customerName: string;
 	eventDate: string;
 	eventType: 'BIRTHDAY' | 'WEDDING' | 'CORPORATE' | 'SCHOOL_EVENT' | 'NEIGHBORHOOD_EVENT' | 'OTHER';
-	stage: 'REQUESTED' | 'QUOTED' | 'BOOKED' | 'SERVED' | 'CLOSED';
+	/** Declined inquiries leave every queue and count, so queue items never carry DECLINED. */
+	stage: Exclude<InquiryStage, 'DECLINED'>;
 	documentId: string;
 	version: number;
 	financialStage: string;

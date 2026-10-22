@@ -25,14 +25,14 @@
 </svelte:head>
 
 <main
-	class="flex min-h-dvh flex-col items-center justify-center gap-6 bg-(--surface-page) px-5 py-10"
+	class="flex min-h-dvh flex-col items-center justify-center gap-7 bg-(--surface-page) px-4 py-16"
 >
 	<Wordmark class="h-[95px] text-ink-700" />
 
 	<form
 		method="POST"
 		novalidate
-		class="flex w-full max-w-[400px] flex-col gap-[18px] rounded-card bg-(--surface-card) px-[26px] pt-7 pb-[26px] shadow-raised"
+		class="flex w-full max-w-[400px] flex-col gap-[18px] rounded-card bg-(--surface-card) p-7 shadow-card"
 		use:enhance={() => {
 			submitting = true;
 			return async ({ result, update }) => {

@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { mayaId, paymentFixture, appendPayment } from './request-fixture.mjs';
+import { postAction } from './request-helpers.js';
 
 const stubUrl = `http://127.0.0.1:${process.env.ADMIN_STUB_PORT ?? '4176'}`;
 const route = `/requests/${mayaId}`;
@@ -53,6 +54,14 @@ async function open(
 	await session(context, { request: fixture(state) });
 	await page.goto(route);
 }
+/** The design keeps payment entry behind Record payment (?payment without JS). */
+async function openPayment(page: Page) {
+	await page.getByTestId('open-payment').click();
+	await expect(page.getByTestId('payment-form')).toBeVisible();
+}
+const headline = (page: Page) => page.getByTestId('request-summary').getByRole('heading');
+const submitPayment = (page: Page) =>
+	page.getByRole('button', { name: /^Record (\$\S+ )?payment$/ });
 async function noOverflow(page: Page) {
 	expect(
 		await page.evaluate(
@@ -75,7 +84,15 @@ for (const native of [false, true])
 				await page.setViewportSize({ width: 1444, height: 1600 });
 			await open(page, context);
 			await expect(page.getByRole('button', { name: 'Mark event served' })).toBeVisible();
-			await expect(page.getByTestId('payment-form')).toBeVisible();
+			// The guidance is on screen, not hover-only, and is the button's accessible description.
+			await expect(page.getByText('The event date never changes this status')).toBeVisible();
+			await expect(
+				page.getByRole('button', { name: 'Mark event served' })
+			).toHaveAccessibleDescription(
+				/once it has been fulfilled\. The event date never changes this status on its own\./
+			);
+			await expect(page.getByTestId('open-payment')).toHaveText('Record payment');
+			await expect(headline(page)).toContainText('On the calendar · scooping in');
 			await expect(page.getByTestId('fulfillment-form').locator('[name]')).toHaveCount(0);
 			await noOverflow(page);
 			await page.screenshot({ path: testInfo.outputPath('booked.png'), fullPage: true });
@@ -86,13 +103,13 @@ for (const native of [false, true])
 			await page.getByRole('button', { name: 'Mark event served' }).click();
 			expect((await response).status()).toBe(native ? 303 : 200);
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Event served');
+			await expect(headline(page)).toHaveText('Served · balance due');
 			await expect(page.locator('[aria-current="step"]')).toHaveText('Served');
 			await expect(page.getByTestId('request-summary')).toContainText(
 				'Marked served Oct 6, 2026, 4:42 PM'
 			);
 			await expect(page.getByRole('button', { name: 'Close event' })).toHaveCount(0);
-			await expect(page.getByTestId('payment-form')).toContainText('Invoice balance: $115');
+			await expect(page.getByTestId('request-balance')).toContainText('$115');
 			const served = await session(context);
 			expect(served.requestReads - before.requestReads).toBe(2);
 			expect(served.fulfillmentAttempts).toEqual([
@@ -106,20 +123,24 @@ for (const native of [false, true])
 				path: testInfo.outputPath('served-outstanding.png'),
 				fullPage: true
 			});
+			await openPayment(page);
 			await page.getByLabel('Payment amount (USD)').fill('115.00');
-			await page.getByLabel('Payment method').selectOption('CHECK');
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+			await page.getByRole('radio', { name: 'Check', exact: true }).check();
+			await submitPayment(page).click();
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Event served');
-			await expect(page.getByTestId('request-summary')).toContainText('Balance: $0');
+			await expect(headline(page)).toHaveText('Served and paid in full');
+			await expect(page.getByTestId('request-balance')).toHaveText(/Balance\s*\$0$/);
 			await expect(page.getByRole('button', { name: 'Close event' })).toBeEnabled();
+			await expect(page.getByRole('button', { name: 'Close event' })).toHaveAccessibleDescription(
+				/Closing completes this request/
+			);
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
 			await noOverflow(page);
 			await page.getByTestId('request-summary').scrollIntoViewIfNeeded();
 			await page.screenshot({ path: testInfo.outputPath('served-settled.png'), fullPage: true });
 			await page.getByRole('button', { name: 'Close event' }).click();
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('request-summary')).toContainText('Event closed');
+			await expect(headline(page)).toHaveText('Event closed');
 			await expect(page.locator('[aria-current="step"]')).toHaveText('Closed');
 			await expect(page.getByTestId('request-summary')).toContainText(
 				'Closed Oct 6, 2026, 5:18 PM'
@@ -139,7 +160,7 @@ for (const native of [false, true])
 			context
 		}) => {
 			await open(page, context, 'credit');
-			await expect(page.getByTestId('request-summary')).toContainText('Balance: -$5');
+			await expect(page.getByTestId('request-balance')).toContainText('-$5');
 			await expect(page.getByTestId('request-summary')).toContainText('must be exactly zero');
 			await expect(page.getByRole('button', { name: 'Close event' })).toHaveCount(0);
 			await expect(page.getByTestId('payment-form')).toHaveCount(0);
@@ -178,16 +199,18 @@ for (const native of [false, true])
 					.locator('[data-testid="fulfillment-form"] button, [data-testid="payment-form"] button')
 					.all())
 					await expect(button).toBeDisabled();
+				// Payment entry is blocked too; a settled Invoice (close) offers none.
+				if (!close)
+					await expect(page.getByTestId('open-payment')).toHaveAttribute('aria-disabled', 'true');
 				expect((await session(context)).fulfillmentAttempts).toHaveLength(1);
 				await page.getByRole('link', { name: 'Reload to review' }).click();
 				await expect(page).toHaveURL(route);
-				await expect(page.getByTestId('request-summary')).toContainText(
-					close ? 'Event closed' : 'Event served'
-				);
+				await expect(headline(page)).toHaveText(close ? 'Event closed' : 'Served · balance due');
 				if (!close)
-					await expect(
-						page.getByRole('button', { name: 'Record payment', exact: true })
-					).toBeEnabled();
+					await expect(page.getByTestId('open-payment')).not.toHaveAttribute(
+						'aria-disabled',
+						'true'
+					);
 				expect((await session(context)).fulfillmentAttempts).toHaveLength(1);
 			});
 			test(`${close ? 'close' : 'serve'} stale re-read prevents mutation and blocks controls`, async ({
@@ -204,14 +227,18 @@ for (const native of [false, true])
 					.locator('[data-testid="fulfillment-form"] button, [data-testid="payment-form"] button')
 					.all())
 					await expect(button).toBeDisabled();
+				// Payment entry is blocked too; a settled Invoice (close) offers none.
+				if (!close)
+					await expect(page.getByTestId('open-payment')).toHaveAttribute('aria-disabled', 'true');
 				expect((await session(context)).fulfillmentAttempts).toHaveLength(0);
 			});
 		}
 		test('ambiguous payment also blocks fulfillment until reload', async ({ page, context }) => {
 			await open(page, context);
+			await openPayment(page);
 			await session(context, { mode: 'payment-ambiguous' });
 			await page.getByLabel('Payment amount (USD)').fill('15.00');
-			await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+			await submitPayment(page).click();
 			await expect(page.getByRole('alert')).toContainText(
 				'couldn’t confirm whether the payment was recorded'
 			);
@@ -236,13 +263,16 @@ test('payment permission never authorizes fulfillment; direct POST denied before
 		await page.goto(route);
 		await expect(page.getByTestId('fulfillment-form')).toHaveCount(0);
 		if (state === 'booked')
-			await expect(page.getByRole('button', { name: 'Record payment', exact: true })).toBeVisible();
+			await expect(page.getByTestId('open-payment')).toHaveText('Record payment');
 		const before = await session(context);
-		const response = await context.request.post(
+		const response = await postAction(
+			page,
 			`${route}?/${state === 'booked' ? 'markServed' : 'closeInquiry'}`,
-			{ form: {}, headers: { accept: 'application/json', 'x-sveltekit-action': 'true' } }
+			{}
 		);
-		expect(response.status()).toBe(403);
+		// The action's own permission refusal, not the CSRF guard or a missing session.
+		expect(response.status).toBe(403);
+		expect(response.data).toContain('This account cannot update event fulfillment.');
 		const after = await session(context);
 		expect(after.fulfillmentAttempts).toHaveLength(0);
 		expect(after.requestReads - before.requestReads).toBe(0);
@@ -260,9 +290,11 @@ test('fulfillment permission never authorizes payments', async ({ page, context 
 	await page.goto(route);
 	await expect(page.getByTestId('payment-form')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Mark event served' })).toBeEnabled();
+	await expect(page.getByTestId('open-payment')).toHaveCount(0);
 	await page.getByRole('button', { name: 'Mark event served' }).click();
-	await expect(page.getByTestId('request-summary')).toContainText('Event served');
+	await expect(headline(page)).toHaveText('Served · balance due');
 	await expect(page.getByTestId('payment-form')).toHaveCount(0);
+	await expect(page.getByTestId('open-payment')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Close event' })).toHaveCount(0);
 });
 
@@ -282,10 +314,10 @@ test('enhanced submission disables both controls and prevents a duplicate POST',
 	const form = page.getByTestId('fulfillment-form');
 	await page.getByRole('button', { name: 'Mark event served' }).click();
 	await expect(page.getByRole('button', { name: 'Marking served…' })).toBeDisabled();
-	await expect(page.getByRole('button', { name: 'Record payment', exact: true })).toBeDisabled();
+	await expect(page.getByTestId('open-payment')).toHaveAttribute('aria-disabled', 'true');
 	await form.evaluate((element: HTMLFormElement) => element.requestSubmit());
 	release();
-	await expect(page.getByTestId('request-summary')).toContainText('Event served');
+	await expect(headline(page)).toHaveText('Served · balance due');
 	await page.unroute('**/*markServed*');
 	expect((await session(context)).fulfillmentAttempts).toHaveLength(1);
 });

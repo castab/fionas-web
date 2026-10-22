@@ -38,11 +38,11 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page).toHaveURL(route);
 	await expect(page.getByTestId('request-summary')).toContainText('Needs a quote');
 	await expect(page.getByTestId('build-quote')).toBeVisible();
-	// Declining is a visible placeholder only: disabled and wired to nothing.
+	// Decline sits beside Build quote; it only opens a confirmation (see decline.e2e.ts).
 	const decline = page.getByTestId('decline-request');
 	await expect(decline).toBeVisible();
-	await expect(decline).toBeDisabled();
 	await expect(decline).toHaveText('Decline');
+	await expect(decline).toHaveAttribute('href', `${route}?decline`);
 	const [buildBox, declineBox] = await Promise.all([
 		page.getByTestId('build-quote').boundingBox(),
 		decline.boundingBox()
@@ -55,19 +55,21 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page.getByTestId('event-card')).toContainText('40 guests');
 	await expect(page.getByTestId('event-card')).not.toContainText(/minutes|hours|scooping/i);
 	await expect(page.getByTestId('event-card')).toContainText('93720');
-	await expect(page.getByText('Collected when booking', { exact: true })).toHaveCount(2);
+	await expect(page.getByText('Not on file', { exact: true })).toHaveCount(2);
 	await expect(page.getByTestId('original-request')).toContainText('My daughter loves strawberry!');
 	await expect(page.getByTestId('original-request')).toContainText('Vanilla');
 	const financial = page.getByTestId('financial-document');
-	await expect(financial).toContainText('Current estimate · Version 1 · USD');
+	await expect(page.getByTestId('financial-version')).toHaveText('Estimate v1');
 	await expect(financial.getByRole('listitem')).toHaveText([
-		/Base service.*\$205.*Setup, staff & local travel.*Flat charge/s,
-		/Ice cream service.*\$180.*40 × \$4.50/s,
-		/Waffle cone upgrade.*\$30.*40 × \$0.75/s
+		/Base service.*Setup, staff & local travel.*Flat charge.*\$205/s,
+		/Ice cream service.*40 × \$4.50.*\$180/s,
+		/Waffle cone upgrade.*40 × \$0.75.*\$30/s
 	]);
 	await expect(financial).toContainText('Subtotal');
 	await expect(financial).toContainText('Tax');
-	await expect(financial).toContainText('Current balance');
+	await expect(financial).toContainText('Estimated total');
+	// Only an Invoice carries a balance in the design.
+	await expect(financial).not.toContainText('Current balance');
 	await expect(financial).toContainText('$415');
 	const navigation = page.getByRole('navigation', { name: 'Admin sections' });
 	await expect(navigation.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute(
@@ -133,10 +135,13 @@ test('issues the previewed quote, lands on a fresh Quote and never resubmits on 
 	await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
 	await expect(page.getByTestId('deposit-summary')).toContainText('$83');
 	await expect(page.getByTestId('deposit-summary')).toContainText('20% of quote');
-	await expect(page.getByTestId('deposit-summary')).toContainText('Awaiting deposit');
+	await expect(page.getByTestId('deposit-summary')).toContainText('awaiting deposit');
 	await expect(page.getByTestId('request-summary')).not.toContainText('Needs a quote');
-	await expect(page.getByTestId('financial-document')).toContainText('Current quote · Version 2');
-	await expect(page.getByTestId('service-plan')).toContainText('Approved with quote version 2');
+	await expect(page.getByTestId('financial-version')).toContainText('Quote v2');
+	await expect(page.getByTestId('service-plan')).toContainText('Approved with Quote v2');
+	// The approved plan replaces the customer's original picks; their notes stay readable.
+	await expect(page.getByTestId('original-request')).not.toContainText('What they asked for');
+	await expect(page.getByTestId('original-request')).toContainText('My daughter loves strawberry!');
 	await expect(page.getByTestId('service-plan')).toContainText('Waffle cones');
 	await expect(page.getByLabel('Request lifecycle').locator('[aria-current="step"]')).toHaveText(
 		'Quoted'
@@ -181,12 +186,12 @@ test('stale action read does not replace the reviewed version, and conflict requ
 		'This request changed since you opened it. Reload to review'
 	);
 	await expect(issueButton(page)).toBeDisabled();
-	await expect(page.getByTestId('financial-document')).toContainText('Version 1');
+	await expect(page.getByTestId('financial-version')).toHaveText('Estimate v1');
 	// The reviewed service belongs to Estimate v1, so the newer read refuses before any mutation.
 	expect((await session(context)).proposalAttempts).toEqual([]);
 	await expect(page.getByText('PRIVATE', { exact: false })).toHaveCount(0);
 	await page.getByRole('link', { name: 'Reload to review' }).click();
-	await expect(page.getByTestId('financial-document')).toContainText('Version 2');
+	await expect(page.getByTestId('financial-version')).toHaveText('Estimate v2');
 	await expect(page.getByTestId('build-quote')).toBeVisible();
 	expect((await session(context)).proposalAttempts).toHaveLength(0);
 });
@@ -221,16 +226,17 @@ for (const mode of [
 	});
 }
 
-test('same Administrator role without financial-create permission can read but sees no issuance action', async ({
+test('same Administrator role without financial-create permission can read and decline but never issue', async ({
 	page,
 	context
 }) => {
 	await context.clearCookies();
 	await signIn(page, 'request-read-only');
 	await openMaya(page);
-	await expect(page.getByTestId('financial-document')).toContainText('Current estimate');
+	await expect(page.getByTestId('financial-version')).toContainText('Estimate');
 	await expect(page.getByTestId('build-quote')).toHaveCount(0);
-	await expect(page.getByTestId('decline-request')).toHaveCount(0);
+	// Declining needs only fionas.inquiries.manage, which this account still has.
+	await expect(page.getByTestId('decline-request')).toBeVisible();
 	await page.goto(`${route}?quote`);
 	await expect(page.getByTestId('quote-builder')).toHaveCount(0);
 	const state = await session(context);
@@ -430,7 +436,10 @@ for (const permissions of [
 	});
 }
 
-test('booked Invoice retains the accepted deposit after a refund', async ({ page, context }) => {
+test('booked Invoice shows total, paid and balance in place of the deposit tile', async ({
+	page,
+	context
+}) => {
 	const data = requestFixtures()['00000000-0000-0000-0000-000000000001'];
 	data.inquiry.lifecycle.stage = 'BOOKED';
 	data.financial.stage = 'INVOICE';
@@ -438,10 +447,16 @@ test('booked Invoice retains the accepted deposit after a refund', async ({ page
 	if (data.depositRequirement.state === 'ACTIVE') data.depositRequirement.satisfied = false;
 	await session(context, { request: data });
 	await page.goto(`/requests/${data.inquiry.id}`);
-	await expect(page.getByTestId('request-summary')).toContainText('Event booked');
-	await expect(page.getByTestId('deposit-summary')).toContainText('Booking deposit');
-	await expect(page.getByTestId('deposit-summary')).toContainText('$112');
-	await expect(page.getByTestId('deposit-summary')).not.toContainText('Awaiting deposit');
+	await expect(page.getByTestId('request-summary').getByRole('heading')).toContainText(
+		'On the calendar'
+	);
+	await expect(page.getByTestId('deposit-summary')).toHaveCount(0);
+	// An unsatisfied historical deposit on an Invoice never reads as still awaited.
+	await expect(page.getByTestId('request-summary')).not.toContainText(
+		/awaiting deposit|waiting on/i
+	);
+	await expect(page.getByTestId('request-summary')).toContainText('Paid');
+	await expect(page.getByTestId('request-balance')).toBeVisible();
 	await expect(page.getByTestId('build-quote')).toHaveCount(0);
 });
 
@@ -483,7 +498,7 @@ test.describe('native forms', () => {
 		expect((await response).status()).toBe(303);
 		await expect(page).toHaveURL(route);
 		await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
-		await expect(page.getByTestId('financial-document')).toContainText('Current quote · Version 2');
+		await expect(page.getByTestId('financial-version')).toContainText('Quote v2');
 		await page.reload();
 		expect((await session(context)).proposalAttempts).toHaveLength(1);
 	});

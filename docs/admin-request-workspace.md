@@ -12,14 +12,27 @@ name/email, submission date, date-only event date, type, ZIP, guests/minimum fla
 escaped notes. The original requested service shows recorded human-readable item labels.
 Financial lines describe charges; the approved plan separately describes what Fiona will serve.
 
-Full event address and event-contact details are intentionally collected later when booking.
-Their rows say **Collected when booking**: workflow copy, not a missing-data error or placeholder
-domain model. ZIP remains the coarse inquiry location. No details are inferred from messages.
+There is no collection workflow for the full event address or event contact yet; recording the
+deposit books the inquiry without one. Their rows say **Not on file**, at every stage, rather than
+implying a step that never happens. ZIP remains the coarse inquiry location. No details are
+inferred from messages.
 
 The Serving plan renders backend-ordered financial lines, quantities, unit prices, line totals,
-subtotal, tax, total, currency, stage/version, and reconciliation balance. Exact decimal strings go
-directly to Intl formatting; no repricing or financial arithmetic occurs. Missing reconciliation or
-inconsistent document ownership is unavailable rather than an assumed zero balance.
+subtotal, tax, total and stage/version; only an Invoice shows its reconciliation balance. Once an
+approved plan exists it appears inside the Serving plan ("What you'll serve") and replaces the
+customer's original picks on the page. Exact decimal strings go directly to Intl formatting; no
+repricing or financial arithmetic occurs. Missing reconciliation or inconsistent document ownership
+is unavailable rather than an assumed zero balance.
+
+**Right now** words the current stage for staff. Its headline and description come from
+`requestSummary`/`requestSummaryDescription` with the business-timezone date the load supplies
+(`businessDate`), so a countdown ("scooping in 25 days") never depends on the host or browser
+clock. Its figures are backend values only: Estimate or Quote total and the active deposit while
+QUOTED; Invoice total, `reconciliation.netApplied` (Paid) and balance afterwards. Its action row
+holds Build quote / Decline, Mark event served / Close event, and Record deposit / Record payment.
+Payment entry opens below the card from `?payment` (a plain link, so it works without JavaScript)
+or stays open while a returned payment result is shown; success PRGs to the clean path, which
+closes it.
 
 ## Issue Quote (quote builder)
 
@@ -110,11 +123,62 @@ automatically retried. Native failed-POST rendering and enhancement both block p
 attempts until clean reload/review. Enhanced forms also coordinate pending state and prevent double
 submission across payment and fulfillment controls.
 
+## Declining a request
+
+Depends on fionas-commerce PR #27 (merged): `POST /inquiries/{inquiryId}/decline` with exactly
+`{ expectedDocumentVersion, reason }`, answering `200` with the `InquiryLifecycleResponse`. The
+backend takes the actor (a staff USER) and time from authentication, records `InquiryDeclined v1`
+transactionally, and refuses with `403` (no `fionas.inquiries.manage`, SERVICE, untrusted Origin),
+`404`, `409 conflict` (stale version, never rebased), `409 illegal_transition` (not REQUESTED,
+including already declined) and `422 validation_failed` (blank or over-long reason).
+
+**Eligibility.** `canDeclineInquiry` needs only `fionas.inquiries.manage`, independent of the Quote
+permissions, and a coherent REQUESTED inquiry on its unquoted canonical Estimate (no proposal, no
+deposit requirement). QUOTED, BOOKED, SERVED, CLOSED and DECLINED never offer it; withdrawing a
+Quote or cancelling a booking are different actions that don't exist yet.
+
+**Confirmation.** Decline (beside Build quote) opens an inline panel via `?decline`, a plain link
+that works without JavaScript. It names the customer, event date and type, and says the request
+leaves active work, its Estimate stays on file, the customer is not notified automatically, and
+the console can't reopen it. **Reason for declining** is a required internal note (helper text says
+so), at most 500 characters after trimming; line breaks are kept (form CRLFs count once). **Decline
+request** submits; **Keep request** returns to the clean page. A blank or whitespace reason is refused
+before any POST, both in the browser and by the action, with an announced error tied to the field.
+
+**Action.** `?/declineInquiry` checks the session, then the permission, then strictly reads exactly
+one `expectedDocumentVersion` and one `reason` (anything else, including ids, actors, times or
+stages, is refused). It validates the reason, re-reads the route's projection, requires it to be
+coherent and still eligible, and requires its Estimate version to equal the reviewed one; a changed
+version is refused, never replaced. It then sends one POST with the reviewed version and the
+trimmed reason, and PRGs to the clean path, whose GET is the only confirmation. The POST response is
+never page state. A backend `422` is correctable (nothing was recorded). Everything else after the
+attempt requires review: `5xx`, timeout or lost response say "We couldn't confirm whether this
+request was declined…", because the decline may have committed. Nothing is retried.
+
+**Blocking.** Decline failures join the workspace-wide `mutationReviewRequired`: Build quote,
+Decline, the quote builder, payment entry and fulfillment are all disabled until a clean reload. The
+panel's Keep request is disabled while submitting and hidden once review is required, so the warning
+can't be dismissed.
+
+**Declined requests.** The validator accepts DECLINED only with structurally valid provenance
+(`declined` present exactly at DECLINED: instant, USER, principal id, trimmed 1–500 character reason,
+`documentVersion` equal to the canonical Estimate version) beside an Estimate with no proposal,
+deposit requirement, service plan or served/closed facts. Anything else is unavailable, never read as
+REQUESTED. The page shows a rust **Declined** badge; the progress strip keeps the five booking steps
+with Requested done and the rest struck through as skipped (none current), since DECLINED is a
+terminal alternative, not a step after Closed. Right now reads **Request declined** with the decline
+time and no pending action, and labels the figure "Declined estimate" (no balance or amount owed). A
+**Decline decision** card shows the time (Pacific), the internal reason, "You" or "Staff" plus the
+principal id as audit detail (no names are looked up), and the reviewed Estimate version. Customer
+details, requested service, notes, the Estimate and any payment history stay readable; no Quote,
+decline, payment or fulfillment action is offered. The dashboard drops declined inquiries because
+the backend excludes them from every queue and count; the frontend reconstructs nothing.
+
 ## Shell and limits
 
 Requests is visually current on detail routes while its index remains non-navigable. Dashboard is
 no longer current there; Back to dashboard and sign-out remain available. The inbox, staff notes,
-Decline, quote revisions, quote expiry and messages, the phone/in-person New quote screen, communications, refunds/allocation management, electronic payment flows,
+reopening declined requests, quote revisions, quote expiry and messages, the phone/in-person New quote screen, communications, refunds/allocation management, electronic payment flows,
 backdating and payment notes are outside this slice.
 
 The original request retains its recorded human-readable selection labels; an issued
@@ -125,7 +189,10 @@ with authoritative values.
 
 Unit tests cover clients, route scoping, permissions, reviewed-version preservation, redirects,
 failures, and presentation. Desktop/mobile E2E has session-isolated projections and mutation counters,
-including stale versions/proposals and deposit/Invoice commit followed by 500. Native and enhanced
+including stale versions/proposals and deposit/Invoice commit followed by 500. Decline E2E covers
+native and enhanced confirmation, Keep request, blank reasons, keyboard-only submission, exact request
+bodies (including later Estimate versions), stale, conflicting and committed-then-500 outcomes,
+permission and QUOTED refusals by direct POST, and the read-only declined workspace. Native and enhanced
 forms verify PRG, blocked conflicts, fixed deposit amount, the separate deposit/additional-payment
 workflow, partial Invoice payments, permission-aware controls and refunded historical receipts.
 The quote builder's E2E stub resolves complete ordered lines and money-free service plans, preserves existing ids and derives new ids from stable keys. Desktop/mobile tests cover overrides, removals, reordering, bespoke services, credits, native and enhanced preview/issuance, permissions, stale reviews and ambiguous outcomes.

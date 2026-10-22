@@ -11,6 +11,9 @@ import {
 	requestSummary
 } from './request-workspace.js';
 import {
+	businessDate,
+	countdownLabel,
+	daysUntil,
 	eventDateLabel,
 	eventTypeLabel,
 	guestCountLabel,
@@ -134,13 +137,14 @@ describe('request workspace presentation', () => {
 	});
 	it('presents lifecycle from the inquiry, independently of the financial facts', () => {
 		const data = requestFixtures()[mayaId];
-		expect(requestSummary(data.inquiry.lifecycle.stage)).toBe('Needs a quote');
+		const today = '2026-07-01';
+		expect(requestSummary(data, today)).toBe('Needs a quote');
 		data.financial.stage = 'QUOTE';
 		data.financial.reconciliation.balance = '0.00';
-		expect(requestSummary(data.inquiry.lifecycle.stage)).toBe('Needs a quote');
+		expect(requestSummary(data, today)).toBe('Needs a quote');
 		data.inquiry.lifecycle.stage = 'QUOTED';
 		data.financial.stage = 'ESTIMATE';
-		expect(requestSummary(data.inquiry.lifecycle.stage)).toBe('Quote issued');
+		expect(requestSummary(data, today)).toMatch(/^Quote issued/);
 		expect(canIssueQuote(data, [...PROPOSAL_PERMISSIONS])).toBe(false);
 		expect(lifecycleStages.map(lifecycleLabel)).toEqual([
 			'Requested',
@@ -151,6 +155,41 @@ describe('request workspace presentation', () => {
 		]);
 		expect(financialStageLabel('INVOICE')).toBe('Invoice');
 		expect(financialStageLabel('FUTURE_STAGE')).toBe('Financial document');
+	});
+	it('words the Right now headline from stage, event date and exact balance', () => {
+		const data = requestFixtures()['00000000-0000-0000-0000-000000000001'];
+		const deposit = data.depositRequirement;
+		if (deposit.state !== 'ACTIVE') throw new Error('expected a quoted fixture');
+		data.inquiry.name = 'Maya Torres';
+		data.inquiry.eventDate = '2026-07-25';
+		data.inquiry.lifecycle.stage = 'QUOTED';
+		deposit.satisfied = false;
+		expect(requestSummary(data, '2026-07-01')).toBe('Quote issued — waiting on Maya’s deposit');
+		deposit.satisfied = true;
+		expect(requestSummary(data, '2026-07-01')).toBe('Quote issued — deposit requirement met');
+		data.inquiry.lifecycle.stage = 'BOOKED';
+		expect(requestSummary(data, '2026-07-01')).toBe('On the calendar · scooping in 24 days');
+		expect(requestSummary(data, '2026-07-24')).toBe('On the calendar · scooping tomorrow');
+		expect(requestSummary(data, '2026-07-25')).toBe('On the calendar · scooping today');
+		expect(requestSummary(data, '2026-07-26')).toBe('On the calendar · event date has passed');
+		data.inquiry.lifecycle.stage = 'SERVED';
+		for (const [balance, headline] of [
+			['0.000', 'Served and paid in full'],
+			['0.01', 'Served · balance due'],
+			['-5.00', 'Served · balance needs review']
+		]) {
+			data.financial.reconciliation.balance = balance;
+			expect(requestSummary(data, '2026-07-26')).toBe(headline);
+		}
+		data.inquiry.lifecycle.stage = 'CLOSED';
+		expect(requestSummary(data, '2026-07-26')).toBe('Event closed');
+	});
+	it('keeps day counts on business-calendar dates', () => {
+		expect(daysUntil('2026-11-14', '2026-10-20')).toBe(25);
+		expect(daysUntil('2026-03-09', '2026-03-08')).toBe(1);
+		expect(countdownLabel(-1)).toBeNull();
+		// 06:30 UTC is still the previous evening in Pacific time.
+		expect(businessDate(new Date('2026-10-21T06:30:00Z'))).toBe('2026-10-20');
 	});
 	it('requires both eligible state and the permission, regardless of role', () => {
 		const data = requestFixtures()[mayaId];

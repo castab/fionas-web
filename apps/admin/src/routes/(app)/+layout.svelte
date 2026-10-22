@@ -202,7 +202,7 @@
 				<details class="group relative">
 					<summary
 						aria-label="Your account"
-						class={`flex size-10 cursor-pointer list-none items-center justify-center rounded-full border-2 border-olive-300 bg-olive-700 font-sans text-sm font-bold tracking-[0.02em] text-cream-200 group-open:border-cream-200 [&::-webkit-details-marker]:hidden ${focusRing}`}
+						class={`flex size-11 cursor-pointer list-none items-center justify-center rounded-full border-2 border-olive-300 bg-olive-700 font-sans text-sm font-bold tracking-[0.02em] text-cream-200 group-open:border-cream-200 [&::-webkit-details-marker]:hidden ${focusRing}`}
 					>
 						{avatar}
 					</summary>

@@ -2,7 +2,8 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { onMount, untrack } from 'svelte';
-	import { Button, Card, focusRing } from '@fionas/ui';
+	import { Button, Card } from '@fionas/ui';
+	import { fieldInput, fieldLabel, groupCaps, hint, lineTool, panelCaps } from './styles.js';
 	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
 	import {
@@ -35,7 +36,8 @@
 	let dirty = $state(false);
 	let hydrated = $state(false);
 	let formElement = $state<HTMLFormElement>();
-	let previewButton = $state<HTMLButtonElement>();
+	// Bound to the Button primitive's `ref`, whose fallback is null (undefined is rejected).
+	let previewButton = $state<HTMLButtonElement | null>(null);
 	let timer: ReturnType<typeof setTimeout>;
 	let sequence = 0;
 	let previewController: AbortController | undefined;
@@ -46,7 +48,9 @@
 			previewController?.abort();
 		};
 	});
-	const input = `mt-1 w-full rounded-[6px] border border-(--border-soft) bg-(--surface-card) px-3 py-2 text-sm ${focusRing}`;
+	const input = `w-full font-normal ${fieldInput}`;
+	const pill =
+		'min-h-11 px-4 py-2.5 text-[11px] not-disabled:hover:bg-cream-300/50 disabled:opacity-45';
 	const blank = (): LineDraft => ({
 		key: crypto.randomUUID(),
 		description: '',
@@ -93,28 +97,56 @@
 	}
 </script>
 
-<Card data-testid="quote-builder" id="quote-builder" class="flex flex-col gap-5 p-5">
-	<div>
-		<h2 class="m-0 [font:var(--type-h3)]">Issue quote</h2>
-		<p class="mt-1 text-xs text-(--text-muted)">
-			Review final lines and the service you’ll provide. Totals and deposit come from Commerce.
+{#snippet toolIcon(path: string)}
+	<svg
+		width="14"
+		height="14"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="1.75"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		aria-hidden="true"><path d={path}></path></svg
+	>
+{/snippet}
+
+<Card
+	variant="flat"
+	data-testid="quote-builder"
+	id="quote-builder"
+	aria-label="Issue quote"
+	class="flex flex-col gap-5 border-2 border-olive-700 p-[18px] sm:p-5"
+>
+	<div class="flex flex-col gap-1">
+		<h2 class={panelCaps}>Issue quote</h2>
+		<p class={hint}>
+			Edit the final lines {request.inquiry.name} will see. Totals and the deposit come back from the
+			preview — check it before issuing.
 		</p>
 	</div>
-	{#if error}<p role="alert" class="text-sm text-(--text-body)">{error}</p>{/if}
-	{#if Object.keys(fieldErrors).length}<p role="alert" class="text-sm">
+	{#if error}<p role="alert" class="m-0 text-sm text-rust-600">{error}</p>{/if}
+	{#if Object.keys(fieldErrors).length}<p role="alert" class="m-0 text-sm text-rust-600">
 			{Object.values(fieldErrors).join(' ')}
 		</p>{/if}
-	{#if reviewStale}<p role="status" class="text-sm">
+	{#if reviewStale}<p role="status" class="m-0 text-sm font-semibold">
 			The quote changed since you reviewed it. Review this preview, then click Issue quote again.
 		</p>{/if}
-	{#if reviewRequired}<p role="alert">Reload this request to review the latest state.</p>
-		<a
-			href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}
-			data-sveltekit-reload>Reload to review</a
-		>{/if}
+	{#if reviewRequired}<div class="flex flex-col items-start gap-3">
+			<p role="alert" class="m-0 text-sm text-rust-600">
+				Reload this request to review the latest state.
+			</p>
+			<Button
+				href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}
+				data-sveltekit-reload
+				variant="secondary"
+				size="sm">Reload to review</Button
+			>
+		</div>{/if}
 	<form
 		method="POST"
 		action="?quote&/previewQuote"
+		class="flex flex-col gap-5"
 		bind:this={formElement}
 		oninput={changed}
 		onchange={changed}
@@ -154,12 +186,15 @@
 		<input type="hidden" name="reviewedCurrency" value={values.reviewedCurrency} />
 		<input type="hidden" name="reviewToken" value={values.reviewToken} />
 		<input type="hidden" name="reviewedFingerprint" value={values.reviewedFingerprint} />
-		<fieldset disabled={blocked || reviewRequired || pending} class="m-0 min-w-0 border-0 p-0">
-			<legend class="text-xs font-semibold text-olive-800 uppercase">Final quote lines</legend>
-			<div class="mt-3 flex flex-col gap-4">
+		<fieldset
+			disabled={blocked || reviewRequired || pending}
+			class="m-0 flex min-w-0 flex-col gap-5 border-0 p-0"
+		>
+			<fieldset class="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+				<legend class={`mb-3 ${panelCaps}`}>Final quote lines</legend>
 				{#each rows as row, i (row.lineItemId ?? row.key)}
 					<div
-						class="rounded-[10px] border border-(--border-soft) p-3"
+						class="flex flex-col gap-2.5 rounded-input bg-cream-200 px-3.5 pt-3 pb-3.5"
 						data-testid="quote-line-editor"
 					>
 						<input
@@ -167,31 +202,72 @@
 							name="lineIdentity"
 							value={row.lineItemId ? `id:${row.lineItemId}` : `new:${row.key}`}
 						/>
-						<label class="block text-xs font-semibold"
-							>{i === values.lines.length ? 'New service or adjustment' : 'Description'}<input
-								class={input}
-								name="description"
-								value={row.description}
-								oninput={(e) => {
-									if (i < values.lines.length) values.lines[i].description = e.currentTarget.value;
-								}}
-								maxlength="200"
-							/></label
-						>
-						<label class="mt-2 block text-xs"
-							>Detail<input
-								class={input}
-								name="subDescription"
-								value={row.subDescription ?? ''}
-								oninput={(e) => {
-									if (i < values.lines.length)
-										values.lines[i].subDescription = e.currentTarget.value;
-								}}
-								maxlength="500"
-							/></label
-						>
-						<div class="mt-2 grid grid-cols-3 gap-2">
-							<label class="text-xs"
+						<div class="flex flex-wrap items-center gap-1">
+							<span class={`flex-1 ${groupCaps}`}>
+								{i === values.lines.length
+									? 'Add a line'
+									: `Line ${i + 1} · ${row.lineItemId ? 'from Estimate' : 'new'}`}
+							</span>
+							{#if i < values.lines.length}
+								<button
+									type={hydrated ? 'button' : 'submit'}
+									name="rowAction"
+									value={`up:${i}`}
+									disabled={i === 0}
+									class={lineTool}
+									onclick={() => {
+										if (hydrated) move(i, -1);
+									}}>{@render toolIcon('m18 15-6-6-6 6')}Move up</button
+								>
+								<button
+									type={hydrated ? 'button' : 'submit'}
+									name="rowAction"
+									value={`down:${i}`}
+									disabled={i === values.lines.length - 1}
+									class={lineTool}
+									onclick={() => {
+										if (hydrated) move(i, 1);
+									}}>{@render toolIcon('m6 9 6 6 6-6')}Move down</button
+								>
+								<button
+									type={hydrated ? 'button' : 'submit'}
+									name="rowAction"
+									value={`remove:${i}`}
+									class={`${lineTool} text-rust-600`}
+									onclick={() => {
+										if (hydrated) remove(i);
+									}}>{@render toolIcon('M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14')}Remove</button
+								>
+							{/if}
+						</div>
+						<div class="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2">
+							<label class={fieldLabel}
+								>{i === values.lines.length ? 'New service or adjustment' : 'Description'}<input
+									class={input}
+									name="description"
+									value={row.description}
+									oninput={(e) => {
+										if (i < values.lines.length)
+											values.lines[i].description = e.currentTarget.value;
+									}}
+									maxlength="200"
+								/></label
+							>
+							<label class={fieldLabel}
+								>Detail<input
+									class={input}
+									name="subDescription"
+									value={row.subDescription ?? ''}
+									oninput={(e) => {
+										if (i < values.lines.length)
+											values.lines[i].subDescription = e.currentTarget.value;
+									}}
+									maxlength="500"
+								/></label
+							>
+						</div>
+						<div class="grid grid-cols-3 gap-2.5">
+							<label class={fieldLabel}
 								>Quantity<input
 									class={input}
 									name="quantity"
@@ -202,7 +278,7 @@
 									inputmode="decimal"
 								/></label
 							>
-							<label class="text-xs"
+							<label class={fieldLabel}
 								>Unit price<input
 									class={input}
 									name="unitPrice"
@@ -213,7 +289,7 @@
 									inputmode="decimal"
 								/></label
 							>
-							<label class="text-xs"
+							<label class={fieldLabel}
 								>Line tax<input
 									class={input}
 									name="taxAmount"
@@ -225,130 +301,151 @@
 								/></label
 							>
 						</div>
-						<label class="mt-2 block text-xs"
+						<label class={fieldLabel}
 							>Reason or service note<input
 								class={input}
 								name="note"
 								value={row.note}
+								placeholder="Optional — why this line changed"
 								oninput={(e) => {
 									if (i < values.lines.length) values.lines[i].note = e.currentTarget.value;
 								}}
 								maxlength="500"
 							/></label
 						>
-						{#if i < values.lines.length}<div class="mt-2 flex gap-3 text-xs">
-								<button
-									type={hydrated ? 'button' : 'submit'}
-									name="rowAction"
-									value={`up:${i}`}
-									disabled={i === 0}
-									onclick={() => {
-										if (hydrated) move(i, -1);
-									}}>Move up</button
-								>
-								<button
-									type={hydrated ? 'button' : 'submit'}
-									name="rowAction"
-									value={`down:${i}`}
-									disabled={i === values.lines.length - 1}
-									onclick={() => {
-										if (hydrated) move(i, 1);
-									}}>Move down</button
-								>
-								<button
-									type={hydrated ? 'button' : 'submit'}
-									name="rowAction"
-									value={`remove:${i}`}
-									onclick={() => {
-										if (hydrated) remove(i);
-									}}>Remove</button
-								>
-							</div>{/if}
 					</div>
 				{/each}
-			</div>
-			{#if hydrated}<div class="my-3 flex flex-wrap gap-3 text-xs">
-					<button type="button" onclick={() => add()}>+ New service</button><button
-						type="button"
-						onclick={() => add('charge')}>+ Charge</button
-					><button type="button" onclick={() => add('discount')}>+ Discount</button><button
-						type="button"
-						onclick={() => add('credit')}>+ Credit</button
-					>
-				</div>{/if}
-			<p class="text-xs text-(--text-muted)">
-				Leave quantity blank for a flat amount. Enter a negative unit price for a separate discount
-				or credit. Nothing is rounded.
-			</p>
-			<h3 class="mt-5 text-xs font-semibold text-olive-800 uppercase">What you’ll serve</h3>
-			<label class="block text-xs"
-				>Approved service description<textarea
-					class={input}
-					name="planDescription"
-					bind:value={values.description}
-					maxlength="2000"></textarea></label
-			>
-			<div class="my-2 grid grid-cols-2 gap-3">
-				<label class="text-xs"
-					>Guests<input
-						class={input}
-						name="planGuestCount"
-						bind:value={values.guestCount}
-						inputmode="numeric"
-					/></label
-				>
-			</div>
-			<label class="block text-xs"
-				>Service items, one per line<textarea
-					class={input}
-					name="planItems"
-					bind:value={values.items}></textarea></label
-			>
-			<div class="mt-5">
-				<DepositChoices
-					suggestion={request.suggestedDepositTerms}
-					currency={request.financial.currency}
-					version={request.financial.version}
-					values={values.deposit}
-					errorField={fieldErrors.deposit
-						? values.deposit.depositChoice === 'fixed'
-							? 'depositAmount'
-							: values.deposit.depositChoice === 'percentage'
-								? 'depositPercentage'
-								: 'depositChoice'
-						: undefined}
-				/>
-			</div>
-		</fieldset>
-		{#if preview}<div class="my-5 border-t border-(--border-soft) pt-4" data-testid="quote-preview">
-				<h3 class="text-xs font-semibold text-olive-800 uppercase">Quote preview</h3>
-				{#each preview.lines as line (line.id)}<p class="flex justify-between text-sm">
-						<span>{line.description} · {line.origin.toLowerCase()}</span><span
-							>{formatMoney(line.total, line.currency)}</span
+				{#if hydrated}<div class="flex flex-wrap gap-2">
+						<Button type="button" variant="secondary" class={pill} onclick={() => add()}
+							>+ Add service</Button
+						><Button type="button" variant="secondary" class={pill} onclick={() => add('charge')}
+							>+ Charge</Button
+						><Button type="button" variant="secondary" class={pill} onclick={() => add('discount')}
+							>+ Discount</Button
+						><Button type="button" variant="secondary" class={pill} onclick={() => add('credit')}
+							>+ Credit</Button
 						>
-					</p>{/each}
-				<p data-testid="quote-total" class="flex justify-between font-semibold">
-					<span>Total</span><span>{formatMoney(preview.total, preview.currency)}</span>
+					</div>{/if}
+				<p class={hint}>
+					Leave quantity blank for a flat amount. Enter a negative unit price for a separate
+					discount or credit. Nothing is rounded.
 				</p>
-				<p data-testid="quote-deposit" class="text-sm">
-					Deposit {formatMoney(preview.deposit.requiredAmount.amount, preview.currency)}
-				</p>
+			</fieldset>
+			<div class="flex flex-col gap-3 border-t border-(--border-soft) pt-[18px]">
+				<h3 class={panelCaps}>What you’ll serve</h3>
+				<label class={fieldLabel}
+					>Approved service description<textarea
+						class={`${input} min-h-20`}
+						name="planDescription"
+						bind:value={values.description}
+						maxlength="2000"></textarea></label
+				>
+				<div class="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+					<label class={fieldLabel}
+						>Guests<input
+							class={input}
+							name="planGuestCount"
+							bind:value={values.guestCount}
+							inputmode="numeric"
+						/></label
+					>
+					<label class={fieldLabel}
+						>Service items, one per line<textarea
+							class={`${input} min-h-20`}
+							name="planItems"
+							bind:value={values.items}></textarea></label
+					>
+				</div>
+			</div>
+			<DepositChoices
+				suggestion={request.suggestedDepositTerms}
+				currency={request.financial.currency}
+				version={request.financial.version}
+				values={values.deposit}
+				errorField={fieldErrors.deposit
+					? values.deposit.depositChoice === 'fixed'
+						? 'depositAmount'
+						: values.deposit.depositChoice === 'percentage'
+							? 'depositPercentage'
+							: 'depositChoice'
+					: undefined}
+			/>
+		</fieldset>
+		{#if preview}<div
+				aria-live="polite"
+				class="flex flex-col gap-3 rounded-input bg-cream-200 p-3.5"
+				data-testid="quote-preview"
+			>
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<h3 class={panelCaps}>Quote preview</h3>
+					<span class={`rounded-full border border-olive-300 px-2.5 py-1 ${groupCaps}`}
+						>Quote v{preview.quoteVersion} · not issued yet</span
+					>
+				</div>
+				<ul class="m-0 flex list-none flex-col p-0 text-[13px]">
+					{#each preview.lines as line (line.id)}<li
+							class="flex justify-between gap-3 border-b border-(--border-soft) py-[7px]"
+						>
+							<span class="min-w-0 wrap-anywhere"
+								>{line.description}
+								<span class="text-(--text-muted)"
+									>· {line.quantity !== undefined
+										? `${line.quantity} × ${formatMoney(line.unitPrice, line.currency)}`
+										: 'flat'}{line.origin === 'NEW'
+										? ' · new'
+										: line.origin === 'REPLACED'
+											? ' · changed'
+											: ''}</span
+								></span
+							><span class="font-semibold whitespace-nowrap"
+								>{formatMoney(line.total, line.currency)}</span
+							>
+						</li>{/each}
+				</ul>
+				<dl class="m-0 flex flex-col gap-1.5 text-[13px]">
+					<div class="flex justify-between gap-3">
+						<dt class="text-(--text-muted)">Subtotal</dt>
+						<dd class="m-0">{formatMoney(preview.subtotal, preview.currency)}</dd>
+					</div>
+					<div class="flex justify-between gap-3">
+						<dt class="text-(--text-muted)">Tax</dt>
+						<dd class="m-0">{formatMoney(preview.taxAmount, preview.currency)}</dd>
+					</div>
+					<div
+						data-testid="quote-total"
+						class="flex justify-between gap-3 border-t border-(--border-soft) pt-2 text-[15px] font-bold text-(--text-heading)"
+					>
+						<dt>Total</dt>
+						<dd class="m-0">{formatMoney(preview.total, preview.currency)}</dd>
+					</div>
+					<div data-testid="quote-deposit" class="flex justify-between gap-3 font-semibold">
+						<dt>Deposit to hold the date</dt>
+						<dd class="m-0">
+							{formatMoney(preview.deposit.requiredAmount.amount, preview.currency)}
+						</dd>
+					</div>
+				</dl>
 			</div>{/if}
-		{#if dirty || pending}<p role="status" class="text-xs">
+		{#if dirty || pending}<p role="status" class="m-0 text-xs text-(--text-muted)">
 				{pending ? 'Updating…' : 'Preview required for current edits.'}
 			</p>{/if}
-		<div class="flex gap-3">
-			<button
+		<!-- Update preview stays first in the DOM so Enter in a field previews instead of issuing. -->
+		<div class="flex flex-wrap gap-2.5">
+			<Button
 				type="submit"
-				bind:this={previewButton}
+				variant="secondary"
+				bind:ref={previewButton}
 				disabled={blocked || reviewRequired || pending}
-				class="rounded-full border border-olive-300 px-4 py-2 text-sm">Update preview</button
+				class="min-h-12 flex-[1_1_140px]">Update preview</Button
 			><Button
 				type="submit"
 				formaction="?quote&/issueQuote"
 				disabled={blocked || reviewRequired || pending || (hydrated && (!preview || dirty))}
-				>Issue quote</Button
-			><a href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}>Cancel</a
+				class="min-h-12 flex-[1.4_1_150px]">Issue quote</Button
+			><Button
+				href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}
+				variant="ghost"
+				class="min-h-12 flex-[1_1_110px]">Cancel</Button
 			>
 		</div>
 	</form>

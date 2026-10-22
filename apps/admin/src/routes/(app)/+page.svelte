@@ -14,7 +14,7 @@
 
 <svelte:head><title>Dashboard · Admin · {site.name}</title></svelte:head>
 
-<div class="flex flex-col gap-6 pb-8">
+<div class="flex max-w-[1240px] flex-col gap-6 pb-8">
 	<div class="flex flex-col gap-1">
 		<h1
 			class="m-0 font-sans text-[1.75rem] leading-[1.2] font-bold tracking-(--track-heading) text-(--text-heading)"

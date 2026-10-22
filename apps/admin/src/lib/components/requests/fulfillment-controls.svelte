@@ -57,8 +57,9 @@
 	};
 </script>
 
+<!-- Rendered inside the Right now action row: the alert takes a full line, the form one button. -->
 {#if message}
-	<div role="alert" class="flex flex-col items-start gap-3">
+	<div role="alert" class="flex basis-full flex-col items-start gap-3">
 		<p id="fulfillment-error" tabindex="-1" class="m-0 text-sm text-rust-600">{message}</p>
 		<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
 			>Reload to review</Button
@@ -71,15 +72,15 @@
 		action={serve ? '?/markServed' : '?/closeInquiry'}
 		use:enhance={submit}
 		aria-busy={submitting}
-		class="flex flex-col gap-3 border-t border-(--border-soft) pt-3"
+		class="flex flex-[1.4_1_150px]"
 		data-testid="fulfillment-form"
 	>
-		<p class="m-0 text-xs text-(--text-muted)">
-			{serve
-				? 'Use this after the event has been fulfilled. The scheduled event date does not change this status automatically.'
-				: 'Close this event to complete the request.'}
-		</p>
-		<Button type="submit" variant="secondary" class="w-full" disabled={pending || blocked}>
+		<Button
+			type="submit"
+			class="min-h-12 w-full"
+			aria-describedby="fulfillment-help"
+			disabled={pending || blocked}
+		>
 			{submitting
 				? serve
 					? 'Marking served…'
@@ -89,4 +90,13 @@
 					: 'Close event'}
 		</Button>
 	</form>
+	<!-- Visible guidance under the whole action row, and the button's accessible description. -->
+	<p
+		id="fulfillment-help"
+		class="order-last m-0 basis-full text-xs leading-[1.55] text-(--text-muted)"
+	>
+		{serve
+			? 'Mark the event served once it has been fulfilled. The event date never changes this status on its own.'
+			: 'Closing completes this request. Its Invoice is settled, so nothing else is due.'}
+	</p>
 {/if}

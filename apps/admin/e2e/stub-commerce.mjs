@@ -121,6 +121,7 @@ createServer(async (req, res) => {
 			quoteEpoch: 0,
 			paymentAttempts: [],
 			fulfillmentAttempts: [],
+			declineAttempts: [],
 			requests: requestFixtures(),
 			permissions:
 				body.username === 'request-read-only'
@@ -187,6 +188,13 @@ createServer(async (req, res) => {
 				item.version = request.financial.version;
 			}
 		}
+		const declined = new Set();
+		for (const queue of Object.values(projection.workQueue)) {
+			for (const item of queue.items) if (item.stage === 'DECLINED') declined.add(item.inquiryId);
+			queue.items = queue.items.filter((item) => item.stage !== 'DECLINED');
+		}
+		// Only REQUESTED inquiries can be declined, so each was counted as new.
+		projection.summary.new -= declined.size;
 		const issued = projection.workQueue.needsQuote.items.filter((item) => item.stage === 'QUOTED');
 		projection.workQueue.needsQuote.items = projection.workQueue.needsQuote.items.filter(
 			(item) => item.stage !== 'QUOTED'
@@ -253,6 +261,8 @@ createServer(async (req, res) => {
 		if (!request) return send(res, 404, { code: 'not_found', message: 'PRIVATE preview identity' });
 		if (currentSession.mode === 'preview-unavailable')
 			return send(res, 500, { code: 'internal_failure', message: 'PRIVATE preview diagnostic' });
+		if (request.inquiry.lifecycle.stage === 'DECLINED')
+			return send(res, 409, { code: 'illegal_transition', message: 'PRIVATE declined diagnostic' });
 		const result = previewQuote(currentSession, request, body);
 		return send(res, result.status, result.body, { 'cache-control': 'no-store' });
 	}
@@ -283,7 +293,10 @@ createServer(async (req, res) => {
 			request.depositRequirement.state !== 'NONE'
 		) {
 			return send(res, 409, {
-				code: request.financial.stage !== 'ESTIMATE' ? 'illegal_transition' : 'conflict',
+				code:
+					request.financial.stage !== 'ESTIMATE' || request.inquiry.lifecycle.stage === 'DECLINED'
+						? 'illegal_transition'
+						: 'conflict',
 				message: 'PRIVATE stale ledger diagnostic'
 			});
 		}
@@ -428,6 +441,64 @@ createServer(async (req, res) => {
 			principalId: user.id
 		};
 		if (currentSession.mode === 'fulfillment-ambiguous') return refusal(500);
+		return send(res, 200, request.inquiry.lifecycle, { 'cache-control': 'no-store' });
+	}
+
+	// Mirrors fionas-commerce's declineInquiryRoute: staff USER with fionas.inquiries.manage from a
+	// trusted origin; exactly { expectedDocumentVersion, reason }; reason trimmed, 1–500 characters;
+	// a stale version is `conflict`, anything but REQUESTED is `illegal_transition`; no rebasing.
+	const declineMatch = /^\/inquiries\/([^/]+)\/decline$/.exec(pathname);
+	if (req.method === 'POST' && declineMatch) {
+		if (!currentSession) return send(res, 401);
+		let raw = '';
+		for await (const chunk of req) raw += chunk;
+		const inquiryId = declineMatch[1];
+		let body;
+		try {
+			body = JSON.parse(raw);
+		} catch {
+			body = null;
+		}
+		currentSession.declineAttempts.push({ inquiryId, body, raw });
+		const refusal = (status, code = 'failure') =>
+			send(res, status, { code, message: 'PRIVATE decline diagnostic' });
+		if (
+			req.headers.origin !== trustedOrigin ||
+			!currentSession.permissions.includes('fionas.inquiries.manage') ||
+			currentSession.mode === 'decline-forbidden'
+		)
+			return refusal(403, 'forbidden');
+		if (
+			!body ||
+			typeof body !== 'object' ||
+			Object.keys(body).some((key) => !['expectedDocumentVersion', 'reason'].includes(key)) ||
+			!Number.isInteger(body.expectedDocumentVersion) ||
+			typeof body.reason !== 'string'
+		)
+			return refusal(400, 'malformed_request');
+		const reason = body.reason.trim();
+		if (body.expectedDocumentVersion < 1 || !reason || reason.length > 500)
+			return refusal(422, 'validation_failed');
+		const request = currentSession.requests[inquiryId];
+		if (!request || currentSession.mode === 'decline-not-found') return refusal(404, 'not_found');
+		if (
+			request.financial.version !== body.expectedDocumentVersion ||
+			currentSession.mode === 'decline-conflict'
+		)
+			return refusal(409, 'conflict');
+		if (request.inquiry.lifecycle.stage !== 'REQUESTED' || request.financial.stage !== 'ESTIMATE')
+			return refusal(409, 'illegal_transition');
+		if (currentSession.mode === 'decline-unavailable') return refusal(500, 'internal_failure');
+		request.inquiry.lifecycle.stage = 'DECLINED';
+		request.inquiry.lifecycle.declined = {
+			occurredAt: '2026-10-20T20:00:00Z',
+			principalKind: 'USER',
+			principalId: user.id,
+			reason,
+			documentVersion: request.financial.version
+		};
+		// Committed, then the response is lost: only a reload can tell.
+		if (currentSession.mode === 'decline-ambiguous') return refusal(500, 'internal_failure');
 		return send(res, 200, request.inquiry.lifecycle, { 'cache-control': 'no-store' });
 	}
 

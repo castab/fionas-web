@@ -14,11 +14,34 @@ export type InquiryMilestone = {
 	principalKind: 'USER' | 'SERVICE';
 	principalId: string;
 };
+/**
+ * Every lifecycle stage the backend projects. DECLINED is a terminal alternative to QUOTED (only
+ * REQUESTED → DECLINED exists), not a step after CLOSED.
+ */
+export type InquiryStage = 'REQUESTED' | 'QUOTED' | 'BOOKED' | 'SERVED' | 'CLOSED' | 'DECLINED';
+/** The recorded terminal decline (`InquiryDeclineResponse`): an internal staff decision. */
+export type InquiryDecline = {
+	occurredAt: string;
+	/** Always USER: only a verified staff user declines. */
+	principalKind: 'USER';
+	principalId: string;
+	/** Trimmed internal reason, at most 500 characters; never sent to the customer. */
+	reason: string;
+	/** The exact canonical Estimate version that was reviewed and declined. */
+	documentVersion: number;
+};
 export type InquiryLifecycle = {
 	documentId: string;
-	stage: 'REQUESTED' | 'QUOTED' | 'BOOKED' | 'SERVED' | 'CLOSED';
-	served?: InquiryMilestone;
-	closed?: InquiryMilestone;
+	stage: InquiryStage;
+	served?: InquiryMilestone | null;
+	closed?: InquiryMilestone | null;
+	/** Present exactly when stage is DECLINED; absent or null otherwise. */
+	declined?: InquiryDecline | null;
+};
+/** `POST /inquiries/{inquiryId}/decline`; actor and time come only from authentication. */
+export type DeclineInquiryRequest = {
+	expectedDocumentVersion: number;
+	reason: string;
 };
 export type InquiryResponse = {
 	id: string;

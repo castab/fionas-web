@@ -1,11 +1,20 @@
 import type {
-	InquiryLifecycle,
+	InquiryStage,
 	StaffRequestResponse,
 	CurrentStaffRequest
 } from './request-contract.js';
 import { isSupportedCurrency } from './currency.js';
 import { isDepositTerms } from './deposit.js';
 import { isPaymentHistory } from './payment-history.js';
+import { DECLINE_REASON_MAX } from './decline.js';
+import {
+	countdownLabel,
+	daysUntil,
+	eventDateLabel,
+	formatMoney,
+	guestCountLabel,
+	submittedDateLabel
+} from './presentation.js';
 
 export const PROPOSAL_PERMISSIONS = [
 	'commerce.financial-document.create',
@@ -15,12 +24,52 @@ export const PROPOSAL_PERMISSIONS = [
 export function hasProposalPermissions(permissions: string[]): boolean {
 	return PROPOSAL_PERMISSIONS.every((permission) => permissions.includes(permission));
 }
+/**
+ * The booking progression shown in the progress strip. DECLINED is deliberately absent: it is a
+ * terminal alternative to this path, never a step after CLOSED (see `progressSteps`).
+ */
 export const lifecycleStages = ['REQUESTED', 'QUOTED', 'BOOKED', 'SERVED', 'CLOSED'] as const;
+export type ProgressStage = (typeof lifecycleStages)[number];
+export type ProgressState = 'done' | 'current' | 'upcoming' | 'skipped';
+/**
+ * Each booking step's state for the strip. A DECLINED inquiry reached REQUESTED and then left the
+ * path, so the later steps are `skipped` and no step is current.
+ */
+export function progressSteps(
+	stage: InquiryStage
+): { stage: ProgressStage; state: ProgressState }[] {
+	if (stage === 'DECLINED')
+		return lifecycleStages.map((step) => ({
+			stage: step,
+			state: step === 'REQUESTED' ? 'done' : 'skipped'
+		}));
+	const index = lifecycleStages.indexOf(stage);
+	return lifecycleStages.map((step, i) => ({
+		stage: step,
+		state: i < index ? 'done' : i === index ? 'current' : 'upcoming'
+	}));
+}
 
-export const FULFILLMENT_PERMISSION = 'fionas.inquiries.manage';
+/** Inquiry lifecycle decisions: serving, closing and declining. */
+export const INQUIRY_MANAGE_PERMISSION = 'fionas.inquiries.manage';
+export const FULFILLMENT_PERMISSION = INQUIRY_MANAGE_PERMISSION;
 export type FulfillmentAction = 'markServed' | 'closeInquiry';
 export function hasFulfillmentPermission(permissions: string[]): boolean {
-	return permissions.includes(FULFILLMENT_PERMISSION);
+	return permissions.includes(INQUIRY_MANAGE_PERMISSION);
+}
+/**
+ * Declining needs only `fionas.inquiries.manage`, independent of the Quote permissions, and only a
+ * coherent REQUESTED inquiry still on its unquoted canonical Estimate.
+ */
+export function canDeclineInquiry(data: StaffRequestResponse, permissions: string[]): boolean {
+	return (
+		permissions.includes(INQUIRY_MANAGE_PERMISSION) &&
+		isCurrentStaffRequest(data, data.inquiry.id) &&
+		data.inquiry.lifecycle.stage === 'REQUESTED' &&
+		data.financial.stage === 'ESTIMATE' &&
+		data.proposal == null &&
+		data.depositRequirement.state === 'NONE'
+	);
 }
 /** Decimal-string comparison, with no rounding or currency conversion. */
 export function isExactZero(value: string): boolean {
@@ -62,38 +111,98 @@ export function fulfillmentErrorMessage(
 	return 'We couldn’t review the latest request state. Reload before trying again.';
 }
 
-const lifecycleLabels: Record<InquiryLifecycle['stage'], string> = {
+const lifecycleLabels: Record<InquiryStage, string> = {
 	REQUESTED: 'Requested',
 	QUOTED: 'Quoted',
 	BOOKED: 'Booked',
 	SERVED: 'Served',
-	CLOSED: 'Closed'
+	CLOSED: 'Closed',
+	DECLINED: 'Declined'
 };
-export function lifecycleLabel(stage: InquiryLifecycle['stage']): string {
+export function lifecycleLabel(stage: InquiryStage): string {
 	return lifecycleLabels[stage];
 }
-export function requestSummary(stage: InquiryLifecycle['stage']): string {
-	return stage === 'REQUESTED'
-		? 'Needs a quote'
-		: stage === 'QUOTED'
-			? 'Quote issued'
-			: `Event ${lifecycleLabel(stage).toLowerCase()}`;
+const lifecycleTones: Record<InquiryStage, 'inverse' | 'olive' | 'moss' | 'outline' | 'rust'> = {
+	REQUESTED: 'inverse',
+	QUOTED: 'olive',
+	BOOKED: 'moss',
+	SERVED: 'moss',
+	CLOSED: 'outline',
+	DECLINED: 'rust'
+};
+/** The badge tone that marks each lifecycle stage in the workspace header. */
+export function lifecycleTone(stage: InquiryStage): (typeof lifecycleTones)[InquiryStage] {
+	return lifecycleTones[stage];
 }
-export function requestSummaryDescription(data: CurrentStaffRequest): string {
+function balanceSign(balance: string): 'zero' | 'negative' | 'positive' {
+	return isExactZero(balance) ? 'zero' : balance.startsWith('-') ? 'negative' : 'positive';
+}
+/** The "Right now" headline; `today` is the business-timezone calendar date. */
+export function requestSummary(data: CurrentStaffRequest, today: string): string {
 	const stage = data.inquiry.lifecycle.stage;
-	if (stage === 'REQUESTED') return 'Review the current Estimate below before issuing a quote.';
+	if (stage === 'REQUESTED') return 'Needs a quote';
+	if (stage === 'QUOTED') {
+		const deposit = data.depositRequirement;
+		if (deposit.state === 'ACTIVE' && deposit.satisfied)
+			return 'Quote issued — deposit requirement met';
+		const firstName = data.inquiry.name.trim().split(/\s+/)[0];
+		return firstName ? `Quote issued — waiting on ${firstName}’s deposit` : 'Quote issued';
+	}
+	if (stage === 'BOOKED') {
+		const countdown = countdownLabel(daysUntil(data.inquiry.eventDate, today));
+		return countdown
+			? `On the calendar · scooping ${countdown}`
+			: 'On the calendar · event date has passed';
+	}
+	if (stage === 'SERVED') {
+		const sign = balanceSign(data.financial.reconciliation.balance);
+		return sign === 'zero'
+			? 'Served and paid in full'
+			: sign === 'positive'
+				? 'Served · balance due'
+				: 'Served · balance needs review';
+	}
+	if (stage === 'DECLINED') return 'Request declined';
+	return 'Event closed';
+}
+export function requestSummaryDescription(data: CurrentStaffRequest, today: string): string {
+	const { inquiry, financial, proposal } = data;
+	const stage = inquiry.lifecycle.stage;
+	if (stage === 'REQUESTED') {
+		const countdown = countdownLabel(daysUntil(inquiry.eventDate, today));
+		return `Submitted ${submittedDateLabel(inquiry.createdAt)} · ${
+			countdown ? `event is ${countdown}` : 'the event date has passed'
+		}. Review the current Estimate below before issuing a quote.`;
+	}
 	if (stage === 'QUOTED')
-		return 'The full approved deposit is required to hold the date and book this event.';
+		return `${proposal ? `Quote v${proposal.documentVersion} issued ${submittedDateLabel(proposal.issuedAt)}. ` : ''}The full approved deposit is required to hold the date and book this event.`;
 	if (stage === 'CLOSED')
 		return 'Service and payment are complete. Review the financial and payment history below.';
+	if (stage === 'DECLINED')
+		return 'No booking action is pending. The request and its original Estimate stay on file.';
+	const balance = financial.reconciliation.balance;
+	const sign = balanceSign(balance);
 	if (stage === 'SERVED') {
-		const balance = data.financial.reconciliation.balance;
-		if (isExactZero(balance)) return 'The Invoice is settled and this event may be closed.';
-		return balance.startsWith('-')
+		if (sign === 'zero') return 'The Invoice is settled and this event may be closed.';
+		return sign === 'negative'
 			? 'The Invoice balance must be exactly zero before closing this event.'
 			: 'This event has been served. Record the remaining payment before closing it.';
 	}
-	return 'Review the current Invoice and any remaining balance below.';
+	const guests = data.servicePlan?.guestCount;
+	const event = [
+		eventDateLabel(inquiry.eventDate),
+		guests
+			? guestCountLabel(guests, false)
+			: guestCountLabel(
+					inquiry.requestedService.guestCount,
+					inquiry.requestedService.guestCountIsMinimum
+				)
+	].join(' · ');
+	return sign === 'positive'
+		? `${event} · ${formatMoney(balance, financial.currency)} can be recorded any time, before or after the event.`
+		: sign === 'zero'
+			? `${event} · The Invoice is paid in full.`
+			: `${event} · The Invoice balance is below zero. Review the payment history below.`;
 }
 export function financialStageLabel(stage: string): string {
 	return (
@@ -172,6 +281,31 @@ export function isCurrentStaffRequest(
 		deposit.documentId !== financial.id
 	)
 		return false;
+	// `declined` is present exactly when the stage is DECLINED (absent or null otherwise).
+	const declined = inquiry.lifecycle.declined;
+	if ((inquiry.lifecycle.stage === 'DECLINED') !== (declined != null)) return false;
+	if (inquiry.lifecycle.stage === 'DECLINED')
+		return (
+			typeof declined === 'object' &&
+			!!declined &&
+			instant(declined.occurredAt) &&
+			declined.principalKind === 'USER' &&
+			typeof declined.principalId === 'string' &&
+			!!declined.principalId &&
+			typeof declined.reason === 'string' &&
+			!!declined.reason &&
+			declined.reason === declined.reason.trim() &&
+			declined.reason.length <= DECLINE_REASON_MAX &&
+			version(declined.documentVersion) &&
+			// A decline belongs to exactly the canonical Estimate it reviewed; nothing progresses after.
+			declined.documentVersion === financial.version &&
+			financial.stage === 'ESTIMATE' &&
+			proposal == null &&
+			deposit.state === 'NONE' &&
+			data.servicePlan == null &&
+			inquiry.lifecycle.served == null &&
+			inquiry.lifecycle.closed == null
+		);
 	if (inquiry.lifecycle.stage === 'REQUESTED')
 		return (
 			financial.stage === 'ESTIMATE' &&

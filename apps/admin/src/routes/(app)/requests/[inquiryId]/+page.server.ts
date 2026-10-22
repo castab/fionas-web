@@ -7,7 +7,8 @@ import {
 	previewInquiryQuote,
 	recordPayment,
 	markInquiryServed,
-	closeInquiry
+	closeInquiry,
+	declineInquiry
 } from '$lib/server/staff-request.js';
 import { reviewFingerprint } from '$lib/server/quote-review.js';
 import {
@@ -22,6 +23,15 @@ import type { PaymentFormValues } from '$lib/payments.js';
 import type { RecordPaymentRequest } from '$lib/payment-contract.js';
 import { matchesReviewedSuggestion } from '$lib/deposit.js';
 import { CURRENCY } from '$lib/currency.js';
+import { businessDate } from '$lib/presentation.js';
+import {
+	declineErrorMessage,
+	declineReason,
+	declineReasonMessage,
+	declineReasonProblem,
+	readDeclineForm,
+	type DeclineFormValues
+} from '$lib/decline.js';
 import {
 	initialQuoteValues,
 	buildCommand,
@@ -35,7 +45,9 @@ import {
 import {
 	canMarkServed,
 	canCloseInquiry,
+	canDeclineInquiry,
 	canIssueQuote,
+	INQUIRY_MANAGE_PERMISSION,
 	hasFulfillmentPermission,
 	fulfillmentErrorMessage,
 	type FulfillmentAction,
@@ -59,6 +71,9 @@ export const load: PageServerLoad = async ({
 	const config = backendConfig(url.origin);
 	const cookie = request.headers.get('cookie');
 	const quoteOpen = url.searchParams.has('quote');
+	const paymentOpen = url.searchParams.has('payment');
+	const declineOpen = url.searchParams.has('decline');
+	const today = businessDate(new Date());
 	const result = await getStaffRequest(config, params.inquiryId, cookie);
 	if (!result.ok && result.error.status === 401) redirect(303, '/login');
 	if (!result.ok || !isCurrentStaffRequest(result.data, params.inquiryId))
@@ -67,6 +82,9 @@ export const load: PageServerLoad = async ({
 			staffRequest: null,
 			requestError: result.ok ? ('unavailable' as const) : requestErrorKind(result.error.status),
 			quoteOpen,
+			paymentOpen,
+			declineOpen,
+			today,
 			initialQuote: null
 		};
 	applySetCookies(cookies, result.setCookies);
@@ -109,6 +127,9 @@ export const load: PageServerLoad = async ({
 		staffRequest: data,
 		requestError: null,
 		quoteOpen,
+		paymentOpen,
+		declineOpen,
+		today,
 		initialQuote
 	};
 };
@@ -221,6 +242,7 @@ export const actions: Actions = {
 	closeInquiry: fulfillmentAction('closeInquiry'),
 	recordDeposit: paymentAction(true),
 	recordInvoicePayment: paymentAction(false),
+	declineInquiry: declineAction,
 	previewQuote: (event) => quoteAction(event, false),
 	issueQuote: (event) => quoteAction(event, true)
 };
@@ -332,4 +354,76 @@ function paymentAction(deposit: boolean): Actions[string] {
 		applySetCookies(cookies, result.setCookies);
 		redirect(303, url.pathname);
 	};
+}
+
+/**
+ * Declines a REQUESTED inquiry the staff member reviewed. The route names the inquiry and the
+ * session the actor; the form carries only the reviewed Estimate version and the internal reason.
+ * A changed version is refused here, never replaced with the freshly read one. Exactly one
+ * backend attempt: any failure after it is a review state, never a retry.
+ */
+async function declineAction({ params, locals, request, url, cookies }: RequestEvent) {
+	if (!locals.user) redirect(303, '/login');
+	const failure = (
+		status: number,
+		{
+			attempted = false,
+			values,
+			correctable = false
+		}: { attempted?: boolean; values?: DeclineFormValues; correctable?: boolean } = {}
+	) =>
+		fail(status >= 500 ? 503 : status, {
+			declineError: declineErrorMessage(status, attempted),
+			declineReviewRequired: !correctable,
+			declineValues: values
+		});
+	if (!locals.user.permissions.includes(INQUIRY_MANAGE_PERMISSION)) return failure(403);
+	let form: FormData;
+	try {
+		form = await request.formData();
+	} catch {
+		return failure(400);
+	}
+	const values = readDeclineForm(form);
+	if (!values) return failure(400);
+	const problem = declineReasonProblem(values.reason);
+	if (problem)
+		return fail(422, {
+			declineError: declineReasonMessage(problem),
+			declineReviewRequired: false,
+			declineValues: values,
+			declineField: 'reason' as const
+		});
+	const config = backendConfig(url.origin);
+	const cookie = request.headers.get('cookie');
+	const current = await getStaffRequest(config, params.inquiryId, cookie);
+	if (!current.ok) {
+		if (current.error.status === 401) redirect(303, '/login');
+		return failure(current.error.status, { values });
+	}
+	applySetCookies(cookies, current.setCookies);
+	if (!isCurrentStaffRequest(current.data, params.inquiryId)) return failure(503, { values });
+	if (
+		!canDeclineInquiry(current.data, locals.user.permissions) ||
+		String(current.data.financial.version) !== values.expectedDocumentVersion
+	)
+		return failure(409, { values });
+	const result = await declineInquiry(
+		config,
+		params.inquiryId,
+		{
+			expectedDocumentVersion: Number(values.expectedDocumentVersion),
+			reason: declineReason(values.reason)
+		},
+		cookie
+	);
+	if (!result.ok) {
+		if (result.error.status === 401) redirect(303, '/login');
+		// Validation refusals record nothing, so the reason stays correctable.
+		if (result.error.status === 422)
+			return failure(422, { attempted: true, values, correctable: true });
+		return failure(result.error.status, { attempted: true, values });
+	}
+	applySetCookies(cookies, result.setCookies);
+	redirect(303, url.pathname);
 }

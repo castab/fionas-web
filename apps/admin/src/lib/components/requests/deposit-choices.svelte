@@ -31,7 +31,7 @@
 	onMount(() => {
 		enhanced = true;
 	});
-	const inputClass = `mt-2 block w-full rounded-[6px] border border-(--border-soft) bg-(--surface-card) px-3 py-2 text-sm text-(--text-body) ${focusRing}`;
+	const inputClass = `mt-2 block w-full rounded-input border border-(--border-soft) bg-(--surface-card) px-3 py-2.5 text-sm text-(--text-body) ${focusRing}`;
 </script>
 
 <input type="hidden" name="expectedVersion" value={values?.expectedVersion ?? version} />
@@ -47,13 +47,13 @@
 />
 <fieldset
 	{disabled}
-	class="m-0 mb-4 min-w-0 border-0 border-t border-solid border-(--border-soft) p-0 pt-3"
+	class="m-0 min-w-0 border-0 border-t border-solid border-(--border-soft) p-0 pt-[18px]"
 >
 	<legend
-		class="px-0 font-sans text-[10px] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase"
+		class="float-left mb-3 w-full px-0 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-heading) uppercase"
 		>Deposit to hold the date</legend
 	>
-	<div class="mt-2 flex flex-col gap-3">
+	<div class="clear-both flex flex-col gap-3">
 		<label class="flex items-start gap-2 text-sm">
 			<input
 				type="radio"

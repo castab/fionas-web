@@ -320,3 +320,18 @@ export function paymentFixture(state = 'quoted') {
 	}
 	return request;
 }
+
+/** Maya's REQUESTED inquiry as the backend projects it after a staff decline of Estimate `version`. */
+export function declinedFixture(version = 1, reason = 'Requested date is unavailable.') {
+	const request = requestFixtures()[mayaId];
+	request.financial.version = version;
+	request.inquiry.lifecycle.stage = 'DECLINED';
+	request.inquiry.lifecycle.declined = {
+		occurredAt: '2026-10-20T20:00:00Z',
+		principalKind: 'USER',
+		principalId: '602df298-8d54-45b6-a40c-bbf80949a3b8',
+		reason,
+		documentVersion: version
+	};
+	return request;
+}
