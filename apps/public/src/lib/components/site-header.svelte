@@ -14,7 +14,7 @@
 			aria-label="fionas ice cream — home"
 			class={cn('inline-flex shrink-0', focusRing)}
 		>
-			<Wordmark class="text-olive-900" aria-hidden="true" />
+			<Wordmark class="h-10.5 text-olive-900" aria-hidden="true" />
 		</a>
 		<nav aria-label="Main" class="ml-auto flex shrink-0 items-center gap-2">
 			<a

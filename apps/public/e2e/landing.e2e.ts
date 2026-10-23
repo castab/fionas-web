@@ -12,12 +12,12 @@ test('the landing page renders the hero and brand chrome', async ({ page }) => {
 
 	await expect(
 		page.getByText(
-			'Soft serve & hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos.'
+			'Hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos.'
 		)
 	).toBeVisible();
 	await expect(page.locator('meta[name="description"]')).toHaveAttribute(
 		'content',
-		'Soft serve & hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos.'
+		'Hand-scooped classics brought right to your driveway, park, or backyard across Fresno & the Madera Ranchos.'
 	);
 	await expect(page).toHaveTitle("Fiona's Ice Cream");
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(
