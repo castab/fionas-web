@@ -1,5 +1,5 @@
 export { site, instagramUrl, mailtoUrl } from './site.ts';
-export { bookingLaunchLabel, comingSoonToast } from './booking.ts';
+export { comingSoonToast } from './booking.ts';
 export { computeAdvisoryEstimate } from './estimate.ts';
 export {
 	answersFromFormData,

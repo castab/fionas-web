@@ -3,9 +3,6 @@
  * raises this coming-soon toast; nothing navigates or submits.
  */
 
-/** Shown in the hero badge while booking is gated. */
-export const bookingLaunchLabel = 'Booking late 2026';
-
 export const comingSoonToast = {
 	title: 'Booking opens soon',
 	description:
