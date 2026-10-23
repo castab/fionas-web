@@ -1,3 +1,4 @@
+import { isRequestedItem, isServicePlanItems } from './service-selections.js';
 import type {
 	InquiryStage,
 	StaffRequestResponse,
@@ -237,9 +238,7 @@ export function isCurrentStaffRequest(
 		!Number.isInteger(inquiry.requestedService.guestCount) ||
 		inquiry.requestedService.guestCount < 1 ||
 		!Array.isArray(inquiry.requestedService.items) ||
-		!inquiry.requestedService.items.every(
-			(i) => i && typeof i.label === 'string' && !!i.label.trim()
-		) ||
+		!inquiry.requestedService.items.every(isRequestedItem) ||
 		typeof inquiry.requestedService.guestCountIsMinimum !== 'boolean' ||
 		!financial.linesAuthoredBy ||
 		!['USER', 'SERVICE'].includes(financial.linesAuthoredBy.principalKind) ||
@@ -372,8 +371,7 @@ function isCoherentServicePlan(
 		typeof plan.approvedBy === 'string' &&
 		!!plan.approvedBy &&
 		Number.isFinite(Date.parse(plan.approvedAt)) &&
-		Array.isArray(plan.items) &&
-		plan.items.every((item) => typeof item === 'string') &&
+		isServicePlanItems(plan.items) &&
 		Array.isArray(plan.lineNotes) &&
 		new Set(plan.lineNotes.map((n) => n.lineItemId)).size === plan.lineNotes.length &&
 		plan.lineNotes.every(

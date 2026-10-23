@@ -28,7 +28,7 @@ function quotedWithPlan() {
 		documentVersion: data.proposal!.documentVersion,
 		reviewedDocumentVersion: 1,
 		description: 'Bespoke service',
-		items: ['Churros'],
+		items: [{ label: 'Churros' }],
 		lineNotes: [{ lineItemId: data.financial.lines[0].id, note: 'Negotiated' }],
 		approvedAt: '2026-07-16T19:01:00Z',
 		approvedBy: '00000000-0000-0000-0000-000000000001'
@@ -239,4 +239,23 @@ describe('request workspace presentation', () => {
 		expect(quoteErrorMessage(409)).toContain('Reload to review');
 		expect(quoteErrorMessage(500)).toContain('couldn’t confirm whether');
 	});
+});
+it('rejects legacy and malformed selection responses while accepting custom and duplicate selections', () => {
+	for (const items of [
+		['legacy'],
+		[{ label: '' }],
+		[{ label: 'x', group: 42 }],
+		[{ label: 'x', key: 'x'.repeat(121) }],
+		Array.from({ length: 51 }, () => ({ label: 'x' }))
+	]) {
+		const data = quotedWithPlan();
+		Object.assign(data.servicePlan!, { items });
+		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(false);
+	}
+	const data = quotedWithPlan();
+	data.servicePlan!.items = [
+		{ label: 'Custom', group: null, key: null },
+		{ label: 'Custom', group: null, key: null }
+	];
+	expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
 });

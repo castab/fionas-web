@@ -1,4 +1,16 @@
 import {
+	GROUP_MAX,
+	KEY_MAX,
+	LABEL_MAX,
+	MAX_SELECTIONS,
+	canonicalSelection,
+	isPlaceholder,
+	isServicePlanItem,
+	isServicePlanItems,
+	selectionDrafts,
+	type SelectionDraft
+} from './service-selections.js';
+import {
 	readDepositForm,
 	depositInputError,
 	isDepositTerms,
@@ -8,13 +20,14 @@ import { CENT_DIGITS, CURRENCY, isSupportedCurrency } from './currency.js';
 import type { CurrentStaffRequest, DepositTermsRequest } from './request-contract.js';
 import type { QuoteCommand, ProposedLine, InquiryQuotePreviewResponse } from './quote-contract.js';
 
+export type { SelectionDraft };
 export type LineDraft = ProposedLine & { note: string };
 export type QuoteFormValues = {
 	deposit: DepositFormValues;
 	lines: LineDraft[];
 	description: string;
 	guestCount: string;
-	items: string;
+	items: SelectionDraft[];
 	/** The reviewed document's currency, echoed by the page. Only USD is accepted. */
 	reviewedCurrency: typeof CURRENCY;
 	reviewToken: string;
@@ -52,7 +65,8 @@ export function initialQuoteValues(data: CurrentStaffRequest): QuoteFormValues {
 		})),
 		description: 'Ice cream service',
 		guestCount: String(service.guestCount),
-		items: service.items.map((i) => i.label).join('\n'),
+		// An independent draft of the customer's picks, in their order, with categories and keys.
+		items: selectionDrafts(service.items),
 		reviewedCurrency: CURRENCY,
 		reviewToken: '',
 		reviewedFingerprint: ''
@@ -126,13 +140,10 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 			note: text('note')
 		});
 	}
-	const other = [
-		'planDescription',
-		'planGuestCount',
-		'planItems',
-		'reviewToken',
-		'reviewedFingerprint'
-	];
+	const selections = readSelections(form, scalar);
+	if (!selections) return null;
+	const { items, fields: selectionFields } = selections;
+	const other = ['planDescription', 'planGuestCount', 'reviewToken', 'reviewedFingerprint'];
 	const vals = other.map(scalar);
 	if (vals.some((v) => v === null)) return null;
 	const allowed = new Set([
@@ -141,11 +152,16 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 		'lineIdentity',
 		...names,
 		...depositForm.keys(),
-		'rowAction'
+		'rowAction',
+		'selectionAction',
+		'selectionIdentity',
+		...selectionFields
 	]);
+	if (form.has('rowAction') && form.has('selectionAction')) return null;
 	if ([...form.keys()].some((k) => !allowed.has(k))) return null;
 	// Native controls perform the same reversible row edits as JavaScript.
 	const action = scalar('rowAction');
+	if (action === null || (action && !/^(remove|up|down):[0-9]+$/.test(action))) return null;
 	if (action) {
 		const [kind, index] = action.split(':');
 		const i = Number(index);
@@ -161,9 +177,9 @@ export function readQuoteForm(form: FormData): QuoteFormValues | null {
 		lines,
 		description: vals[0]!,
 		guestCount: vals[1]!,
-		items: vals[2]!,
-		reviewToken: vals[3]!,
-		reviewedFingerprint: vals[4]!,
+		items,
+		reviewToken: vals[2]!,
+		reviewedFingerprint: vals[3]!,
 		reviewedCurrency: CURRENCY
 	};
 }
@@ -182,6 +198,60 @@ function units(value: string): bigint {
  * to 12 fractional digits when rate × quantity settles exactly to cents. Amounts may be signed
  * (discounts and credits). Nothing is ever rounded: an amount that doesn't settle is refused.
  */
+const SELECTION_ROW = /^[A-Za-z0-9_-]{1,64}$/;
+/**
+ * Selection rows are aligned by identity: `selectionIdentity` lists the overall order, and each
+ * identity owns exactly one label, category, source key and source label field. Text is kept as
+ * typed so a re-rendered draft never trims under the cursor; `buildCommand` canonicalizes it.
+ */
+function readSelections(form: FormData, scalar: (name: string) => string | null) {
+	const identities = form.getAll('selectionIdentity');
+	if (identities.length > MAX_SELECTIONS) return null;
+	const fields: string[] = [];
+	const items: SelectionDraft[] = [];
+	for (const identity of identities) {
+		if (typeof identity !== 'string' || !SELECTION_ROW.test(identity)) return null;
+		const names = ['selectionLabel', 'selectionGroup', 'selectionKey', 'selectionSource'].map(
+			(n) => `${n}:${identity}`
+		);
+		if (fields.includes(names[0])) return null;
+		fields.push(...names);
+		const [label, group, key, sourceLabel] = names.map(scalar);
+		if (
+			label === null ||
+			group === null ||
+			key === null ||
+			sourceLabel === null ||
+			label.trim().length > LABEL_MAX ||
+			group.trim().length > GROUP_MAX ||
+			key.trim().length > KEY_MAX ||
+			sourceLabel.trim().length > LABEL_MAX ||
+			names.some((n) => !form.has(n))
+		)
+			return null;
+		items.push({ rowId: identity, label, group, key: key.trim() || null, sourceLabel });
+	}
+	// Selection edits have their own action namespace; financial rows use `rowAction`.
+	const action = scalar('selectionAction');
+	if (action === null) return null;
+	if (action === 'add') {
+		if (items.length >= MAX_SELECTIONS) return null;
+		items.push({ rowId: crypto.randomUUID(), label: '', group: '', key: null, sourceLabel: '' });
+	} else if (action) {
+		const match = /^(remove|up|down):([A-Za-z0-9_-]{1,64})$/.exec(action);
+		const i = match ? items.findIndex((item) => item.rowId === match[2]) : -1;
+		if (!match || i < 0) return null;
+		if (match[1] === 'remove') items.splice(i, 1);
+		else {
+			const j = i + (match[1] === 'up' ? -1 : 1);
+			if (j < 0 || j >= items.length) return null;
+			[items[i], items[j]] = [items[j], items[i]];
+		}
+	}
+	return { items, fields };
+}
+/** Unused blank placeholder rows are dropped; everything else is part of the commitment. */
+const committedSelections = (items: SelectionDraft[]) => items.filter((i) => !isPlaceholder(i));
 export function quoteInputErrors(values: QuoteFormValues): Record<string, string> {
 	const errors: Record<string, string> = {};
 	const cents = (s: string) => exact(s, CENT_DIGITS);
@@ -209,13 +279,20 @@ export function quoteInputErrors(values: QuoteFormValues): Record<string, string
 			errors[`line-${i}`] = 'This rate and quantity do not settle exactly; no rounding is allowed.';
 	});
 	const count = (s: string, max: number) => !s || (/^[1-9]\d*$/.test(s) && Number(s) <= max);
-	if (
-		values.description.length > 2000 ||
-		!count(values.guestCount, 100000) ||
-		values.items.split('\n').filter(Boolean).length > 50 ||
-		values.items.split('\n').some((s) => s.length > 200)
-	)
+	if (values.description.length > 2000 || !count(values.guestCount, 100000))
 		errors.service = 'Check the approved service description and counts.';
+	if (values.items.length > MAX_SELECTIONS)
+		errors.selections = `A serving plan lists at most ${MAX_SELECTIONS} selections.`;
+	// Keyed by draft position, which the editor shows; selection errors never touch line totals.
+	values.items.forEach((item, i) => {
+		if (isPlaceholder(item)) return;
+		const name = `Selection ${i + 1}`;
+		if (!item.label.trim())
+			errors[`selection-${i}`] = `${name} needs a label. Remove it if it isn’t needed.`;
+		else if (!isServicePlanItem(canonicalSelection(item)))
+			errors[`selection-${i}`] =
+				`${name}: keep the label to ${LABEL_MAX} characters and the category to ${GROUP_MAX}.`;
+	});
 	if (!values.description.trim() && values.lines.some((l) => l.note.trim()))
 		errors.service = 'Add a service description to preserve the line notes with this quote.';
 	if (depositInputError(values.deposit) || !isDepositTerms(reviewedTerms(values.deposit), CURRENCY))
@@ -235,10 +312,8 @@ export function buildCommand(values: QuoteFormValues): QuoteCommand {
 					servicePlan: {
 						description,
 						...(values.guestCount ? { guestCount: Number(values.guestCount) } : {}),
-						items: values.items
-							.split('\n')
-							.map((s) => s.trim())
-							.filter(Boolean),
+						// Exactly the reviewed order; editor row IDs never leave the admin.
+						items: committedSelections(values.items).map(canonicalSelection),
 						lineNotes: values.lines
 							.filter((l) => l.note)
 							.map((l) => ({
@@ -249,6 +324,25 @@ export function buildCommand(values: QuoteFormValues): QuoteCommand {
 				}
 			: {})
 	};
+}
+/** The preview must describe exactly the selections the command proposed, in order. */
+export function previewMatchesSelections(
+	command: QuoteCommand,
+	preview: InquiryQuotePreviewResponse
+): boolean {
+	if (!command.servicePlan) return true;
+	const proposed = command.servicePlan.items ?? [];
+	const shown = preview.servicePlan?.items;
+	return (
+		!!shown &&
+		shown.length === proposed.length &&
+		shown.every(
+			(item, i) =>
+				item.label === proposed[i].label &&
+				(item.group ?? null) === (proposed[i].group ?? null) &&
+				(item.key ?? null) === (proposed[i].key ?? null)
+		)
+	);
 }
 export function isQuotePreview(
 	value: unknown,
@@ -282,6 +376,11 @@ export function isQuotePreview(
 				l.currency === p.currency &&
 				[l.unitPrice, l.subtotal, l.taxAmount, l.total].every(amount)
 		) &&
+		(p.servicePlan == null ||
+			(typeof p.servicePlan.description === 'string' &&
+				!!p.servicePlan.description.trim() &&
+				p.servicePlan.description.length <= 2000 &&
+				isServicePlanItems(p.servicePlan.items))) &&
 		!!p.deposit &&
 		isDepositTerms(p.deposit.terms, p.currency) &&
 		amount(p.deposit.requiredAmount?.amount) &&

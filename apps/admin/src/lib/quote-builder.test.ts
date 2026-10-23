@@ -122,7 +122,6 @@ it.each(['EUR', 'JPY', 'usd', ''])(
 		for (const [k, value] of Object.entries({
 			planDescription: v.description,
 			planGuestCount: v.guestCount,
-			planItems: v.items,
 			reviewToken: '',
 			reviewedFingerprint: ''
 		}))
@@ -141,7 +140,6 @@ it('authors no service duration: the plan omits it and a posted duration is refu
 	for (const [k, value] of Object.entries({
 		planDescription: v.description,
 		planGuestCount: v.guestCount,
-		planItems: v.items,
 		reviewToken: '',
 		reviewedFingerprint: '',
 		reviewedCurrency: 'USD'

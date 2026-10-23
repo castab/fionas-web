@@ -1,4 +1,6 @@
 <script lang="ts">
+	import CategorizedSelections from '../categorized-selections.svelte';
+	import ServiceSelectionsEditor from './service-selections-editor.svelte';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { onMount, untrack } from 'svelte';
@@ -76,6 +78,12 @@
 		clearTimeout(timer);
 		if (hydrated && !pending && !reviewRequired)
 			timer = setTimeout(() => formElement?.requestSubmit(previewButton), 300);
+	}
+	/** Marks the review stale while a field is mid-edit, without scheduling a preview. */
+	function editing() {
+		dirty = true;
+		error = '';
+		clearTimeout(timer);
 	}
 	function move(i: number, d: number) {
 		if (i + d < 0 || i + d >= values.lines.length) return;
@@ -349,13 +357,18 @@
 							inputmode="numeric"
 						/></label
 					>
-					<label class={fieldLabel}
-						>Service items, one per line<textarea
-							class={`${input} min-h-20`}
-							name="planItems"
-							bind:value={values.items}></textarea></label
-					>
 				</div>
+				{#if !values.description.trim()}<p role="status" class={hint}>
+						Without an approved service description, no serving plan or selections will accompany
+						this Quote.
+					</p>{/if}
+				<ServiceSelectionsEditor
+					bind:items={values.items}
+					errors={fieldErrors}
+					{hydrated}
+					{changed}
+					{editing}
+				/>
 			</div>
 			<DepositChoices
 				suggestion={request.suggestedDepositTerms}
@@ -382,6 +395,20 @@
 						>Quote v{preview.quoteVersion} · not issued yet</span
 					>
 				</div>
+				{#if preview.servicePlan}<div
+						class="flex flex-col gap-2.5 border-b border-(--border-soft) pb-3"
+						data-testid="preview-service-plan"
+					>
+						<p class={groupCaps}>
+							You’ll approve{preview.servicePlan.guestCount
+								? ` · ${preview.servicePlan.guestCount} guest${preview.servicePlan.guestCount === 1 ? '' : 's'}`
+								: ''}
+						</p>
+						<p class="m-0 text-[13px] leading-[1.6] wrap-anywhere whitespace-pre-wrap">
+							{preview.servicePlan.description}
+						</p>
+						<CategorizedSelections items={preview.servicePlan.items} headingLevel={4} inset />
+					</div>{/if}
 				<ul class="m-0 flex list-none flex-col p-0 text-[13px]">
 					{#each preview.lines as line (line.id)}<li
 							class="flex justify-between gap-3 border-b border-(--border-soft) py-[7px]"

@@ -1,12 +1,17 @@
 import type { StaffDashboardItem } from './dashboard-contract.js';
 import type { PaymentHistoryResponse } from './payment-contract.js';
-import type { QuoteCommand, ServicePlanResponse } from './quote-contract.js';
+import type { QuoteCommand, ServicePlanItem, ServicePlanResponse } from './quote-contract.js';
 
 /** Transport shapes from the supplied fionas-commerce OpenAPI staff-request schemas. */
+/**
+ * A customer's original pick, recorded with the inquiry. It shares the approved selection's shape
+ * (commerce returns absent metadata as null) but is historical intent, never an approved commitment.
+ */
+export type RequestedItem = ServicePlanItem;
 export type RequestedService = {
 	guestCount: number;
 	guestCountIsMinimum: boolean;
-	items: { label: string; group?: string; key?: string }[];
+	items: RequestedItem[];
 	pricingReference?: string;
 };
 export type InquiryMilestone = {

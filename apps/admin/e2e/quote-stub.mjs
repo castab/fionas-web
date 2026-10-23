@@ -20,6 +20,27 @@ const minor = (value) => {
 	if (n % 10n ** 16n !== 0n) throw new Error('Nonsettleable');
 	return n / 10n ** 16n;
 };
+/** Commerce's canonical ServicePlanItem (PR #28): trimmed text, blank metadata as null.
+ * @param {unknown} item */
+const selection = (item) => {
+	if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Legacy item');
+	const {
+		label,
+		group = null,
+		key = null,
+		...rest
+	} = /** @type {Record<string, unknown>} */ (item);
+	/** @param {unknown} v @param {number} max */
+	const text = (v, max) => typeof v === 'string' && !!v && v === v.trim() && v.length <= max;
+	if (
+		Object.keys(rest).length ||
+		!text(label, 200) ||
+		(group !== null && !text(group, 120)) ||
+		(key !== null && !text(key, 120))
+	)
+		throw new Error('Malformed item');
+	return { label, group, key };
+};
 /** @param {{quoteEpoch?:number}} session
  * @param {import('../src/lib/request-contract.js').CurrentStaffRequest} request
  * @param {import('../src/lib/quote-contract.js').PreviewInquiryQuoteRequest} body */
@@ -80,7 +101,11 @@ export function previewQuote(session, request, body) {
 		const servicePlan = body.servicePlan
 			? {
 					...body.servicePlan,
-					items: body.servicePlan.items ?? [],
+					items: (() => {
+						const items = body.servicePlan.items ?? [];
+						if (!Array.isArray(items) || items.length > 50) throw new Error('Too many items');
+						return items.map(selection);
+					})(),
 					lineNotes: (body.servicePlan.lineNotes ?? []).map((n) => {
 						const line = lines.find((l) =>
 							n.lineItemId ? l.id === n.lineItemId : l.key === n.key

@@ -35,12 +35,21 @@ function event(
 	for (const [k, v] of Object.entries({
 		planDescription: values.description,
 		planGuestCount: values.guestCount,
-		planItems: values.items,
 		reviewedCurrency: values.reviewedCurrency,
 		reviewToken: values.reviewToken,
 		reviewedFingerprint: values.reviewedFingerprint
 	}))
 		f.set(k, v);
+	for (const item of values.items) {
+		f.append('selectionIdentity', item.rowId);
+		for (const [name, value] of Object.entries({
+			selectionLabel: item.label,
+			selectionGroup: item.group,
+			selectionKey: item.key ?? '',
+			selectionSource: item.sourceLabel
+		}))
+			f.set(name + ':' + item.rowId, value);
+	}
 	for (const l of values.lines) {
 		f.append('lineIdentity', l.lineItemId ? `id:${l.lineItemId}` : `new:${l.key}`);
 		for (const k of [
@@ -185,4 +194,60 @@ it('refuses a preview that comes back in another currency', async () => {
 		return { ok: true, data: { ...result.body, currency: 'EUR' } as never, setCookies: [] };
 	});
 	expect(await actions!.previewQuote!(event())).toHaveProperty('status', 503);
+});
+it.each(['label', 'group', 'key', 'order', 'add', 'remove'])(
+	'requires fresh review for structured selection %s edits',
+	async (kind) => {
+		const reviewed = (await actions!.previewQuote!(event())) as { quoteValues: QuoteFormValues };
+		expect(reviewed).toHaveProperty('preview.servicePlan.items');
+		const items = reviewed.quoteValues.items;
+		if (kind === 'order') items.reverse();
+		else if (kind === 'add') items.push({ ...items[0], rowId: 'duplicate' });
+		else if (kind === 'remove') items.pop();
+		else items[0][kind as 'label' | 'group' | 'key'] = 'Changed';
+		const fresh = await actions!.issueQuote!(event(reviewed.quoteValues));
+		expect(fresh).toHaveProperty('notices.reviewStale', true);
+		expect(issueInquiryProposal).not.toHaveBeenCalled();
+	}
+);
+it('refuses a preview whose selections differ from the proposed ones', async () => {
+	vi.mocked(previewInquiryQuote).mockImplementationOnce(async (_config, _id, body) => {
+		const result = previewQuote({ quoteEpoch: 0 }, current, body);
+		const plan = result.body.servicePlan!;
+		return {
+			ok: true,
+			data: { ...result.body, servicePlan: { ...plan, items: plan.items.slice(1) } } as never,
+			setCookies: []
+		};
+	});
+	expect(await actions!.previewQuote!(event())).toHaveProperty('status', 503);
+});
+it('native selection actions return the complete draft for an explicit preview', async () => {
+	const values = { ...initialQuoteValues(current), reviewToken: 'a'.repeat(64) };
+	values.description = 'Backyard service';
+	values.lines[0].note = 'Kept';
+	const post = (action: string) => {
+		const e = event(values) as unknown as { request: Request };
+		return e.request.formData().then((f) => {
+			f.set('selectionAction', action);
+			e.request = new Request('https://admin.test', { method: 'POST', body: f });
+			return e as never;
+		});
+	};
+	const result = (await actions!.previewQuote!(await post('add'))) as {
+		quoteValues: QuoteFormValues;
+	};
+	expect(previewInquiryQuote).not.toHaveBeenCalled();
+	expect(result.quoteValues).toMatchObject({
+		description: 'Backyard service',
+		reviewToken: '',
+		reviewedFingerprint: ''
+	});
+	expect(result.quoteValues.lines[0].note).toBe('Kept');
+	expect(result.quoteValues.items).toHaveLength(values.items.length + 1);
+	expect(await actions!.issueQuote!(await post('remove:selection-0'))).toHaveProperty(
+		'status',
+		422
+	);
+	expect(issueInquiryProposal).not.toHaveBeenCalled();
 });

@@ -26,6 +26,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Staff request workspace, Quote/deposit   | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`    |
 | Decline a request (confirm, reason)      | `docs/admin-request-workspace.md`, `$lib/decline.ts`, `decline-controls.svelte`                   |
 | Admin quote builder (preview, compose)   | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts` |
+| Categorized service selections           | `$lib/service-selections.ts`, `categorized-selections.svelte`, `service-selections-editor.svelte` |
 | Container images (build from repo root)  | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                |
 | Gallery                                  | `apps/public/src/routes/gallery/`, `$lib/server/presentation-service/`                            |
 | Landing page                             | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                         |
@@ -70,3 +71,8 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   reviewed Estimate version (never rebased) and a trimmed 1–500 character internal reason, once, then
   PRGs. Uncertain outcomes block every mutation until reload. DECLINED is terminal and never a step
   in the booking progress strip; the validator rejects any incoherent declined projection.
+- Admin service selections use ordered `{ label, group?, key? }` objects (50 maximum; label 200,
+  group/key 120 characters). Group only for presentation by first occurrence; preserve duplicates
+  and uncategorized items. Original intent and approved plans are independent. Editor row IDs are
+  not source keys; substitutions clear provenance. Native/enhanced edits bind complete selections
+  into review fingerprints and require the backend v3 review token. No catalog or pricing inference.
