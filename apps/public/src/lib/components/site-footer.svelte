@@ -8,7 +8,7 @@
 	<div
 		class="mx-auto flex max-w-(--container-max) flex-wrap items-center gap-6 px-8 py-12 max-[760px]:flex-col max-[760px]:text-center"
 	>
-		<Wordmark class="text-cream-200" />
+		<Wordmark class="h-10.5 text-cream-200" />
 		<div
 			class="ml-auto flex flex-col items-end gap-2 text-right max-[760px]:ml-0 max-[760px]:items-center max-[760px]:text-center"
 		>

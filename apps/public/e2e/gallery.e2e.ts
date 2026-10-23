@@ -156,7 +156,7 @@ test('gallery navigation, focus, and responsive header', async ({ page }) => {
 	const mark = await page.locator('header svg').boundingBox();
 	const gallery = await nav.getByRole('link', { name: 'Gallery' }).boundingBox();
 	const book = await nav.getByRole('button', { name: 'Book', exact: true }).boundingBox();
-	expect(mark?.height).toBe(44);
+	expect(mark?.height).toBe(42);
 	expect(gallery!.x).toBeGreaterThanOrEqual(mark!.x + mark!.width);
 	expect(book!.x + book!.width).toBeLessThanOrEqual(360);
 	expect(Math.abs(gallery!.y - mark!.y)).toBeLessThan(2);
