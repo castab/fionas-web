@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Badge, Button, ComingSoonButton, LogoBadge } from '@fionas/ui';
-	import { bookingLaunchLabel, instagramUrl } from '@fionas/shared';
+	import { Button, ComingSoonButton, LogoBadge } from '@fionas/ui';
+	import { instagramUrl } from '@fionas/shared';
 	import { resolve } from '$app/paths';
 	import { bookingComingSoon } from '$lib/coming-soon.js';
 	import type { PageData } from './$types';
@@ -15,10 +15,6 @@
 	<div
 		class="flex max-w-[560px] min-w-0 flex-[1_1_380px] flex-col items-start gap-[22px] max-[940px]:max-w-none max-[940px]:flex-none max-[940px]:items-center"
 	>
-		{#if !data.bookingEnabled}
-			<Badge tone="moss">{bookingLaunchLabel}</Badge>
-		{/if}
-
 		<h1
 			class="m-0 font-sans text-[42px] leading-[1.1] font-bold tracking-(--track-heading) text-balance text-(--text-heading)"
 		>
