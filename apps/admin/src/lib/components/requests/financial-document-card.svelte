@@ -1,4 +1,5 @@
 <script lang="ts">
+	import CategorizedSelections from './categorized-selections.svelte';
 	import { Card } from '@fionas/ui';
 	import type {
 		CurrentStaffRequest,
@@ -77,9 +78,7 @@
 			</p>
 			<p class="m-0 text-[13px] leading-[1.6] whitespace-pre-wrap">{servicePlan.description}</p>
 			{#if servicePlan.items.length}
-				<p class="m-0 text-xs wrap-anywhere text-(--text-muted)">
-					{servicePlan.items.join(' · ')}
-				</p>
+				<CategorizedSelections items={servicePlan.items} inset />
 			{/if}
 			<p class="m-0 text-[11px] text-(--text-muted)">
 				Approved with Quote v{servicePlan.documentVersion}

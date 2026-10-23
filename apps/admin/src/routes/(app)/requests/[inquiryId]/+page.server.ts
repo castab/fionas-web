@@ -36,6 +36,7 @@ import {
 	initialQuoteValues,
 	buildCommand,
 	isQuotePreview,
+	previewMatchesSelections,
 	quoteInputErrors,
 	readQuoteForm,
 	reviewedTerms,
@@ -158,6 +159,12 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 	const parsed = readQuoteForm(form);
 	if (!parsed) return quoteFailure(422);
 	const values = parsed;
+	// A native selection edit (add, remove, reorder) only returns the complete draft; it may leave a
+	// blank row to fill in, so Update preview is the explicit next step. Any review is cleared.
+	if (form.has('selectionAction')) {
+		if (issue) return quoteFailure(422);
+		return { quoteValues: { ...values, reviewToken: '', reviewedFingerprint: '' } };
+	}
 	const config = backendConfig(url.origin);
 	const cookie = request.headers.get('cookie');
 	const errors = quoteInputErrors(values);
@@ -186,7 +193,8 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 		applySetCookies(cookies, result.setCookies);
 		if (
 			!isQuotePreview(result.data, { inquiryId: params.inquiryId }) ||
-			result.data.reviewedDocumentVersion !== version
+			result.data.reviewedDocumentVersion !== version ||
+			!previewMatchesSelections(command, result.data)
 		)
 			return quoteFailure(503, values);
 		return {

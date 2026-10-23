@@ -1,4 +1,5 @@
 <script lang="ts">
+	import CategorizedSelections from './categorized-selections.svelte';
 	import { Card, focusRing } from '@fionas/ui';
 	import type { InquiryResponse } from '$lib/request-contract.js';
 	import { eventDateLabel, eventTypeLabel, guestCountLabel } from '$lib/presentation.js';
@@ -80,15 +81,7 @@
 					Recorded from the booking form, exactly as {inquiry.name} picked.
 				</p>
 			</div>
-			<ul class="m-0 flex list-none flex-wrap gap-2 p-0">
-				{#each inquiry.requestedService.items as item, i (i)}
-					<li
-						class="rounded-full border-[1.5px] border-(--border-soft) bg-cream-200 px-3.5 py-[7px] text-[12.5px] font-medium wrap-anywhere"
-					>
-						{item.label}
-					</li>
-				{/each}
-			</ul>
+			<CategorizedSelections items={inquiry.requestedService.items} />
 		{:else}
 			<h2 class={caps}>Their notes</h2>
 		{/if}

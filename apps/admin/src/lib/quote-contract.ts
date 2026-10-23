@@ -10,10 +10,15 @@ export type ProposedLine = {
 	currency: string;
 };
 export type LineNote = { lineItemId?: string; key?: string; note: string };
+/**
+ * One approved selection (commerce PR #28): a required label, a free-form descriptive category and an
+ * opaque optional source key. None of them selects a price, product or catalog entry.
+ */
+export type ServicePlanItem = { label: string; group?: string | null; key?: string | null };
 export type ServicePlanRequest = {
 	description: string;
 	guestCount?: number;
-	items?: string[];
+	items?: ServicePlanItem[];
 	lineNotes?: LineNote[];
 };
 export type QuoteCommand = { lines: ProposedLine[]; servicePlan?: ServicePlanRequest };
@@ -37,7 +42,7 @@ export type QuotePreviewLine = {
 export type ServicePlanPreview = {
 	description: string;
 	guestCount?: number;
-	items: string[];
+	items: ServicePlanItem[];
 	lineNotes: { lineItemId: string; note: string }[];
 };
 export type ServicePlanResponse = ServicePlanPreview & {

@@ -220,3 +220,50 @@ Validation commands for this slice (Node v26.9.0): `npm run check`, `npm run lin
 `npm run test:unit -- --run`, `npm run test:e2e`, and `git diff --check`. Check must have zero
 errors and warnings; inspect desktop/mobile request workspace captures. Current run results belong
 in the implementation report rather than carrying forward earlier slice totals.
+
+## Categorized service selections
+
+Commerce PR #28 made approved service-plan selections structured: `ServicePlanItem { label, group?,
+key? }` in `ServicePlanRequest`, the preview's `servicePlan` and `ServicePlanResponse`
+(`$lib/quote-contract.ts`). The label is required (200 characters); the optional group and source
+key allow 120 each. A plan holds zero to 50 ordered selections, duplicates included. Commerce trims
+text and stores blank metadata as null; legacy string arrays fail closed in `isCoherentServicePlan`
+and `isQuotePreview`. The customer's original picks (`RequestedItem`, same shape) are checked only
+for what rendering needs, because the inquiry contract sets no length or count limits.
+
+**Original intent and the approved commitment are independent.** "What they asked for" renders
+`inquiry.requestedService.items` exactly as recorded and keeps the existing visibility policy
+(hidden once an approved plan exists; customer notes stay). The serving plan renders only the
+backend's approved `servicePlan.items`, including an accepted Quote's plan after promotion to
+Invoice; it is never rebuilt from Invoice lines. Neither reads a catalog or the public menu.
+
+**Grouping** (`selectionGroups`, `categorized-selections.svelte`) is presentation only and shared by
+the original request, the quote preview and the approved plan. Categories appear in first-occurrence
+order, items keep their order within a category, nothing is sorted or deduplicated, and missing or
+blank categories appear under "Other selections". Each category is a heading plus a list named by
+it; chips are informational, not controls.
+
+**The editor** (`service-selections-editor.svelte`) starts from an independent copy of the
+customer's picks, keeping labels, categories, keys and order. Each row has a label and a free-form
+category (suggested from categories already in the draft), Move up/Move down across the overall
+order (positions are numbered), and Remove; "+ Add selection" adds a custom row with no key. A blank
+untouched row is ignored; a row with a category but no label is an error. Editor row IDs are UI
+identities, never sent to commerce and unrelated to the opaque `key`. The command carries a row's key
+only while its label equals the label the key came with, so a substitution drops its provenance
+(restoring the label restores it). Nothing in a selection selects a price.
+
+Enhanced: label edits feed the debounced preview; category typing marks the review stale and
+regroups on commit (change), so a row never moves mid-word. Native: every row posts
+`selectionIdentity` (the overall order) plus exactly one `selectionLabel:`, `selectionGroup:`,
+`selectionKey:` and `selectionSource:` field per unique ID. Selection buttons post `selectionAction`
+(`add`, `remove:<id>`, `up:<id>`, `down:<id>`), separate from financial `rowAction`; the server
+returns the complete draft (lines, notes, deposit, description, guests, selections) with the review
+cleared, and Update preview is the explicit next step. Malformed envelopes are refused with 422. With
+no service description, the builder says no serving plan or selections will accompany the Quote.
+
+**Review integrity.** The local SHA-256 fingerprint covers the canonical command, including every
+selection's label, group, key and position, but no editor IDs; label, category-only, key-only,
+reorder, add and remove edits all require a fresh preview even when input handlers are bypassed.
+A preview whose selections differ from the proposed ones is refused (503). Commerce's v3 review
+token independently binds the same facts. Issuance remains one attempt followed by the authoritative
+GET; financial lines, totals, deposits and permissions keep their existing authority.

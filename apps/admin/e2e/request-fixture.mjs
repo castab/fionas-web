@@ -150,9 +150,15 @@ export function requestFixtures() {
 							requestedService: {
 								guestCount: dan ? 120 : 40,
 								guestCountIsMinimum: dan,
+								// Categories repeat out of order, a pick repeats, and one has no category.
 								items: [
 									{ label: 'Vanilla', group: 'Soft serve', key: 'vanilla' },
-									{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' }
+									{ label: 'Strawberry', group: 'Soft serve', key: 'strawberry' },
+									{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' },
+									{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+									{ label: 'Cups', group: 'Vessels', key: 'cup' },
+									{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+									{ label: 'Birthday candles', group: null, key: null }
 								]
 							},
 							zipCode: '93720',
