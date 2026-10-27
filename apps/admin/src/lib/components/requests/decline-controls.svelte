@@ -14,11 +14,13 @@
 		type DeclineFormValues
 	} from '$lib/decline.js';
 	import { eventDateLabel, eventTypeLabel } from '$lib/presentation.js';
+	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 
 	let {
 		request,
 		permissions,
 		route,
+		returnContext = null,
 		error,
 		fieldError = false,
 		reviewRequired = false,
@@ -30,6 +32,8 @@
 		request: CurrentStaffRequest;
 		permissions: string[];
 		route: string;
+		/** The Requests index view this workspace was opened from; kept through every action. */
+		returnContext?: RequestListQuery | null;
 		error?: string;
 		/** The server refused the reason itself (correctable), not the request state. */
 		fieldError?: boolean;
@@ -133,7 +137,7 @@
 	{#if eligible || values}
 		<form
 			method="POST"
-			action="?/declineInquiry"
+			action={workspaceAction(returnContext, 'declineInquiry')}
 			novalidate
 			use:enhance={submit}
 			aria-busy={submitting}

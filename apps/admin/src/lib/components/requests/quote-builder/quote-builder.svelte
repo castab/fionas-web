@@ -3,7 +3,6 @@
 	import QuoteLinesEditor from './quote-lines-editor.svelte';
 	import ServiceSelectionsEditor from './service-selections-editor.svelte';
 	import { enhance } from '$app/forms';
-	import { resolve } from '$app/paths';
 	import { onMount, untrack } from 'svelte';
 	import { Button, Card } from '@fionas/ui';
 	import { fieldInput, fieldLabel, groupCaps, hint, panelCaps } from './styles.js';
@@ -11,14 +10,21 @@
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
 	import { initialQuoteValues, type QuoteActionResult } from '$lib/quote-builder.js';
 	import { formatMoney } from '$lib/presentation.js';
+	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 	let {
 		request,
+		route,
+		returnContext = null,
 		result,
 		blocked = false,
 		pending = $bindable(false),
 		onReviewRequired
 	}: {
 		request: CurrentStaffRequest;
+		/** This workspace's URL, with its return context; reloads and Cancel go here. */
+		route: string;
+		/** The Requests index view this workspace was opened from; kept through every action. */
+		returnContext?: RequestListQuery | null;
 		result: QuoteActionResult | null;
 		blocked?: boolean;
 		pending?: boolean;
@@ -87,16 +93,13 @@
 			<p role="alert" class="m-0 text-sm text-rust-600">
 				Reload this request to review the latest state.
 			</p>
-			<Button
-				href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}
-				data-sveltekit-reload
-				variant="secondary"
-				size="sm">Reload to review</Button
+			<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
+				>Reload to review</Button
 			>
 		</div>{/if}
 	<form
 		method="POST"
-		action="?quote&/previewQuote"
+		action={workspaceAction(returnContext, 'previewQuote', 'quote')}
 		class="flex flex-col gap-5"
 		bind:this={formElement}
 		oninput={changed}
@@ -275,14 +278,10 @@
 				class="min-h-12 flex-[1_1_140px]">Update preview</Button
 			><Button
 				type="submit"
-				formaction="?quote&/issueQuote"
+				formaction={workspaceAction(returnContext, 'issueQuote', 'quote')}
 				disabled={blocked || reviewRequired || pending || (hydrated && (!preview || dirty))}
 				class="min-h-12 flex-[1.4_1_150px]">Issue quote</Button
-			><Button
-				href={resolve('/(app)/requests/[inquiryId]', { inquiryId: request.inquiry.id })}
-				variant="ghost"
-				class="min-h-12 flex-[1_1_110px]">Cancel</Button
-			>
+			><Button href={route} variant="ghost" class="min-h-12 flex-[1_1_110px]">Cancel</Button>
 		</div>
 	</form>
 </Card>

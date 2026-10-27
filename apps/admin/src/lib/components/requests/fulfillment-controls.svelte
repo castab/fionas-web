@@ -8,10 +8,12 @@
 		canCloseInquiry,
 		fulfillmentErrorMessage
 	} from '$lib/request-workspace.js';
+	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 	let {
 		request,
 		permissions,
 		route,
+		returnContext = null,
 		error,
 		reviewRequired = false,
 		pending = $bindable(false),
@@ -20,6 +22,8 @@
 		request: CurrentStaffRequest;
 		permissions: string[];
 		route: string;
+		/** The Requests index view this workspace was opened from; kept through every action. */
+		returnContext?: RequestListQuery | null;
 		error?: string;
 		reviewRequired?: boolean;
 		pending?: boolean;
@@ -69,7 +73,7 @@
 {#if serve || close}
 	<form
 		method="POST"
-		action={serve ? '?/markServed' : '?/closeInquiry'}
+		action={workspaceAction(returnContext, serve ? 'markServed' : 'closeInquiry')}
 		use:enhance={submit}
 		aria-busy={submitting}
 		class="flex flex-[1.4_1_150px]"

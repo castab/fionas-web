@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Card } from '@fionas/ui';
+	import { resolve } from '$app/paths';
+	import { cardVariants, cn, focusRing } from '@fionas/ui';
 	import type { StatTileView, StatTone } from '$lib/dashboard.js';
+	import { listSearch } from '$lib/request-list.js';
 	let { stat }: { stat: StatTileView } = $props();
 	const toneClass: Record<StatTone, string> = {
 		olive: 'text-olive-700',
@@ -10,10 +12,17 @@
 	};
 </script>
 
-<Card
+<!-- The whole tile is one native link to the matching Requests view, even at zero. -->
+<!-- eslint-disable svelte/no-navigation-without-resolve -- the path is resolve()d; listSearch builds its query -->
+<a
+	href={resolve('/(app)/requests') + listSearch({ filter: stat.filter })}
 	data-testid="summary-card"
-	aria-label={`${stat.label}: ${stat.count}`}
-	class="flex flex-col items-start gap-1 px-3.5 py-4"
+	aria-label={`${stat.label}: ${stat.count}. View ${stat.destination}`}
+	class={cn(
+		cardVariants({ variant: 'raised' }),
+		'flex min-h-11 flex-col items-start gap-1 px-3.5 py-4 text-(--text-body) no-underline transition-colors duration-(--dur-fast) ease-(--ease-out) hover:bg-cream-100/80 hover:text-(--text-body)',
+		focusRing
+	)}
 >
 	<span class={`font-sans text-[26px] leading-none font-bold ${toneClass[stat.tone]}`}
 		>{stat.count}</span
@@ -22,4 +31,5 @@
 		class="font-sans text-[10px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-muted) uppercase"
 		>{stat.label}</span
 	>
-</Card>
+</a>
+<!-- eslint-enable svelte/no-navigation-without-resolve -->

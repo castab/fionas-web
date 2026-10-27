@@ -41,16 +41,22 @@ Successful empty queues show "You’re caught up here." A forbidden response exp
 account cannot view the dashboard; other failures show safe unavailable copy and a full reload
 link. Failures do not render zero counts or expose backend diagnostic messages.
 
-Queue cards link to `/requests/{inquiryId}` without fetching additional data themselves; summary
-tiles remain presentational. New quote, the Requests index, Calendar, Menu, and Account settings
-remain disabled. The request workspace highlights Requests without providing a fake index link.
-Sign out remains available in the sidebar and mobile disclosure, including without JavaScript.
+Queue cards link to `/requests/{inquiryId}` without fetching additional data themselves. Each
+summary tile is a native link to its [Requests index](admin-requests-index.md) view: New →
+`/requests?filter=new`, Quoted → `?filter=quoted`, Booked → `?filter=booked`, Needs closing →
+`?filter=needs-closing`. Tile counts still come only from `/staff/dashboard` (the index is never
+read to compute them), zero-count tiles still navigate, and each accessible name carries the count
+and destination. Requests is a working link in the sidebar and mobile navigation; New quote,
+Calendar, Menu, and Account settings remain disabled. Sign out remains available in the sidebar and
+mobile disclosure, including without JavaScript.
 
 See [admin-request-workspace.md](admin-request-workspace.md) for request review and Quote issuance.
 
 ## Validation
 
 Unit tests cover the server client and presentation helpers. The admin E2E stub implements auth
-and the dashboard with session-scoped empty, overlap, forbidden, and unavailable scenarios.
+and the dashboard with session-scoped empty, overlap, forbidden, and unavailable scenarios. Its
+summary is derived from the same session fixtures as `GET /staff/requests`.
 Desktop and mobile Playwright coverage verifies the projection, read counts, retry, safe failures,
-responsive overflow, and existing login/logout behavior.
+tile links (including keyboard and zero counts), responsive overflow, and existing login/logout
+behavior.

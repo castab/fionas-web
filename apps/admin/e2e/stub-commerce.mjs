@@ -4,7 +4,13 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
-import { requestFixtures, proposalPair, appendPayment, fixtureMinor } from './request-fixture.mjs';
+import {
+	requestFixtures,
+	proposalPair,
+	appendPayment,
+	fixtureMinor,
+	mayaId
+} from './request-fixture.mjs';
 import { issueComposedQuote, previewQuote } from './quote-stub.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
@@ -55,6 +61,149 @@ function readJson(req) {
 const sessionToken = (req) =>
 	/(?:^|;\s*)__Host-fionas_session=("?)([^;"]*)\1(?:;|$)/.exec(req.headers.cookie ?? '')?.[2] ||
 	null;
+
+const zero = (value) => /^-?0+(?:\.0+)?$/.test(value);
+// Fixture-only stand-ins for the backend's classification. The admin app never computes these.
+const needsClosing = (request) =>
+	request.inquiry.lifecycle.stage === 'SERVED' &&
+	request.financial.stage === 'INVOICE' &&
+	zero(request.financial.reconciliation.balance);
+const filters = {
+	all: () => true,
+	new: (r) => r.inquiry.lifecycle.stage === 'REQUESTED',
+	quoted: (r) => r.inquiry.lifecycle.stage === 'QUOTED',
+	booked: (r) => ['BOOKED', 'SERVED'].includes(r.inquiry.lifecycle.stage),
+	'needs-closing': needsClosing,
+	closed: (r) => r.inquiry.lifecycle.stage === 'CLOSED',
+	declined: (r) => r.inquiry.lifecycle.stage === 'DECLINED'
+};
+
+function summaryOf(requests) {
+	const all = Object.values(requests);
+	const count = (filter) => all.filter(filters[filter]).length;
+	return {
+		new: count('new'),
+		quoted: count('quoted'),
+		booked: count('booked'),
+		needsClosing: count('needs-closing')
+	};
+}
+
+/** `StaffRequestListItemResponse` projected from a session's staff-request fixture. */
+function listItem(request) {
+	const { inquiry, financial } = request;
+	return {
+		inquiryId: inquiry.id,
+		customerId: inquiry.customerId,
+		customerName: inquiry.name,
+		customerEmail: inquiry.email,
+		eventDate: inquiry.eventDate,
+		eventType: inquiry.eventType,
+		stage: inquiry.lifecycle.stage,
+		needsClosing: needsClosing(request),
+		documentId: financial.id,
+		version: financial.version,
+		financialStage: financial.stage,
+		total: financial.total,
+		totalQualifier:
+			financial.stage === 'ESTIMATE' && inquiry.requestedService.guestCountIsMinimum
+				? 'FROM'
+				: 'EXACT',
+		balance: financial.reconciliation.balance,
+		currency: financial.currency,
+		inquiryCreatedAt: inquiry.createdAt,
+		latestDocumentVersionAt: financial.createdAt
+	};
+}
+
+// Like the API's cursor: base64url, bound to the normalized filter and search, opaque to clients.
+const encodeCursor = (identity, item) =>
+	Buffer.from(JSON.stringify([identity, item.inquiryCreatedAt, item.inquiryId])).toString(
+		'base64url'
+	);
+function decodeCursor(cursor, identity) {
+	try {
+		const [bound, createdAt, id] = JSON.parse(Buffer.from(cursor, 'base64url').toString());
+		return bound === identity && typeof createdAt === 'string' && typeof id === 'string'
+			? { createdAt, id }
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+/** Mirrors fionas-commerce's listStaffRequests: membership, search, order, cursor, totalCount. */
+function listRequests(session, params) {
+	const malformed = {
+		status: 400,
+		body: { code: 'malformed_request', message: 'PRIVATE list diagnostic' }
+	};
+	if (
+		!session.permissions.includes('fionas.inquiries.read') ||
+		!session.permissions.includes('commerce.financial-document.read') ||
+		session.listMode === 'list-forbidden'
+	)
+		return { status: 403, body: { code: 'forbidden', message: 'PRIVATE list access diagnostic' } };
+	if (session.listMode === 'list-unavailable')
+		return {
+			status: 500,
+			body: { code: 'internal_failure', message: 'PRIVATE list database diagnostic' }
+		};
+	if (['filter', 'q', 'limit', 'cursor'].some((name) => params.getAll(name).length > 1))
+		return malformed;
+	const filter = params.get('filter') ?? 'all';
+	if (!Object.hasOwn(filters, filter)) return malformed;
+	const raw = params.get('q');
+	if (raw !== null && (raw.length > 200 || /\p{Cc}/u.test(raw.trim()))) return malformed;
+	const q = raw?.trim().toLowerCase() || null;
+	const rawLimit = params.get('limit');
+	const limit = rawLimit === null ? (session.listPageSize ?? 25) : Number(rawLimit);
+	if ((rawLimit !== null && !/^\d+$/.test(rawLimit)) || limit < 1 || limit > 100) return malformed;
+	const identity = `${filter}|${q ?? ''}`;
+	const cursor = params.get('cursor');
+	const after = cursor === null ? null : decodeCursor(cursor, identity);
+	if (cursor !== null && !after) return malformed;
+	if (session.listMode === 'list-malformed')
+		return {
+			status: 200,
+			body: { items: [{ inquiryId: mayaId, total: 415 }], totalCount: 'many' }
+		};
+	const matches =
+		session.listMode === 'list-empty'
+			? []
+			: Object.values(session.requests)
+					.filter(filters[filter])
+					.filter(
+						(r) =>
+							!q ||
+							r.inquiry.name.toLowerCase().includes(q) ||
+							r.inquiry.email.toLowerCase().includes(q) ||
+							r.inquiry.id === q
+					)
+					.map(listItem)
+					.sort((a, b) =>
+						a.inquiryCreatedAt === b.inquiryCreatedAt
+							? b.inquiryId.localeCompare(a.inquiryId)
+							: Date.parse(b.inquiryCreatedAt) - Date.parse(a.inquiryCreatedAt)
+					);
+	const remaining = after
+		? matches.filter(
+				(item) =>
+					Date.parse(item.inquiryCreatedAt) < Date.parse(after.createdAt) ||
+					(item.inquiryCreatedAt === after.createdAt && item.inquiryId < after.id)
+			)
+		: matches;
+	const page = remaining.slice(0, limit);
+	return {
+		status: 200,
+		body: {
+			items: page,
+			// CommerceJson omits null: the last page has no nextCursor key at all.
+			...(remaining.length > limit && { nextCursor: encodeCursor(identity, page.at(-1)) }),
+			totalCount: matches.length
+		}
+	};
+}
 
 createServer(async (req, res) => {
 	const { pathname } = new URL(req.url ?? '/', 'http://stub');
@@ -122,6 +271,10 @@ createServer(async (req, res) => {
 			paymentAttempts: [],
 			fulfillmentAttempts: [],
 			declineAttempts: [],
+			requestListReads: 0,
+			requestListQueries: [],
+			listMode: null,
+			listPageSize: null,
 			requests: requestFixtures(),
 			permissions:
 				body.username === 'request-read-only'
@@ -188,19 +341,13 @@ createServer(async (req, res) => {
 				item.version = request.financial.version;
 			}
 		}
-		const declined = new Set();
-		for (const queue of Object.values(projection.workQueue)) {
-			for (const item of queue.items) if (item.stage === 'DECLINED') declined.add(item.inquiryId);
+		for (const queue of Object.values(projection.workQueue))
 			queue.items = queue.items.filter((item) => item.stage !== 'DECLINED');
-		}
-		// Only REQUESTED inquiries can be declined, so each was counted as new.
-		projection.summary.new -= declined.size;
-		const issued = projection.workQueue.needsQuote.items.filter((item) => item.stage === 'QUOTED');
 		projection.workQueue.needsQuote.items = projection.workQueue.needsQuote.items.filter(
 			(item) => item.stage !== 'QUOTED'
 		);
-		projection.summary.new -= issued.length;
-		projection.summary.quoted += issued.length;
+		// The counts the backend derives from the same state as GET /staff/requests's filters.
+		if (session.mode !== 'dashboard-empty') projection.summary = summaryOf(session.requests);
 		return send(res, 200, projection, { 'cache-control': 'no-store' });
 	}
 
@@ -212,8 +359,20 @@ createServer(async (req, res) => {
 			currentSession.mode = body?.mode ?? user.username;
 			if (body?.permissions) currentSession.permissions = body.permissions;
 			if (body?.request) currentSession.requests[body.request.inquiry.id] = body.request;
+			if (body && 'listMode' in body) currentSession.listMode = body.listMode;
+			if (body && 'pageSize' in body) currentSession.listPageSize = body.pageSize;
 			return send(res, 204);
 		}
+	}
+
+	if (route === 'GET /staff/requests') {
+		if (!currentSession)
+			return send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
+		currentSession.requestListReads++;
+		const search = new URL(req.url ?? '/', 'http://stub').search;
+		currentSession.requestListQueries.push(search);
+		const result = listRequests(currentSession, new URLSearchParams(search));
+		return send(res, result.status, result.body, { 'cache-control': 'no-store' });
 	}
 
 	const requestMatch = /^\/staff\/requests\/([^/]+)$/.exec(pathname);

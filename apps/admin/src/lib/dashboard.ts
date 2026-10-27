@@ -1,8 +1,17 @@
 import type { StaffDashboardItem, StaffDashboardResponse } from './dashboard-contract.js';
+import type { RequestFilter } from './request-list.js';
 import { BUSINESS_TIME_ZONE, dateTile, eventTypeLabel, formatMoney } from './presentation.js';
 
 export type StatTone = 'olive' | 'olive-soft' | 'moss' | 'rust';
-export type StatTileView = { label: string; count: number; tone: StatTone };
+/** A summary count and the Requests index filter it opens (the backend's matching category). */
+export type StatTileView = {
+	label: string;
+	count: number;
+	tone: StatTone;
+	filter: Exclude<RequestFilter, 'all' | 'closed' | 'declined'>;
+	/** What the link opens, for its accessible name. */
+	destination: string;
+};
 export type RequestCardView = {
 	id: string;
 	name: string;
@@ -79,10 +88,34 @@ export function dashboardView(response: StaffDashboardResponse): DashboardView {
 		dateLabel: formatToday(asOf),
 		waitingCount: uniqueWaitingCount(workQueue),
 		stats: [
-			{ label: 'New', count: summary.new, tone: 'olive' },
-			{ label: 'Quoted', count: summary.quoted, tone: 'olive-soft' },
-			{ label: 'Booked', count: summary.booked, tone: 'moss' },
-			{ label: 'Needs closing', count: summary.needsClosing, tone: 'rust' }
+			{
+				label: 'New',
+				count: summary.new,
+				tone: 'olive',
+				filter: 'new',
+				destination: 'new requests'
+			},
+			{
+				label: 'Quoted',
+				count: summary.quoted,
+				tone: 'olive-soft',
+				filter: 'quoted',
+				destination: 'quoted requests'
+			},
+			{
+				label: 'Booked',
+				count: summary.booked,
+				tone: 'moss',
+				filter: 'booked',
+				destination: 'booked requests'
+			},
+			{
+				label: 'Needs closing',
+				count: summary.needsClosing,
+				tone: 'rust',
+				filter: 'needs-closing',
+				destination: 'requests that need closing'
+			}
 		],
 		replyGroup: workQueue.needsReply.items.map((item) => requestCard(item, asOf)),
 		quoteGroup: workQueue.needsQuote.items.map((item) => requestCard(item, asOf)),

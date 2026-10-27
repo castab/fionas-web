@@ -36,8 +36,15 @@ test('renders the operational projection with dates, amounts and snapshot waitin
 	await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow');
 	const summary = page.getByTestId('summary-card');
 	await expect(summary).toHaveCount(4);
-	for (const [index, label] of ['New: 2', 'Quoted: 1', 'Booked: 1', 'Needs closing: 1'].entries()) {
+	for (const [index, [label, href]] of [
+		['New: 2. View new requests', '/requests?filter=new'],
+		['Quoted: 2. View quoted requests', '/requests?filter=quoted'],
+		['Booked: 2. View booked requests', '/requests?filter=booked'],
+		['Needs closing: 1. View requests that need closing', '/requests?filter=needs-closing']
+	].entries()) {
+		await expect(summary.nth(index)).toHaveRole('link');
 		await expect(summary.nth(index)).toHaveAttribute('aria-label', label);
+		await expect(summary.nth(index)).toHaveAttribute('href', href);
 	}
 	for (const group of ['Needs a reply', 'Needs a quote', 'Needs resolution']) {
 		await expect(page.getByRole('heading', { name: group })).toBeVisible();
@@ -94,7 +101,7 @@ test('reads the dashboard exactly once per load, through the server, without per
 	expect(response?.headers()['cache-control']).toBe('no-store');
 });
 
-test('the shell has deliberate unavailable navigation and an accessible sign out', async ({
+test('the shell links Requests, keeps unfinished sections disabled, and has an accessible sign out', async ({
 	page,
 	isMobile
 }) => {
@@ -104,9 +111,14 @@ test('the shell has deliberate unavailable navigation and an accessible sign out
 		'aria-current',
 		'page'
 	);
-	for (const section of ['Requests', 'Calendar', 'Menu']) {
+	await expect(nav.getByRole('link', { name: 'Requests' })).toHaveAttribute('href', '/requests');
+	await expect(nav.getByRole('link', { name: 'Requests' })).not.toHaveAttribute('aria-current');
+	for (const section of ['Calendar', 'Menu']) {
 		await expect(nav.getByRole('button', { name: `${section} Coming next` })).toBeDisabled();
+		await expect(nav.getByRole('link', { name: section })).toHaveCount(0);
 	}
+	await expect(page.getByRole('button', { name: 'New quote' }).first()).toBeDisabled();
+	await expect(page.getByText('Index coming next')).toHaveCount(0);
 	if (isMobile) {
 		await expect(page.getByTestId('sidebar')).toBeHidden();
 		await page.getByLabel('Your account').click();

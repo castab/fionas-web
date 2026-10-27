@@ -45,6 +45,9 @@ Why it has to be this way:
 | Dashboard projection client                | `apps/admin/src/lib/server/dashboard.ts`                           |
 | Dashboard page and presentation            | `apps/admin/src/routes/(app)/+page.*`, `src/lib/dashboard*.ts`     |
 | Dashboard data and presentation boundary   | `docs/admin-dashboard-report.md`                                   |
+| Requests collection client                 | `apps/admin/src/lib/server/request-list.ts`                        |
+| Requests index route, URL state, rows      | `routes/(app)/requests/+page.*`, `src/lib/request-list*.ts`        |
+| Requests index behavior, return context    | `docs/admin-requests-index.md`                                     |
 | Request projection + proposal client       | `apps/admin/src/lib/server/staff-request.ts`                       |
 | Request review + atomic Issue Quote action | `apps/admin/src/routes/(app)/requests/[inquiryId]/`                |
 | Request workspace behavior                 | `docs/admin-request-workspace.md`                                  |
@@ -149,7 +152,7 @@ npm run test:e2e                             # admin against a stub API (public 
 ```
 
 E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `/auth/login`, `/auth/me`,
-`/auth/logout`, `/staff/dashboard`, `/staff/requests/{inquiryId}`,
+`/auth/logout`, `/staff/dashboard`, `GET /staff/requests` (filters, search, cursors), `/staff/requests/{inquiryId}`,
 `POST /staff/requests/{inquiryId}/quote-preview`, `POST /staff/requests/{inquiryId}/proposals` for atomic
 Quote + deposit + proposal issuance, `POST /financial-documents/{documentId}/payments`, and
 `POST /inquiries/{inquiryId}/served` and `/close` (Origin check, `Secure; HttpOnly` cookie, plus the usernames

@@ -26,6 +26,17 @@ export function eventDateLabel(iso: string): string {
 	}).format(calendarDate(iso));
 }
 
+/** "Sat, Jul 25, 2026": compact enough for a list row, with the year for history. */
+export function eventDateShortLabel(iso: string): string {
+	return new Intl.DateTimeFormat('en-US', {
+		weekday: 'short',
+		month: 'short',
+		day: 'numeric',
+		year: 'numeric',
+		timeZone: 'UTC'
+	}).format(calendarDate(iso));
+}
+
 /** Today's calendar date (YYYY-MM-DD) in the business timezone. */
 export function businessDate(now: Date): string {
 	const parts = new Intl.DateTimeFormat('en-US', {

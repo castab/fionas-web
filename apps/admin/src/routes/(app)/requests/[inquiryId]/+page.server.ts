@@ -24,6 +24,7 @@ import type { RecordPaymentRequest } from '$lib/payment-contract.js';
 import { matchesReviewedSuggestion } from '$lib/deposit.js';
 import { CURRENCY } from '$lib/currency.js';
 import { businessDate } from '$lib/presentation.js';
+import { readReturnContext, workspaceRedirect } from '$lib/request-list.js';
 import {
 	declineErrorMessage,
 	declineReason,
@@ -75,6 +76,8 @@ export const load: PageServerLoad = async ({
 	const quoteOpen = url.searchParams.has('quote');
 	const paymentOpen = url.searchParams.has('payment');
 	const declineOpen = url.searchParams.has('decline');
+	// Opened from the Requests index: its validated filter/search/cursor, for Back to requests.
+	const returnContext = readReturnContext(url.searchParams);
 	const today = businessDate(new Date());
 	const result = await getStaffRequest(config, params.inquiryId, cookie);
 	if (!result.ok && result.error.status === 401) redirect(303, '/login');
@@ -92,6 +95,7 @@ export const load: PageServerLoad = async ({
 			quoteOpen,
 			paymentOpen,
 			declineOpen,
+			returnContext,
 			today,
 			initialQuote: null
 		};
@@ -138,6 +142,7 @@ export const load: PageServerLoad = async ({
 		quoteOpen,
 		paymentOpen,
 		declineOpen,
+		returnContext,
 		today,
 		initialQuote
 	};
@@ -251,7 +256,7 @@ async function quoteAction(event: RequestEvent, issue: boolean) {
 		return quoteFailure(result.error.status, values, true);
 	}
 	applySetCookies(cookies, result.setCookies);
-	redirect(303, url.pathname);
+	redirect(303, workspaceRedirect(url));
 }
 export const actions: Actions = {
 	markServed: fulfillmentAction('markServed'),
@@ -296,7 +301,7 @@ function fulfillmentAction(action: FulfillmentAction): Actions[string] {
 			return failure(result.error.status, true);
 		}
 		applySetCookies(cookies, result.setCookies);
-		redirect(303, url.pathname);
+		redirect(303, workspaceRedirect(url));
 	};
 }
 
@@ -368,7 +373,7 @@ function paymentAction(deposit: boolean): Actions[string] {
 			return paymentFailure(result.error.status, true);
 		}
 		applySetCookies(cookies, result.setCookies);
-		redirect(303, url.pathname);
+		redirect(303, workspaceRedirect(url));
 	};
 }
 
@@ -441,5 +446,5 @@ async function declineAction({ params, locals, request, url, cookies }: RequestE
 		return failure(result.error.status, { attempted: true, values });
 	}
 	applySetCookies(cookies, result.setCookies);
-	redirect(303, url.pathname);
+	redirect(303, workspaceRedirect(url));
 }

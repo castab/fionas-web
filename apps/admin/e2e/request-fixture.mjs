@@ -1,7 +1,21 @@
-import { dashboardFixture } from './dashboard-fixture.mjs';
+import { dashboardFixture, quietRequestItems } from './dashboard-fixture.mjs';
 
 export const mayaId = '00000000-0000-0000-0000-000000000003';
 export const mayaDocumentId = '10000000-0000-0000-0000-000000000003';
+/** A quoted request in no dashboard queue: only the Requests index leads to it. */
+export const sofiaId = '00000000-0000-0000-0000-000000000006';
+
+/** Distinct customer emails, so the Requests search can match an email that isn't the name. */
+const emails = {
+	'Lena Ortiz': 'lena.ortiz@example.com',
+	'Marcus Lee': 'marcus.lee@example.com',
+	'Maya Torres': 'maya.torres@example.com',
+	'Dan Whitfield': 'dan@whitfieldco.example',
+	'Priya Nathan': 'priya.nathan@example.com',
+	'Sofia Ramirez-Delacruz': 'sofia.ramirez-delacruz.celebrations.and.weddings@example-events.com',
+	'Oliver Grant': 'ogrant@example.org',
+	'Hannah Kim': 'hannah.kim@example.com'
+};
 
 /** Exact fixture-only resolution, matching the API's HALF_UP percentage rounding.
  * @param {string} total
@@ -69,129 +83,144 @@ export function proposalPair(inquiryId, documentId, documentVersion, total, term
 export function requestFixtures() {
 	/** @type {Record<string, import('../src/lib/request-contract.js').CurrentStaffRequest>} */
 	const fixtures = Object.fromEntries(
-		Object.values(dashboardFixture.workQueue)
-			.flatMap((queue) => queue.items)
-			.map((item) => {
-				const maya = item.inquiryId === mayaId;
-				const dan = item.customerName === 'Dan Whitfield';
-				const documentId = `1${item.inquiryId.slice(1)}`;
-				const suggestedDepositTerms = /** @type {const} */ ({
-					type: 'PERCENTAGE',
-					percentage: '20'
-				});
-				const lines = maya
-					? [
-							{
-								id: '20000000-0000-0000-0000-000000000001',
-								description: 'Base service',
-								subDescription: 'Setup, staff & local travel',
-								unitPrice: '205.00',
-								subtotal: '205.00',
-								taxAmount: '0.00',
-								total: '205.00',
-								currency: 'USD'
-							},
-							{
-								id: '20000000-0000-0000-0000-000000000002',
-								description: 'Ice cream service',
-								quantity: '40',
-								unitPrice: '4.50',
-								subtotal: '180.00',
-								taxAmount: '0.00',
-								total: '180.00',
-								currency: 'USD'
-							},
-							{
-								id: '20000000-0000-0000-0000-000000000003',
-								description: 'Waffle cone upgrade',
-								quantity: '40',
-								unitPrice: '0.75',
-								subtotal: '30.00',
-								taxAmount: '0.00',
-								total: '30.00',
-								currency: 'USD'
-							}
-						]
-					: [
-							{
-								id: `2${item.inquiryId.slice(1)}`,
-								description: 'Event service',
-								unitPrice: item.total,
-								subtotal: item.total,
-								taxAmount: '0.00',
-								total: item.total,
-								currency: 'USD'
-							}
-						];
-				return [
-					item.inquiryId,
-					{
-						payments: [],
-						suggestedDepositTerms,
-						...(item.stage === 'REQUESTED'
-							? { proposal: null, depositRequirement: { state: 'NONE', documentId } }
-							: proposalPair(
-									item.inquiryId,
-									documentId,
-									2,
-									item.total,
-									suggestedDepositTerms,
-									item.currency
-								)),
-						inquiry: {
-							id: item.inquiryId,
-							customerId: item.customerId,
-							name: item.customerName,
-							email: maya ? 'maya.torres@example.com' : 'customer@example.com',
-							...(maya && {
-								message: 'Backyard party, driveway parking is easy. My daughter loves strawberry!'
-							}),
-							createdAt: maya ? '2026-07-14T19:00:00Z' : item.inquiryCreatedAt,
-							requestedService: {
-								guestCount: dan ? 120 : 40,
-								guestCountIsMinimum: dan,
-								// Categories repeat out of order, a pick repeats, and one has no category.
-								items: [
-									{ label: 'Vanilla', group: 'Soft serve', key: 'vanilla' },
-									{ label: 'Strawberry', group: 'Soft serve', key: 'strawberry' },
-									{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' },
-									{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
-									{ label: 'Cups', group: 'Vessels', key: 'cup' },
-									{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
-									{ label: 'Birthday candles', group: null, key: null }
-								]
-							},
-							zipCode: '93720',
-							eventDate: item.eventDate,
-							eventType: item.eventType,
-							lifecycle: { documentId, stage: item.stage }
+		[
+			...Object.values(dashboardFixture.workQueue).flatMap((queue) => queue.items),
+			...quietRequestItems
+		].map((item) => {
+			const maya = item.inquiryId === mayaId;
+			const dan = item.customerName === 'Dan Whitfield';
+			// REQUESTED and DECLINED inquiries never had a Quote: Estimate v1, no proposal.
+			const unquoted = item.stage === 'REQUESTED' || item.stage === 'DECLINED';
+			const documentId = `1${item.inquiryId.slice(1)}`;
+			const suggestedDepositTerms = /** @type {const} */ ({
+				type: 'PERCENTAGE',
+				percentage: '20'
+			});
+			const lines = maya
+				? [
+						{
+							id: '20000000-0000-0000-0000-000000000001',
+							description: 'Base service',
+							subDescription: 'Setup, staff & local travel',
+							unitPrice: '205.00',
+							subtotal: '205.00',
+							taxAmount: '0.00',
+							total: '205.00',
+							currency: 'USD'
 						},
-						financial: {
-							linesAuthoredBy: {
-								principalKind: 'SERVICE',
-								principalId: '00000000-0000-4000-8000-0000000000aa',
-								recordedAt: '2026-07-14T19:00:00Z'
-							},
-							id: documentId,
-							inquiryId: item.inquiryId,
-							version: item.stage === 'REQUESTED' ? 1 : item.stage === 'QUOTED' ? 2 : 3,
-							createdAt: item.latestDocumentVersionAt,
-							stage: item.financialStage,
-							lines,
+						{
+							id: '20000000-0000-0000-0000-000000000002',
+							description: 'Ice cream service',
+							quantity: '40',
+							unitPrice: '4.50',
+							subtotal: '180.00',
+							taxAmount: '0.00',
+							total: '180.00',
+							currency: 'USD'
+						},
+						{
+							id: '20000000-0000-0000-0000-000000000003',
+							description: 'Waffle cone upgrade',
+							quantity: '40',
+							unitPrice: '0.75',
+							subtotal: '30.00',
+							taxAmount: '0.00',
+							total: '30.00',
+							currency: 'USD'
+						}
+					]
+				: [
+						{
+							id: `2${item.inquiryId.slice(1)}`,
+							description: 'Event service',
+							unitPrice: item.total,
 							subtotal: item.total,
 							taxAmount: '0.00',
 							total: item.total,
-							currency: item.currency,
-							reconciliation: {
-								grossAllocated: '0.00',
-								netApplied: '0.00',
-								balance: item.balance,
-								currency: item.currency
-							}
+							currency: 'USD'
+						}
+					];
+			return [
+				item.inquiryId,
+				{
+					payments: [],
+					suggestedDepositTerms,
+					...(unquoted
+						? { proposal: null, depositRequirement: { state: 'NONE', documentId } }
+						: proposalPair(
+								item.inquiryId,
+								documentId,
+								2,
+								item.total,
+								suggestedDepositTerms,
+								item.currency
+							)),
+					inquiry: {
+						id: item.inquiryId,
+						customerId: item.customerId,
+						name: item.customerName,
+						email: emails[/** @type {keyof typeof emails} */ (item.customerName)],
+						...(maya && {
+							message: 'Backyard party, driveway parking is easy. My daughter loves strawberry!'
+						}),
+						createdAt: maya ? '2026-07-14T19:00:00Z' : item.inquiryCreatedAt,
+						requestedService: {
+							guestCount: dan ? 120 : 40,
+							guestCountIsMinimum: dan,
+							// Categories repeat out of order, a pick repeats, and one has no category.
+							items: [
+								{ label: 'Vanilla', group: 'Soft serve', key: 'vanilla' },
+								{ label: 'Strawberry', group: 'Soft serve', key: 'strawberry' },
+								{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' },
+								{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+								{ label: 'Cups', group: 'Vessels', key: 'cup' },
+								{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+								{ label: 'Birthday candles', group: null, key: null }
+							]
+						},
+						zipCode: '93720',
+						eventDate: item.eventDate,
+						eventType: item.eventType,
+						lifecycle: {
+							documentId,
+							stage: item.stage,
+							...(item.stage === 'DECLINED' && {
+								declined: {
+									occurredAt: '2026-07-06T17:30:00Z',
+									principalKind: 'USER',
+									principalId: '00000000-0000-0000-0000-000000000001',
+									reason: 'Fully booked that weekend.',
+									documentVersion: 1
+								}
+							})
+						}
+					},
+					financial: {
+						linesAuthoredBy: {
+							principalKind: 'SERVICE',
+							principalId: '00000000-0000-4000-8000-0000000000aa',
+							recordedAt: '2026-07-14T19:00:00Z'
+						},
+						id: documentId,
+						inquiryId: item.inquiryId,
+						version: unquoted ? 1 : item.stage === 'QUOTED' ? 2 : 3,
+						createdAt: item.latestDocumentVersionAt,
+						stage: item.financialStage,
+						lines,
+						subtotal: item.total,
+						taxAmount: '0.00',
+						total: item.total,
+						currency: item.currency,
+						reconciliation: {
+							grossAllocated: '0.00',
+							netApplied: '0.00',
+							balance: item.balance,
+							currency: item.currency
 						}
 					}
-				];
-			})
+				}
+			];
+		})
 	);
 	for (const request of Object.values(fixtures)) {
 		if (request.financial.stage !== 'INVOICE' || request.depositRequirement.state !== 'ACTIVE')

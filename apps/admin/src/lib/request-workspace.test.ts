@@ -308,3 +308,21 @@ it('rejects legacy and malformed selection responses while accepting custom and 
 	];
 	expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
 });
+
+describe('E2E request fixtures', () => {
+	it('are each a coherent workspace projection, so every Requests result can be opened', () => {
+		const fixtures = Object.values(requestFixtures());
+		expect(fixtures.map((request) => request.inquiry.lifecycle.stage).sort()).toEqual([
+			'BOOKED',
+			'CLOSED',
+			'DECLINED',
+			'QUOTED',
+			'QUOTED',
+			'REQUESTED',
+			'REQUESTED',
+			'SERVED'
+		]);
+		for (const request of fixtures)
+			expect(isCurrentStaffRequest(request, request.inquiry.id), request.inquiry.name).toBe(true);
+	});
+});
