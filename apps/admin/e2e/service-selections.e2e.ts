@@ -38,6 +38,13 @@ async function editorGroups(page: Page) {
 	}
 	return result;
 }
+/** What the customer picked, which no quote, invoice or payment ever changes. */
+const asked: [string, string[]][] = [
+	['Soft serve', ['Vanilla', 'Strawberry']],
+	['Vessels', ['Waffle cones', 'Cups']],
+	['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
+	['Other selections', ['Birthday candles']]
+];
 async function noHorizontalOverflow(page: Page) {
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
 		true
@@ -158,6 +165,9 @@ test.describe('native selections', () => {
 			if (reload) await page.reload();
 			const plan = page.getByTestId('service-plan');
 			expect(await groups(plan)).toEqual(proposed);
+			// The approved plan differs, but the original request stays as recorded.
+			await expect(page.getByTestId('original-request')).toContainText('What they asked for');
+			expect(await groups(page.getByTestId('original-request'))).toEqual(asked);
 			await expect(plan).toContainText('Approved with Quote v2');
 			// Money comes back from commerce, unchanged by any selection edit.
 			await expect(page.getByTestId('financial-document')).toContainText(total);
@@ -254,6 +264,10 @@ test('selections are chips: remove one, add others under categories, then issue 
 		{ label: 'Paper bowls', group: 'Vessels', key: null }
 	]);
 	expect(await groups(page.getByTestId('service-plan'))).toEqual(proposed);
+	await expect(page.getByTestId('original-request')).toContainText('What they asked for');
+	expect(await groups(page.getByTestId('original-request'))).toEqual(asked);
+	await page.reload();
+	expect(await groups(page.getByTestId('original-request'))).toEqual(asked);
 });
 
 for (const field of ['selectionGroup', 'selectionKey'])
