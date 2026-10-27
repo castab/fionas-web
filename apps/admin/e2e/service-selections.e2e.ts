@@ -201,11 +201,18 @@ test('selections are chips: remove one, add others under categories, then issue 
 	await category.fill('Supplies');
 	await editor(page).getByRole('button', { name: 'Add', exact: true }).click();
 	await editor(page).getByRole('button', { name: 'Done', exact: true }).click();
+	// The "+" at the end of a category adds to it: the composer opens already filed there.
+	await editor(page).getByRole('button', { name: 'Add selection to Vessels', exact: true }).click();
+	await expect(category).toHaveValue('Vessels');
+	await expect(label).toBeFocused();
+	await label.fill('Paper bowls');
+	await label.press('Enter');
+	await editor(page).getByRole('button', { name: 'Done', exact: true }).click();
 	await waitForPreview(page);
 	await editor(page).screenshot({ path: testInfo.outputPath('selection-chips.png') });
 
 	const proposed: [string, string[]][] = [
-		['Vessels', ['Waffle cones', 'Cups']],
+		['Vessels', ['Waffle cones', 'Cups', 'Paper bowls']],
 		['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
 		['Other selections', ['Birthday candles']],
 		['Party specials', ['Birthday flavor']],
@@ -225,7 +232,8 @@ test('selections are chips: remove one, add others under categories, then issue 
 		{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
 		{ label: 'Birthday candles', group: null, key: null },
 		{ label: 'Birthday flavor', group: 'Party specials', key: null },
-		{ label: 'Custom cups', group: 'Supplies', key: null }
+		{ label: 'Custom cups', group: 'Supplies', key: null },
+		{ label: 'Paper bowls', group: 'Vessels', key: null }
 	]);
 	expect(await groups(page.getByTestId('service-plan'))).toEqual(proposed);
 });

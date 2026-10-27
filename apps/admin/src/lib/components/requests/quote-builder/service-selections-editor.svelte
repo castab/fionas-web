@@ -74,8 +74,11 @@
 		draftError = '';
 		void focus('[data-selection-add]');
 	}
-	function openComposer() {
+	/** The quick-add pill at the end of a category opens the composer already filed under it. */
+	function openComposer(group = '') {
 		composing = true;
+		draftGroup = group;
+		draftError = '';
 		void focus('[data-selection-draft]');
 	}
 	/** Enter adds the selection; it must not submit the quote form. */
@@ -221,6 +224,18 @@
 						</li>
 					{/if}
 				{/each}
+				{#if hydrated}
+					<li class="inline-flex">
+						<button
+							type="button"
+							class={`inline-flex min-h-8.5 cursor-pointer items-center justify-center rounded-full border border-dashed border-olive-700 bg-transparent px-3.5 py-1.5 font-sans text-[13px] leading-[1.4] font-semibold text-olive-800 transition-[background-color] duration-(--dur-fast) ease-(--ease-out) not-disabled:hover:bg-cream-200 disabled:cursor-not-allowed disabled:opacity-45 ${focusRing}`}
+							aria-label={`Add selection to ${group.heading}`}
+							title="Add to this category"
+							disabled={items.length >= MAX_SELECTIONS}
+							onclick={() => openComposer(group.group)}><span aria-hidden="true">+</span></button
+						>
+					</li>
+				{/if}
 			</ul>
 		</div>
 	{/each}
@@ -298,7 +313,7 @@
 			data-selection-add
 			disabled={items.length >= MAX_SELECTIONS}
 			class={`${lineTool} self-start`}
-			onclick={openComposer}>+ Add selection</button
+			onclick={() => openComposer()}>+ Add selection</button
 		>
 	{/if}
 </div>

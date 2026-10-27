@@ -252,9 +252,10 @@ identities, never sent to commerce and unrelated to the opaque `key`. The comman
 only while its label equals the label the key came with, so a substitution drops its provenance
 (restoring the label restores it). Nothing in a selection selects a price.
 
-Enhanced: selections show as removable chips under their category headings. Remove drops a chip;
-"+ Add selection" opens a composer (label, optional category suggested from the draft; Enter adds
-without submitting the quote form) and appends a keyless selection. Chips carry the same hidden
+Enhanced: selections show as removable chips under their category headings. Remove drops a chip. A
+dashed "+" at the end of each category opens the composer already filed under it, and "+ Add selection"
+opens it uncategorized (a label plus an optional category suggested from the draft); Enter adds
+without submitting the quote form, and a new selection is keyless. Chips carry the same hidden
 `selectionIdentity`/label/group/key/source fields, edits feed the debounced preview, and order follows
 the draft (original picks first, additions after). Renaming or regrouping is a remove plus add, which
 drops provenance as above. Native: every row posts
