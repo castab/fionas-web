@@ -7,25 +7,34 @@
 	import QuoteBuilder from '$lib/components/requests/quote-builder/quote-builder.svelte';
 	import PaymentControls from '$lib/components/requests/payment-controls.svelte';
 	import PaymentHistory from '$lib/components/requests/payment-history.svelte';
+	import RevisionHistory from '$lib/components/requests/revision-history.svelte';
 	import FulfillmentControls from '$lib/components/requests/fulfillment-controls.svelte';
 	import DeclineControls from '$lib/components/requests/decline-controls.svelte';
 	import { canRecordDeposit, canRecordInvoicePayment, receivedTimeLabel } from '$lib/payments.js';
 	import { isDecimal } from '$lib/payment-history.js';
-	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
-	import type { QuoteActionResult } from '$lib/quote-builder.js';
+	import { depositTermsLabel } from '$lib/deposit.js';
+	import {
+		reviewedStateChanged as draftStateChanged,
+		type QuoteActionResult
+	} from '$lib/quote-builder.js';
+	import {
+		availableEditorMode,
+		editorCopy,
+		editorErrorMessage,
+		editorPanels
+	} from '$lib/financial-editor.js';
+	import { hasRevisionHistory } from '$lib/revision-history.js';
 	import { formatMoney, submittedDateLabel } from '$lib/presentation.js';
 	import { listSearch, workspaceSearch, type WorkspacePanel } from '$lib/request-list.js';
 	import {
 		canCloseInquiry,
 		canDeclineInquiry,
-		canIssueQuote,
 		canMarkServed,
 		requestSummaryDescription,
 		lifecycleLabel,
 		lifecycleTone,
 		progressSteps,
 		requestErrorMessage,
-		quoteErrorMessage,
 		requestSummary
 	} from '$lib/request-workspace.js';
 	import type { ActionData, PageData } from './$types';
@@ -39,20 +48,23 @@
 	);
 	// A native failed POST may render newer reviewed state than the staff member saw: review first.
 	const reviewedStateChanged = $derived(
-		!!quoteResult?.quoteValues &&
-			!!request &&
-			(quoteResult.quoteValues.deposit.expectedVersion !== String(request.financial.version) ||
-				!matchesReviewedSuggestion(quoteResult.quoteValues.deposit, request.suggestedDepositTerms))
+		!!quoteResult?.quoteValues && !!request && draftStateChanged(quoteResult.quoteValues, request)
 	);
 	const reviewRequired = $derived(!!quoteResult?.reviewRequired || reviewedStateChanged);
 	const builderResult = $derived(
-		reviewedStateChanged && !quoteResult?.reviewRequired
-			? { ...quoteResult, quoteError: quoteErrorMessage(409), reviewRequired: true }
+		reviewedStateChanged && !quoteResult?.reviewRequired && quoteResult?.quoteValues
+			? {
+					...quoteResult,
+					quoteError: editorErrorMessage(quoteResult.quoteValues.mode, 409),
+					reviewRequired: true
+				}
 			: quoteResult
 	);
-	const showBuilder = $derived(
-		!!request && canIssueQuote(request, data.user.permissions) && (data.quoteOpen || !!quoteResult)
-	);
+	// One editor at most, chosen by the lifecycle: the server resolves the URL flags deterministically.
+	const editorMode = $derived(data.editorMode);
+	const showBuilder = $derived(!!request && !!editorMode);
+	// The lifecycle's editor, offered as a button whether or not it is open.
+	const availableMode = $derived(availableEditorMode(request, data.user.permissions));
 	const mutationReviewRequired = $derived(
 		clientReviewRequired ||
 			reviewRequired ||
@@ -261,16 +273,21 @@
 					{/if}
 				{/if}
 			</div>
-			{#if canIssueQuote(request, data.user.permissions) || canDecline}
+			{#if availableMode || canDecline}
 				<!-- Separate permissions: either action can appear without the other. -->
 				<div class="flex flex-wrap gap-2.5">
-					{#if canIssueQuote(request, data.user.permissions)}
-						<!-- Once the panel is open, Build quote brings it into view instead of reloading it. -->
+					{#if availableMode}
+						<!-- Once the panel is open, this brings it into view instead of reloading it. -->
 						<Button
-							href={showBuilder ? '#quote-builder' : panelHref('quote')}
+							href={showBuilder ? '#quote-builder' : panelHref(editorPanels[availableMode])}
+							variant={availableMode === 'INVOICE_AMENDMENT' ? 'secondary' : 'primary'}
 							disabled={mutationPending || mutationReviewRequired}
 							class="min-h-12 flex-[1.4_1_150px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-							data-testid="build-quote">Build quote</Button
+							data-testid={availableMode === 'INITIAL_QUOTE'
+								? 'build-quote'
+								: availableMode === 'QUOTE_REVISION'
+									? 'revise-quote'
+									: 'amend-invoice'}>{editorCopy[availableMode].open}</Button
 						>
 					{/if}
 					{#if canDecline}
@@ -395,12 +412,14 @@
 				}}
 			/>
 		{/if}
-		{#if showBuilder}
+		{#if showBuilder && editorMode}
 			<QuoteBuilder
 				{request}
+				mode={editorMode}
 				{route}
 				returnContext={data.returnContext}
 				result={builderResult ?? data.initialQuote}
+				focusOnOpen={!form}
 				blocked={mutationReviewRequired}
 				bind:pending={mutationPending}
 				onReviewRequired={() => {
@@ -408,14 +427,22 @@
 				}}
 			/>
 		{/if}
-		<RequestDetails inquiry={request.inquiry} approvedPlan={!!request.servicePlan} />
-		<FinancialDocumentCard
-			{financial}
-			{stage}
-			proposal={request.proposal ?? null}
-			servicePlan={request.servicePlan ?? null}
+		<RequestDetails
+			inquiry={request.inquiry}
+			approvedPlan={!!request.effectiveServicePlan && !request.effectiveServicePlan.cleared}
 		/>
+		<FinancialDocumentCard {request} />
 		<PaymentHistory {request} />
+		{#if hasRevisionHistory(request)}
+			<RevisionHistory
+				{request}
+				history={data.history}
+				open={data.historyOpen}
+				openHref={panelHref('history')}
+				closeHref={route}
+				userId={data.user.id}
+			/>
+		{/if}
 	{:else}
 		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request unavailable</h1>
 		<Card role="alert" class="flex flex-col items-start gap-4">

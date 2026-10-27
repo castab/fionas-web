@@ -162,6 +162,7 @@ for (const native of [false, true]) {
 			const newer = paymentFixture();
 			newer.proposal!.id = '30000000-0000-0000-0000-000000000099';
 			newer.proposal!.documentVersion = 3;
+			newer.proposalHistory = [structuredClone(newer.proposal!)];
 			newer.financial.version = 3;
 			if (newer.depositRequirement.state === 'ACTIVE')
 				newer.depositRequirement.approvalDocumentVersion = 3;

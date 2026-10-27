@@ -12,6 +12,15 @@ import {
 	mayaId
 } from './request-fixture.mjs';
 import { issueComposedQuote, previewQuote } from './quote-stub.mjs';
+import {
+	applyInvoiceRevision,
+	applyQuoteRevision,
+	ensureHistory,
+	previewInvoiceRevision,
+	previewQuoteRevision,
+	projection,
+	recordBooking
+} from './revision-stub.mjs';
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
@@ -267,6 +276,7 @@ createServer(async (req, res) => {
 			requestReads: 0,
 			proposalAttempts: [],
 			previewAttempts: [],
+			revisionAttempts: [],
 			quoteEpoch: 0,
 			paymentAttempts: [],
 			fulfillmentAttempts: [],
@@ -396,9 +406,9 @@ createServer(async (req, res) => {
 		const request = currentSession.requests[requestMatch[1]];
 		if (!request)
 			return send(res, 404, { code: 'not_found', message: 'PRIVATE inquiry identity diagnostic' });
-		const projection = structuredClone(request);
-		if (mode === 'request-missing-reconciliation') delete projection.financial.reconciliation;
-		return send(res, 200, projection, { 'cache-control': 'no-store' });
+		const staffRequest = projection(request);
+		if (mode === 'request-missing-reconciliation') delete staffRequest.financial.reconciliation;
+		return send(res, 200, staffRequest, { 'cache-control': 'no-store' });
 	}
 
 	const previewMatch = /^\/staff\/requests\/([^/]+)\/quote-preview$/.exec(pathname);
@@ -424,6 +434,90 @@ createServer(async (req, res) => {
 			return send(res, 409, { code: 'illegal_transition', message: 'PRIVATE declined diagnostic' });
 		const result = previewQuote(currentSession, request, body);
 		return send(res, result.status, result.body, { 'cache-control': 'no-store' });
+	}
+
+	// Quote revisions and Invoice amendments. Mirrors fionas-commerce: Quote authority for Quote
+	// revisions, Invoice authority (no deposit management) for amendments, a trusted Origin, a stale
+	// expected version as `conflict`, and a token that no longer matches as QUOTE_REVIEW_STALE.
+	const revisionMatch =
+		/^\/staff\/requests\/([^/]+)\/(quote-revision-preview|proposals\/quote-revisions|invoice-revision-preview|invoice-revisions)$/.exec(
+			pathname
+		);
+	if (req.method === 'POST' && revisionMatch) {
+		if (!currentSession) return send(res, 401);
+		const body = await readJson(req);
+		const [, inquiryId, operation] = revisionMatch;
+		currentSession.revisionAttempts.push({ inquiryId, operation, body });
+		const invoice = operation.startsWith('invoice');
+		const publish = operation === 'invoice-revisions' || operation === 'proposals/quote-revisions';
+		const needs = invoice
+			? ['commerce.financial-document.create', 'fionas.financial-terms.manage']
+			: [
+					'commerce.financial-document.create',
+					'commerce.deposit-requirement.manage',
+					'fionas.financial-terms.manage'
+				];
+		const refusal = (status, code, message = 'PRIVATE revision diagnostic') =>
+			send(res, status, { code, message });
+		if (
+			req.headers.origin !== trustedOrigin ||
+			needs.some((permission) => !currentSession.permissions.includes(permission)) ||
+			currentSession.mode === 'revision-forbidden'
+		)
+			return refusal(403, 'forbidden');
+		const request = currentSession.requests[inquiryId];
+		if (!request) return refusal(404, 'not_found');
+		if (!publish && currentSession.mode === 'revision-preview-unavailable')
+			return refusal(500, 'internal_failure');
+		if (publish && currentSession.mode === 'revision-conflict') return refusal(409, 'conflict');
+		const run = invoice ? previewInvoiceRevision : previewQuoteRevision;
+		if (!publish) {
+			const reviewed = run(currentSession, request, body);
+			return send(res, reviewed.status, reviewed.body, { 'cache-control': 'no-store' });
+		}
+		if (typeof body?.reviewToken !== 'string') return refusal(400, 'malformed_request');
+		if (currentSession.mode === 'quote-review-stale') {
+			// Something authoritative changed after review: tokens move on, and staff must re-approve.
+			currentSession.mode = user.username;
+			currentSession.quoteEpoch++;
+			return refusal(409, 'QUOTE_REVIEW_STALE');
+		}
+		const { reviewToken, ...previewBody } = body;
+		const reviewed = run(currentSession, request, previewBody);
+		if (reviewed.status !== 200) return send(res, reviewed.status, reviewed.body);
+		const token = invoice ? reviewed.body.reviewToken : reviewed.body.quote.reviewToken;
+		if (token !== reviewToken) return refusal(409, 'QUOTE_REVIEW_STALE');
+		if (currentSession.mode === 'revision-unavailable') return refusal(500, 'internal_failure');
+		const result = invoice
+			? applyInvoiceRevision(request, reviewed.body, previewBody, user.id)
+			: applyQuoteRevision(request, reviewed.body, previewBody, user.id);
+		// Committed, then the response is lost: only a reload can tell.
+		if (currentSession.mode === 'revision-ambiguous') return refusal(500, 'internal_failure');
+		return send(res, 200, result, { 'cache-control': 'no-store' });
+	}
+
+	// Optional history reads; the workspace must stay usable when they fail.
+	const historyMatch =
+		/^\/financial-documents\/([^/]+)\/(history|deposit-requirement\/history)$/.exec(pathname);
+	if (req.method === 'GET' && historyMatch) {
+		if (!currentSession) return send(res, 401);
+		if (currentSession.mode === 'history-unavailable')
+			return send(res, 500, { code: 'internal_failure', message: 'PRIVATE history diagnostic' });
+		const request = Object.values(currentSession.requests).find(
+			(candidate) => candidate.financial.id === historyMatch[1]
+		);
+		if (!request) return send(res, 404, { code: 'not_found', message: 'PRIVATE history' });
+		const history = ensureHistory(request);
+		if (currentSession.mode === 'history-malformed')
+			return send(res, 200, { id: request.financial.id, versions: 'many' });
+		return send(
+			res,
+			200,
+			historyMatch[2] === 'history'
+				? { id: request.financial.id, inquiryId: request.inquiry.id, versions: history.versions }
+				: { revisions: history.deposits },
+			{ 'cache-control': 'no-store' }
+		);
 	}
 
 	const proposalMatch = /^\/staff\/requests\/([^/]+)\/proposals$/.exec(pathname);
@@ -552,6 +646,8 @@ createServer(async (req, res) => {
 		request.financial.createdAt = '2026-07-16T19:01:00Z';
 		request.inquiry.lifecycle.stage = 'QUOTED';
 		Object.assign(request, pair);
+		request.proposalHistory = [structuredClone(pair.proposal)];
+		request.servicePlanHistory = [];
 		// Commit then fail: the UI must reload/review rather than immediately replay the mutation.
 		if (currentSession.mode === 'proposal-ambiguous')
 			return send(res, 500, {
@@ -724,11 +820,13 @@ createServer(async (req, res) => {
 		if (currentSession.mode === 'payment-unavailable') return refusal(500);
 		const response = appendPayment(request, body.amount, body.method, body.documentVersion);
 		if (deposit) {
+			ensureHistory(request);
 			request.depositRequirement.satisfied = true;
 			request.financial.previousVersion = request.financial.version;
 			request.financial.version++;
 			request.financial.stage = 'INVOICE';
 			request.inquiry.lifecycle.stage = 'BOOKED';
+			recordBooking(request);
 		}
 		if (currentSession.mode === 'payment-ambiguous') return refusal(500);
 		return send(res, 201, response, { 'cache-control': 'no-store' });

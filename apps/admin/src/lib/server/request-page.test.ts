@@ -31,7 +31,7 @@ function event(
 	permissions: string[] = [...PROPOSAL_PERMISSIONS]
 ) {
 	const f = new FormData();
-	for (const [k, v] of Object.entries(values.deposit)) f.set(k, v);
+	for (const [k, v] of Object.entries(values.deposit!)) f.set(k, v);
 	for (const [k, v] of Object.entries({
 		planDescription: values.description,
 		planGuestCount: values.guestCount,
@@ -199,7 +199,7 @@ it.each(['label', 'group', 'key', 'order', 'add', 'remove'])(
 	'requires fresh review for structured selection %s edits',
 	async (kind) => {
 		const reviewed = (await actions!.previewQuote!(event())) as { quoteValues: QuoteFormValues };
-		expect(reviewed).toHaveProperty('preview.servicePlan.items');
+		expect(reviewed).toHaveProperty('preview.quote.servicePlan.items');
 		const items = reviewed.quoteValues.items;
 		if (kind === 'order') items.reverse();
 		else if (kind === 'add') items.push({ ...items[0], rowId: 'duplicate' });

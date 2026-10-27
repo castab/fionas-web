@@ -115,9 +115,34 @@ export type StaffRequestResponse = {
 	suggestedDepositTerms: DepositTermsRequest;
 	depositRequirement: CurrentDepositRequirementResponse;
 	payments: PaymentHistoryResponse[];
-	/** The latest proposal's approved plan; absent before issuance or for deposit-only Quotes. */
+	/**
+	 * The approval bound to the latest proposal, with its earlier meaning after booking. It is not the
+	 * fulfillment commitment once an Invoice is amended: that is `effectiveServicePlan`.
+	 */
 	servicePlan?: ServicePlanResponse | null;
+	/** The latest approval, including an explicit clearing; absent only if a plan was never approved. */
+	effectiveServicePlan?: ServicePlanResponse | null;
+	/** After booking, the proposal's own approval, immutable across Invoice amendments. */
+	acceptedServicePlan?: ServicePlanResponse | null;
+	/** Every approval in its own revision order. Always present (empty when none was ever approved). */
+	servicePlanHistory: ServicePlanResponse[];
+	/** Every publication in durable order. Always present (empty before the first Quote). */
+	proposalHistory: InquiryProposalResponse[];
 };
+/** `GET /financial-documents/{id}/history`: every immutable snapshot, oldest first. */
+export type FinancialDocumentHistoryResponse = {
+	id: string;
+	inquiryId: string;
+	versions: FinancialDocumentResponse[];
+};
+/** A frozen revision: the current projection minus the live `satisfied` flag. */
+export type HistoricalDepositRequirement =
+	| (Omit<Extract<CurrentDepositRequirementResponse, { state: 'ACTIVE' }>, 'satisfied'> & {
+			satisfied?: never;
+	  })
+	| Extract<CurrentDepositRequirementResponse, { state: 'WITHDRAWN' }>;
+/** `GET /financial-documents/{id}/deposit-requirement/history`: revisions, oldest first. */
+export type DepositRequirementHistoryResponse = { revisions: HistoricalDepositRequirement[] };
 export type DepositTermsRequest =
 	{ type: 'PERCENTAGE'; percentage: string } | { type: 'FIXED'; amount: string; currency: string };
 export type DepositMoneyResponse = { amount: string; currency: string };
@@ -149,7 +174,10 @@ export type InquiryProposalResponse = {
 	depositRequirementRevision: number;
 	issuedAt: string;
 	issuedBy: string;
+	/** INITIAL, QUOTE_REVISED or DEPOSIT_REVISED; never communication delivery. */
 	issuanceKind: string;
+	/** The service approval this publication carries; absent when none was ever approved. */
+	servicePlanRevision?: number | null;
 };
 export type IssueInquiryProposalRequest = {
 	expectedDocumentVersion: number;

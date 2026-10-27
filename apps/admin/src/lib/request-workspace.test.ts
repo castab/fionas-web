@@ -19,29 +19,27 @@ import {
 	guestCountLabel,
 	submittedDateLabel
 } from './presentation.js';
-import { mayaId, requestFixtures } from '../../e2e/request-fixture.mjs';
+import { mayaId, requestFixtures, withServicePlan } from '../../e2e/request-fixture.mjs';
 
 function quotedWithPlan() {
 	const data = requestFixtures()['00000000-0000-0000-0000-000000000001'];
-	data.servicePlan = {
-		documentId: data.financial.id,
+	return withServicePlan(data, {
 		documentVersion: data.proposal!.documentVersion,
 		reviewedDocumentVersion: 1,
 		description: 'Bespoke service',
+		guestCount: undefined,
 		items: [{ label: 'Churros' }],
-		lineNotes: [{ lineItemId: data.financial.lines[0].id, note: 'Negotiated' }],
-		approvedAt: '2026-07-16T19:01:00Z',
-		approvedBy: '00000000-0000-0000-0000-000000000001'
-	};
-	return data;
+		lineNotes: [{ lineItemId: data.financial.lines[0].id, note: 'Negotiated' }]
+	});
 }
 
 describe('approved service plans', () => {
 	it('accepts a plan that matches the current Quote line for line, and its absence', () => {
 		const data = quotedWithPlan();
 		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
-		delete data.servicePlan;
-		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
+		const without = requestFixtures()['00000000-0000-0000-0000-000000000001'];
+		expect(without.servicePlan ?? null).toBeNull();
+		expect(isCurrentStaffRequest(without, without.inquiry.id)).toBe(true);
 	});
 	it('fails closed on a plan for another document, version or line set', () => {
 		for (const corrupt of [
@@ -65,6 +63,7 @@ describe('approved service plans', () => {
 		data.financial.stage = 'INVOICE';
 		data.financial.version = 3;
 		data.financial.lines = data.financial.lines.map((l) => ({ ...l, id: `9${l.id.substring(1)}` }));
+		data.acceptedServicePlan = data.servicePlan;
 		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
 	});
 });

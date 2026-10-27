@@ -144,6 +144,8 @@ export function requestFixtures() {
 				item.inquiryId,
 				{
 					payments: [],
+					servicePlanHistory: [],
+					proposalHistory: [],
 					suggestedDepositTerms,
 					...(unquoted
 						? { proposal: null, depositRequirement: { state: 'NONE', documentId } }
@@ -222,6 +224,8 @@ export function requestFixtures() {
 			];
 		})
 	);
+	for (const request of Object.values(fixtures))
+		request.proposalHistory = request.proposal ? [structuredClone(request.proposal)] : [];
 	for (const request of Object.values(fixtures)) {
 		if (request.financial.stage !== 'INVOICE' || request.depositRequirement.state !== 'ACTIVE')
 			continue;
@@ -315,6 +319,7 @@ export function paymentFixture(state = 'quoted') {
 			'USD'
 		)
 	);
+	request.proposalHistory = [structuredClone(/** @type {*} */ (request.proposal))];
 	request.inquiry.lifecycle.stage = 'QUOTED';
 	request.financial.stage = 'QUOTE';
 	request.financial.version = 2;
@@ -368,5 +373,43 @@ export function declinedFixture(version = 1, reason = 'Requested date is unavail
 		reason,
 		documentVersion: version
 	};
+	return request;
+}
+
+/**
+ * Approves a service plan with the request's current proposal, as the backend would after a Quote
+ * that carried one: every plan field and both histories stay coherent. Overrides adjust the plan.
+ * @param {import('../src/lib/request-contract.js').CurrentStaffRequest} request
+ * @param {Partial<import('../src/lib/quote-contract.js').ServicePlanResponse>} [overrides]
+ */
+export function withServicePlan(request, overrides = {}) {
+	const proposal = /** @type {NonNullable<typeof request.proposal>} */ (request.proposal);
+	const revision = (request.servicePlanHistory.at(-1)?.revision ?? 0) + 1;
+	/** @type {import('../src/lib/quote-contract.js').ServicePlanResponse} */
+	const plan = {
+		documentId: request.financial.id,
+		documentVersion: proposal.documentVersion,
+		reviewedDocumentVersion: Math.max(1, proposal.documentVersion - 1),
+		description: 'Churro catering for an evening reception',
+		guestCount: 40,
+		items: [
+			{ label: 'Churros', group: 'Desserts', key: null },
+			{ label: 'Vanilla', group: 'Soft serve', key: 'vanilla' }
+		],
+		lineNotes: [{ lineItemId: request.financial.lines[0].id, note: 'Negotiated' }],
+		approvedAt: '2026-07-16T19:01:00Z',
+		approvedBy: '00000000-0000-0000-0000-000000000001',
+		revision,
+		cleared: false,
+		...overrides
+	};
+	request.servicePlanHistory.push(plan);
+	request.effectiveServicePlan = plan;
+	request.servicePlan = plan;
+	proposal.servicePlanRevision = revision;
+	request.proposalHistory = request.proposalHistory.map((p) =>
+		p.id === proposal.id ? structuredClone(proposal) : p
+	);
+	if (request.inquiry.lifecycle.stage !== 'QUOTED') request.acceptedServicePlan = plan;
 	return request;
 }
