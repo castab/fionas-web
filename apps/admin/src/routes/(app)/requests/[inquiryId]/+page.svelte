@@ -390,10 +390,7 @@
 				}}
 			/>
 		{/if}
-		<RequestDetails
-			inquiry={request.inquiry}
-			showPicks={stage === 'REQUESTED' || stage === 'DECLINED' || !request.servicePlan}
-		/>
+		<RequestDetails inquiry={request.inquiry} approvedPlan={!!request.servicePlan} />
 		<FinancialDocumentCard
 			{financial}
 			{stage}

@@ -6,11 +6,11 @@
 	import { receivedTimeLabel } from '$lib/payments.js';
 	let {
 		inquiry,
-		showPicks = true
+		approvedPlan = false
 	}: {
 		inquiry: InquiryResponse;
-		/** Once an approved plan exists, the Serving plan card describes the service; notes stay. */
-		showPicks?: boolean;
+		/** The picks always stay; with an approved plan they may differ from it. */
+		approvedPlan?: boolean;
 	} = $props();
 	const served = $derived(
 		inquiry.lifecycle.served && Number.isFinite(Date.parse(inquiry.lifecycle.served.occurredAt))
@@ -72,26 +72,22 @@
 	</div>
 </Card>
 
-{#if showPicks || inquiry.message}
-	<Card class="flex flex-col gap-3 p-[18px] sm:p-5" data-testid="original-request">
-		{#if showPicks}
-			<div class="flex flex-col gap-1">
-				<h2 class={caps}>What they asked for</h2>
-				<p class="m-0 text-[11.5px] text-(--text-muted)">
-					Recorded from the booking form, exactly as {inquiry.name} picked.
-				</p>
-			</div>
-			<CategorizedSelections items={inquiry.requestedService.items} />
-		{:else}
-			<h2 class={caps}>Their notes</h2>
-		{/if}
-		<div class={['flex flex-col gap-1.5', showPicks && 'border-t border-(--border-soft) pt-3']}>
-			{#if showPicks}<h3 class={micro}>Their notes</h3>{/if}
-			<p
-				class="m-0 rounded-input bg-cream-200 px-3.5 py-3 text-[13.5px] leading-[1.6] wrap-anywhere whitespace-pre-line"
-			>
-				{inquiry.message || 'No additional message.'}
-			</p>
-		</div>
-	</Card>
-{/if}
+<Card class="flex flex-col gap-3 p-[18px] sm:p-5" data-testid="original-request">
+	<div class="flex flex-col gap-1">
+		<h2 class={caps}>What they asked for</h2>
+		<p class="m-0 text-[11.5px] text-(--text-muted)">
+			Recorded from the booking form, exactly as {inquiry.name} picked.{approvedPlan
+				? ' The approved plan can differ from this; it stays here for reference.'
+				: ''}
+		</p>
+	</div>
+	<CategorizedSelections items={inquiry.requestedService.items} />
+	<div class="flex flex-col gap-1.5 border-t border-(--border-soft) pt-3">
+		<h3 class={micro}>Their notes</h3>
+		<p
+			class="m-0 rounded-input bg-cream-200 px-3.5 py-3 text-[13.5px] leading-[1.6] wrap-anywhere whitespace-pre-line"
+		>
+			{inquiry.message || 'No additional message.'}
+		</p>
+	</div>
+</Card>

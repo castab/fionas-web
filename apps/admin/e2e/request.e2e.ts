@@ -139,8 +139,10 @@ test('issues the previewed quote, lands on a fresh Quote and never resubmits on 
 	await expect(page.getByTestId('request-summary')).not.toContainText('Needs a quote');
 	await expect(page.getByTestId('financial-version')).toContainText('Quote v2');
 	await expect(page.getByTestId('service-plan')).toContainText('Approved with Quote v2');
-	// The approved plan replaces the customer's original picks; their notes stay readable.
-	await expect(page.getByTestId('original-request')).not.toContainText('What they asked for');
+	// The approved plan sits beside the customer's original picks, which never go away.
+	await expect(page.getByTestId('original-request')).toContainText('What they asked for');
+	await expect(page.getByTestId('original-request')).toContainText('Vanilla');
+	await expect(page.getByTestId('original-request')).toContainText('can differ');
 	await expect(page.getByTestId('original-request')).toContainText('My daughter loves strawberry!');
 	await expect(page.getByTestId('service-plan')).toContainText('Waffle cones');
 	await expect(page.getByLabel('Request lifecycle').locator('[aria-current="step"]')).toHaveText(

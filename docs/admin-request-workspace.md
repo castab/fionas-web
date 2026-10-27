@@ -232,8 +232,9 @@ and `isQuotePreview`. The customer's original picks (`RequestedItem`, same shape
 for what rendering needs, because the inquiry contract sets no length or count limits.
 
 **Original intent and the approved commitment are independent.** "What they asked for" renders
-`inquiry.requestedService.items` exactly as recorded and keeps the existing visibility policy
-(hidden once an approved plan exists; customer notes stay). The serving plan renders only the
+`inquiry.requestedService.items` exactly as recorded and stays visible at every stage and for every
+financial document version (Estimate, Quote, Invoice, declined), even where the approved plan or
+priced lines no longer match it; once a plan exists the card says so. The serving plan renders only the
 backend's approved `servicePlan.items`, including an accepted Quote's plan after promotion to
 Invoice; it is never rebuilt from Invoice lines. Neither reads a catalog or the public menu.
 
