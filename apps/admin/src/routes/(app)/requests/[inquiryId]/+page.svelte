@@ -14,6 +14,7 @@
 	import { depositTermsLabel, matchesReviewedSuggestion } from '$lib/deposit.js';
 	import type { QuoteActionResult } from '$lib/quote-builder.js';
 	import { formatMoney, submittedDateLabel } from '$lib/presentation.js';
+	import { listSearch, workspaceSearch, type WorkspacePanel } from '$lib/request-list.js';
 	import {
 		canCloseInquiry,
 		canDeclineInquiry,
@@ -67,7 +68,13 @@
 					(form.paymentValues.expectedProposalId !== undefined &&
 						form.paymentValues.expectedProposalId !== request.proposal?.id)))
 	);
-	const route = $derived(resolve('/(app)/requests/[inquiryId]', { inquiryId: data.inquiryId }));
+	// Panel links, reloads and form actions keep the Requests return context, when there is one.
+	const workspacePath = $derived(
+		resolve('/(app)/requests/[inquiryId]', { inquiryId: data.inquiryId })
+	);
+	const route = $derived(workspacePath + workspaceSearch(data.returnContext));
+	const panelHref = (panel: WorkspacePanel) =>
+		workspacePath + workspaceSearch(data.returnContext, panel);
 	const canPay = $derived(
 		!!request &&
 			(canRecordDeposit(request, data.user.permissions) ||
@@ -109,11 +116,17 @@
 <svelte:head><title>{request?.inquiry.name ?? 'Request'} · Admin · {site.name}</title></svelte:head>
 
 <div class="mx-auto flex w-full max-w-[760px] flex-col gap-[18px] pb-8">
+	<!-- Back to the exact Requests view this was opened from (rebuilt from validated values), else the dashboard. -->
+	<!-- eslint-disable svelte/no-navigation-without-resolve -- both paths are resolve()d; listSearch builds the query -->
 	<a
-		href={resolve('/')}
+		href={data.returnContext
+			? resolve('/(app)/requests') + listSearch(data.returnContext)
+			: resolve('/')}
+		data-testid="workspace-back"
 		class={`inline-flex min-h-11 items-center self-start rounded-sm font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase no-underline hover:text-olive-900 ${focusRing}`}
-		>← Back to dashboard</a
+		>{data.returnContext ? '← Back to requests' : '← Back to dashboard'}</a
 	>
+	<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	{#if request}
 		{@const stage = request.inquiry.lifecycle.stage}
 		{@const financial = request.financial}
@@ -254,7 +267,7 @@
 					{#if canIssueQuote(request, data.user.permissions)}
 						<!-- Once the panel is open, Build quote brings it into view instead of reloading it. -->
 						<Button
-							href={showBuilder ? '#quote-builder' : `${route}?quote`}
+							href={showBuilder ? '#quote-builder' : panelHref('quote')}
 							disabled={mutationPending || mutationReviewRequired}
 							class="min-h-12 flex-[1.4_1_150px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
 							data-testid="build-quote">Build quote</Button
@@ -262,7 +275,7 @@
 					{/if}
 					{#if canDecline}
 						<Button
-							href={showDecline ? '#decline-request' : `${route}?decline`}
+							href={showDecline ? '#decline-request' : panelHref('decline')}
 							variant="secondary"
 							disabled={mutationPending || mutationReviewRequired}
 							class="min-h-12 flex-[1_1_120px] border-rust-600 text-rust-600 not-disabled:hover:bg-rust-600/10 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
@@ -286,6 +299,7 @@
 						{request}
 						permissions={data.user.permissions}
 						{route}
+						returnContext={data.returnContext}
 						error={form?.fulfillmentError}
 						reviewRequired={mutationReviewRequired}
 						bind:pending={mutationPending}
@@ -296,7 +310,7 @@
 					{#if canPay}
 						<!-- Once the panel is open, this brings it into view instead of reloading it. -->
 						<Button
-							href={showPayment ? '#record-payment' : `${route}?payment`}
+							href={showPayment ? '#record-payment' : panelHref('payment')}
 							variant={canMarkServed(request, data.user.permissions) ? 'secondary' : 'primary'}
 							disabled={mutationPending || mutationReviewRequired}
 							class="min-h-12 flex-[1_1_140px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
@@ -313,6 +327,7 @@
 				{request}
 				permissions={data.user.permissions}
 				{route}
+				returnContext={data.returnContext}
 				error={form?.declineError}
 				fieldError={form?.declineField === 'reason' || form?.declineReviewRequired === false}
 				reviewRequired={mutationReviewRequired}
@@ -370,6 +385,7 @@
 				{request}
 				permissions={data.user.permissions}
 				{route}
+				returnContext={data.returnContext}
 				error={form?.paymentError}
 				reviewRequired={mutationReviewRequired}
 				values={form?.paymentValues}
@@ -382,6 +398,8 @@
 		{#if showBuilder}
 			<QuoteBuilder
 				{request}
+				{route}
+				returnContext={data.returnContext}
 				result={builderResult ?? data.initialQuote}
 				blocked={mutationReviewRequired}
 				bind:pending={mutationPending}

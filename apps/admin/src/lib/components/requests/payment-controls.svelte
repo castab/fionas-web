@@ -13,11 +13,13 @@
 		type PaymentFormValues
 	} from '$lib/payments.js';
 	import { eventDateLabel, formatMoney } from '$lib/presentation.js';
+	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 
 	let {
 		request,
 		permissions,
 		route,
+		returnContext = null,
 		error,
 		reviewRequired = false,
 		values,
@@ -27,6 +29,8 @@
 		request: CurrentStaffRequest;
 		permissions: string[];
 		route: string;
+		/** The Requests index view this workspace was opened from; kept through every action. */
+		returnContext?: RequestListQuery | null;
 		error?: string;
 		reviewRequired?: boolean;
 		values?: PaymentFormValues;
@@ -124,7 +128,7 @@
 	{#if deposit || invoice}
 		<form
 			method="POST"
-			action={deposit ? '?/recordDeposit' : '?/recordInvoicePayment'}
+			action={workspaceAction(returnContext, deposit ? 'recordDeposit' : 'recordInvoicePayment')}
 			use:enhance={submit}
 			aria-busy={submitting}
 			class="flex flex-col gap-4"

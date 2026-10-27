@@ -1,6 +1,7 @@
 # Staff request workspace
 
-Dashboard request cards link to authenticated `/requests/{inquiryId}`. Each load sets
+Dashboard request cards and [Requests index](admin-requests-index.md) results link to
+authenticated `/requests/{inquiryId}`. Each load sets
 `Cache-Control: no-store` and reads exactly one `GET /staff/requests/{inquiryId}` through
 `src/lib/server/staff-request.ts` and `backend.ts`. The hook separately resolves the USER session
 via `/auth/me`. No browser-to-commerce calls or inquiry/document/catalog enrichment reads occur.
@@ -174,10 +175,28 @@ details, requested service, notes, the Estimate and any payment history stay rea
 decline, payment or fulfillment action is offered. The dashboard drops declined inquiries because
 the backend excludes them from every queue and count; the frontend reconstructs nothing.
 
+## Return navigation
+
+A workspace opened from the Requests index carries `?from=<list query>`: that list's filter,
+search and cursor in one encoded parameter. Only a valid list query is accepted
+(`readReturnContext` in `src/lib/request-list.ts`); absolute, protocol-relative or path values and
+unexpected keys are ignored, and the link is rebuilt onto `/requests`, so it is never an open
+redirect. With a valid context the page shows **← Back to requests** to that exact view; without
+one (from the dashboard or a direct link) it shows **← Back to dashboard**.
+
+The context composes with every existing URL rather than replacing it. `workspaceSearch` builds
+`?quote&from=…`, `?payment&from=…` and `?decline&from=…` panel links and the reload/Cancel links;
+`workspaceAction` builds the form actions (`?from=…&/declineInquiry`, `?quote&from=…&/issueQuote`),
+so a failed native POST re-renders with it; and every success PRGs through `workspaceRedirect` to
+the clean path plus only the context (`/requests/{id}?from=…`). Without a context these are exactly
+the earlier `?quote`, `?/action` and clean-path URLs. Mutation rules, versions, review and retry
+policy are unchanged. Returning after a mutation shows the index's current results, so a request
+that left the original filter no longer appears in it.
+
 ## Shell and limits
 
-Requests is visually current on detail routes while its index remains non-navigable. Dashboard is
-no longer current there; Back to dashboard and sign-out remain available. The inbox, staff notes,
+Requests is current (`aria-current="location"`) on detail routes and links to its index. Dashboard
+is no longer current there; the Back link and sign-out remain available. The inbox, staff notes,
 reopening declined requests, quote revisions, quote expiry and messages, the phone/in-person New quote screen, communications, refunds/allocation management, electronic payment flows,
 backdating and payment notes are outside this slice.
 

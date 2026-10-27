@@ -83,6 +83,8 @@ npm run nats:tail -- --non-interactive --server tls://nats.dev.example:4222
 their commerce API account; the admin server logs in on their behalf and keeps the session cookie on the admin
 host. **All backend calls go through the SvelteKit server**; see [docs/admin-architecture.md](docs/admin-architecture.md).
 It uses each staff member's own USER session.
+`/requests` lists every request with backend-owned filters, search and cursor pagination, and the dashboard's
+summary tiles open it; see [docs/admin-requests-index.md](docs/admin-requests-index.md).
 Copy `apps/admin/.env.example` to `apps/admin/.env`:
 
 | Variable           | Default                 | Purpose                                                                               |

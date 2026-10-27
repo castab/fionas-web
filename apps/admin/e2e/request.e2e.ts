@@ -75,10 +75,10 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(navigation.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute(
 		'aria-current'
 	);
-	const requests = navigation.getByRole('button', { name: 'Requests Index coming next' });
-	await expect(requests).toBeDisabled();
+	// The workspace belongs to Requests, whose index is now a real link.
+	const requests = navigation.getByRole('link', { name: 'Requests' });
+	await expect(requests).toHaveAttribute('href', '/requests');
 	await expect(requests).toHaveAttribute('aria-current', 'location');
-	await expect(navigation.getByRole('link', { name: 'Requests' })).toHaveCount(0);
 	await expect(page.getByLabel('Request lifecycle').locator('[aria-current="step"]')).toHaveText(
 		'Requested'
 	);
@@ -166,11 +166,11 @@ test('issues the previewed quote, lands on a fresh Quote and never resubmits on 
 	await expect(page.getByTestId('request-card').filter({ hasText: 'Maya Torres' })).toHaveCount(0);
 	await expect(page.getByTestId('summary-card').filter({ hasText: 'New' })).toHaveAttribute(
 		'aria-label',
-		'New: 1'
+		'New: 1. View new requests'
 	);
 	await expect(page.getByTestId('summary-card').filter({ hasText: 'Quoted' })).toHaveAttribute(
 		'aria-label',
-		'Quoted: 2'
+		'Quoted: 3. View quoted requests'
 	);
 });
 

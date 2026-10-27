@@ -1,8 +1,8 @@
 # AGENTS.md
 
 Fiona's Ice Cream websites. npm-workspaces monorepo: `apps/public` (marketing site and the /book
-request form, which publishes inquiry events to NATS), `apps/admin` (staff console: dashboard, request
-workspace, quotes, payments, on fionas-commerce), shared packages `@fionas/ui`, `@fionas/design-tokens`,
+request form, which publishes inquiry events to NATS), `apps/admin` (staff console: dashboard, Requests
+index, request workspace, quotes, payments, on fionas-commerce), shared packages `@fionas/ui`, `@fionas/design-tokens`,
 `@fionas/shared`, and operator scripts in `scripts/`. Stack mirrors `castab/madres-ui`: SvelteKit 2, Svelte 5 runes-only, Vite 8,
 Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
@@ -23,6 +23,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Admin architecture, backend access rule  | `docs/admin-architecture.md`                                                                      |
 | Admin sign-in, session, guard            | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`               |
 | Admin dashboard, shell, data gaps        | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`             |
+| Requests index (filters, search, cursor) | `docs/admin-requests-index.md`, `$lib/request-list.ts`, `$lib/server/request-list.ts`             |
 | Staff request workspace, Quote/deposit   | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`    |
 | Decline a request (confirm, reason)      | `docs/admin-request-workspace.md`, `$lib/decline.ts`, `decline-controls.svelte`                   |
 | Admin quote builder (preview, compose)   | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts` |
@@ -71,6 +72,11 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   reviewed Estimate version (never rebased) and a trimmed 1–500 character internal reason, once, then
   PRGs. Uncertain outcomes block every mutation until reload. DECLINED is terminal and never a step
   in the booking progress strip; the validator rejects any incoherent declined projection.
+- Admin Requests index (`/requests`): the URL query is the only state (filter, q, opaque cursor);
+  one `GET /staff/requests` per load. The backend owns membership, search, order, counts and
+  pagination; never filter or classify locally, decode cursors or derive needsClosing. Workspace
+  return context is `?from=` holding only a validated list query, rebuilt onto `/requests`; compose
+  panel links, actions and PRGs with `workspaceSearch`/`workspaceAction`/`workspaceRedirect`.
 - Admin service selections use ordered `{ label, group?, key? }` objects (50 maximum; label 200,
   group/key 120 characters). Group only for presentation by first occurrence; preserve duplicates
   and uncategorized items. Original intent and approved plans are independent. Editor row IDs are
