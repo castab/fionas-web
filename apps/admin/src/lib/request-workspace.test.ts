@@ -69,6 +69,55 @@ describe('approved service plans', () => {
 	});
 });
 
+describe('line authorship', () => {
+	const recordedAt = '2026-07-16T19:00:00Z';
+	const accepts = (authored: object | null | undefined) => {
+		const data = requestFixtures()[mayaId];
+		(data.financial as { linesAuthoredBy: unknown }).linesAuthoredBy = authored;
+		return isCurrentStaffRequest(data, mayaId);
+	};
+	it('accepts a principal, with or without originKind', () => {
+		const principal = { principalKind: 'SERVICE', principalId: 'service-1', recordedAt };
+		expect(accepts(principal)).toBe(true);
+		expect(accepts({ ...principal, originKind: 'PRINCIPAL', component: null })).toBe(true);
+		expect(accepts({ ...principal, principalKind: 'USER' })).toBe(true);
+	});
+	it('accepts an internal component, as inquiry intake authors the first Estimate', () => {
+		const internal = { originKind: 'INTERNAL', component: 'inquiry-intake', recordedAt };
+		expect(accepts(internal)).toBe(true);
+		expect(accepts({ ...internal, principalKind: null, principalId: null })).toBe(true);
+	});
+	it('fails closed on a missing, mixed or incomplete origin', () => {
+		for (const bad of [
+			null,
+			undefined,
+			{ recordedAt },
+			{ originKind: 'INTERNAL', recordedAt },
+			{ originKind: 'INTERNAL', component: ' ', recordedAt },
+			{
+				originKind: 'INTERNAL',
+				component: 'inquiry-intake',
+				principalKind: 'USER',
+				principalId: 'u',
+				recordedAt
+			},
+			{ originKind: 'PRINCIPAL', recordedAt },
+			{
+				originKind: 'PRINCIPAL',
+				principalKind: 'USER',
+				principalId: 'u',
+				component: 'x',
+				recordedAt
+			},
+			{ originKind: 'OTHER', principalKind: 'USER', principalId: 'u', recordedAt },
+			{ principalKind: 'ROBOT', principalId: 'u', recordedAt },
+			{ principalKind: 'USER', principalId: '', recordedAt },
+			{ originKind: 'INTERNAL', component: 'inquiry-intake', recordedAt: 'not a date' }
+		])
+			expect(accepts(bad)).toBe(false);
+	});
+});
+
 describe('request workspace presentation', () => {
 	it('requires the permission intersection', () => {
 		const data = requestFixtures()[mayaId];
