@@ -48,6 +48,7 @@ import {
 	canCloseInquiry,
 	canDeclineInquiry,
 	canIssueQuote,
+	describeRejectedStaffRequest,
 	INQUIRY_MANAGE_PERMISSION,
 	hasFulfillmentPermission,
 	fulfillmentErrorMessage,
@@ -77,7 +78,13 @@ export const load: PageServerLoad = async ({
 	const today = businessDate(new Date());
 	const result = await getStaffRequest(config, params.inquiryId, cookie);
 	if (!result.ok && result.error.status === 401) redirect(303, '/login');
-	if (!result.ok || !isCurrentStaffRequest(result.data, params.inquiryId))
+	if (!result.ok || !isCurrentStaffRequest(result.data, params.inquiryId)) {
+		// Operator hint only: why this page is unavailable. Statuses and field shapes, no customer data.
+		console.error(
+			result.ok
+				? `[request] ${params.inquiryId} refused by the read-model validator: ${JSON.stringify(describeRejectedStaffRequest(result.data, params.inquiryId))}`
+				: `[request] ${params.inquiryId} backend ${result.error.status} ${result.error.code}`
+		);
 		return {
 			inquiryId: params.inquiryId,
 			staffRequest: null,
@@ -88,6 +95,7 @@ export const load: PageServerLoad = async ({
 			today,
 			initialQuote: null
 		};
+	}
 	applySetCookies(cookies, result.setCookies);
 	const data = result.data;
 	let initialQuote: QuoteActionResult | null = null;

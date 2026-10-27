@@ -350,6 +350,59 @@ export function isCurrentStaffRequest(
 }
 
 /**
+ * Operator diagnostics for a response `isCurrentStaffRequest` refused: field presence, types and
+ * counts only, never a customer value, so it is safe to log.
+ */
+export function describeRejectedStaffRequest(data: StaffRequestResponse | null, inquiryId: string) {
+	if (!data || typeof data !== 'object') return { response: typeof data };
+	const money = (a: unknown) => typeof a === 'string' && /^-?\d+(\.\d+)?$/.test(a);
+	const { inquiry, financial, proposal, depositRequirement: deposit } = data;
+	const lines = Array.isArray(financial?.lines) ? financial.lines : [];
+	const items = inquiry?.requestedService?.items;
+	return {
+		inquiryIdMatches: inquiry?.id === inquiryId,
+		financialInquiryIdMatches: financial?.inquiryId === inquiryId,
+		documentIdMatches: inquiry?.lifecycle?.documentId === financial?.id,
+		stage: inquiry?.lifecycle?.stage ?? null,
+		financialStage: financial?.stage ?? null,
+		hasDeclined: inquiry?.lifecycle?.declined != null,
+		guestCount: inquiry?.requestedService?.guestCount ?? null,
+		guestCountIsMinimum: typeof inquiry?.requestedService?.guestCountIsMinimum,
+		itemCount: Array.isArray(items) ? items.length : null,
+		invalidItems: Array.isArray(items) ? items.filter((i) => !isRequestedItem(i)).length : null,
+		lineCount: lines.length,
+		linesMissingFields: lines.filter(
+			(l) =>
+				!l ||
+				typeof l.id !== 'string' ||
+				typeof l.description !== 'string' ||
+				![l.unitPrice, l.subtotal, l.taxAmount, l.total].every(money) ||
+				l.currency !== financial.currency
+		).length,
+		duplicateLineIds: new Set(lines.map((l) => l?.id)).size !== lines.length,
+		currency: financial?.currency ?? null,
+		totalsValid: [financial?.subtotal, financial?.taxAmount, financial?.total].every(money),
+		version: financial?.version ?? null,
+		reconciliationBalanceValid: money(financial?.reconciliation?.balance),
+		reconciliationCurrencyMatches: financial?.reconciliation?.currency === financial?.currency,
+		linesAuthoredBy: financial?.linesAuthoredBy
+			? {
+					principalKind: financial.linesAuthoredBy.principalKind,
+					hasPrincipalId: !!financial.linesAuthoredBy.principalId,
+					recordedAtValid: Number.isFinite(Date.parse(financial.linesAuthoredBy.recordedAt))
+				}
+			: null,
+		paymentsIsArray: Array.isArray(data.payments),
+		hasSuggestedDepositTerms: data.suggestedDepositTerms != null,
+		suggestedDepositTermsValid: isDepositTerms(data.suggestedDepositTerms, financial?.currency),
+		depositState: deposit?.state ?? null,
+		depositDocumentIdMatches: deposit?.documentId === financial?.id,
+		hasProposal: proposal != null,
+		hasServicePlan: data.servicePlan != null
+	};
+}
+
+/**
  * An approved plan belongs to exactly the latest proposal's Quote. While that Quote is current its
  * lines are the plan's lines, in order. Absent is legitimate (deposit-only issuance); contradictory is not.
  */
