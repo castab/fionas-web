@@ -3,7 +3,6 @@ import { applySetCookies } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
 import {
 	getStaffRequest,
-	issueInquiryProposal,
 	previewInquiryQuote,
 	recordPayment,
 	markInquiryServed,
@@ -11,6 +10,7 @@ import {
 	declineInquiry
 } from '$lib/server/staff-request.js';
 import { reviewFingerprint } from '$lib/server/quote-review.js';
+import { editorAction, loadHistory } from '$lib/server/editor-actions.js';
 import {
 	canRecordDeposit,
 	canRecordInvoicePayment,
@@ -21,8 +21,6 @@ import {
 } from '$lib/payments.js';
 import type { PaymentFormValues } from '$lib/payments.js';
 import type { RecordPaymentRequest } from '$lib/payment-contract.js';
-import { matchesReviewedSuggestion } from '$lib/deposit.js';
-import { CURRENCY } from '$lib/currency.js';
 import { businessDate } from '$lib/presentation.js';
 import { readReturnContext, workspaceRedirect } from '$lib/request-list.js';
 import {
@@ -34,30 +32,22 @@ import {
 	type DeclineFormValues
 } from '$lib/decline.js';
 import {
-	initialQuoteValues,
 	buildCommand,
+	editorValues,
 	isQuotePreview,
-	previewMatchesSelections,
-	quoteInputErrors,
-	readQuoteForm,
-	reviewedTerms,
-	type QuoteActionResult,
-	type QuoteFormValues
+	type QuoteActionResult
 } from '$lib/quote-builder.js';
+import { editorActions, openEditorMode } from '$lib/financial-editor.js';
 import {
 	canMarkServed,
 	canCloseInquiry,
 	canDeclineInquiry,
-	canIssueQuote,
 	describeRejectedStaffRequest,
 	INQUIRY_MANAGE_PERMISSION,
 	hasFulfillmentPermission,
 	fulfillmentErrorMessage,
 	type FulfillmentAction,
 	isCurrentStaffRequest,
-	isProposalEligible,
-	hasProposalPermissions,
-	quoteErrorMessage,
 	requestErrorKind
 } from '$lib/request-workspace.js';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
@@ -74,6 +64,12 @@ export const load: PageServerLoad = async ({
 	const config = backendConfig(url.origin);
 	const cookie = request.headers.get('cookie');
 	const quoteOpen = url.searchParams.has('quote');
+	const editorFlags = {
+		INITIAL_QUOTE: quoteOpen,
+		QUOTE_REVISION: url.searchParams.has('quote-revision'),
+		INVOICE_AMENDMENT: url.searchParams.has('invoice-revision')
+	};
+	const historyOpen = url.searchParams.has('history');
 	const paymentOpen = url.searchParams.has('payment');
 	const declineOpen = url.searchParams.has('decline');
 	// Opened from the Requests index: its validated filter/search/cursor, for Back to requests.
@@ -93,6 +89,9 @@ export const load: PageServerLoad = async ({
 			staffRequest: null,
 			requestError: result.ok ? ('unavailable' as const) : requestErrorKind(result.error.status),
 			quoteOpen,
+			editorMode: null,
+			historyOpen,
+			history: null,
 			paymentOpen,
 			declineOpen,
 			returnContext,
@@ -102,13 +101,15 @@ export const load: PageServerLoad = async ({
 	}
 	applySetCookies(cookies, result.setCookies);
 	const data = result.data;
+	const permissions = locals.user?.permissions ?? [];
+	// At most one editor opens, and only the one this lifecycle makes eligible: a stale or mismatched
+	// flag opens nothing and exposes no action.
+	const editorMode = openEditorMode(data, permissions, editorFlags);
 	let initialQuote: QuoteActionResult | null = null;
-	if (
-		quoteOpen &&
-		canIssueQuote(data, locals.user?.permissions ?? []) &&
-		request.method === 'GET'
-	) {
-		const values = initialQuoteValues(data);
+	// Only a first Quote opens already previewed. A revision or amendment starts from the current,
+	// unchanged state, which the backend rightly refuses as "no material change".
+	if (editorMode === 'INITIAL_QUOTE' && request.method === 'GET') {
+		const values = editorValues(data, 'INITIAL_QUOTE');
 		const command = buildCommand(values);
 		const terms = data.suggestedDepositTerms;
 		const opening = await previewInquiryQuote(
@@ -126,20 +127,30 @@ export const load: PageServerLoad = async ({
 		) {
 			applySetCookies(cookies, opening.setCookies);
 			initialQuote = {
-				preview: opening.data,
+				preview: { mode: 'INITIAL_QUOTE', quote: opening.data },
 				quoteValues: {
 					...values,
 					reviewToken: opening.data.reviewToken,
-					reviewedFingerprint: reviewFingerprint(data.financial.version, command, terms)
+					reviewedFingerprint: reviewFingerprint({
+						mode: 'INITIAL_QUOTE',
+						expectedDocumentVersion: data.financial.version,
+						command,
+						terms
+					})
 				}
 			};
 		}
 	}
+	// Optional detail: loaded only when `?history` is open, and its failure never hides the booking.
+	const history = historyOpen ? await loadHistory({ cookies, request, url }, data) : null;
 	return {
 		inquiryId: params.inquiryId,
 		staffRequest: data,
 		requestError: null,
 		quoteOpen,
+		editorMode,
+		historyOpen,
+		history,
 		paymentOpen,
 		declineOpen,
 		returnContext,
@@ -147,125 +158,20 @@ export const load: PageServerLoad = async ({
 		initialQuote
 	};
 };
-function quoteFailure(status: number, values?: QuoteFormValues, attempted = false) {
-	return fail(status >= 500 ? 503 : status, {
-		quoteError: attempted
-			? quoteErrorMessage(status)
-			: status >= 500
-				? 'We couldn’t preview this quote. Nothing was issued. Try again.'
-				: quoteErrorMessage(status),
-		reviewRequired:
-			(attempted && status !== 400 && status !== 422) || status === 403 || status === 409,
-		quoteValues: values
-	} satisfies QuoteActionResult);
-}
-async function quoteAction(event: RequestEvent, issue: boolean) {
-	const { locals, request, url, params, cookies } = event;
-	if (!locals.user) redirect(303, '/login');
-	if (!hasProposalPermissions(locals.user.permissions)) return quoteFailure(403);
-	let form: FormData;
-	try {
-		form = await request.formData();
-	} catch {
-		return quoteFailure(422);
-	}
-	const parsed = readQuoteForm(form);
-	if (!parsed) return quoteFailure(422);
-	const values = parsed;
-	// A native selection edit (add, remove, reorder) only returns the complete draft; it may leave a
-	// blank row to fill in, so Update preview is the explicit next step. Any review is cleared.
-	if (form.has('selectionAction')) {
-		if (issue) return quoteFailure(422);
-		return { quoteValues: { ...values, reviewToken: '', reviewedFingerprint: '' } };
-	}
-	const config = backendConfig(url.origin);
-	const cookie = request.headers.get('cookie');
-	const errors = quoteInputErrors(values);
-	if (Object.keys(errors).length && !issue)
-		return fail(422, {
-			quoteError: 'Check the highlighted fields.',
-			quoteValues: values,
-			fieldErrors: errors,
-			reviewRequired: false
-		});
-	const version = Number(values.deposit.expectedVersion);
-	const command = buildCommand(values);
-	const terms = reviewedTerms(values.deposit);
-	const fingerprint = reviewFingerprint(version, command, terms);
-	async function preview(stale = false) {
-		const result = await previewInquiryQuote(
-			config,
-			params.inquiryId,
-			{ expectedDocumentVersion: version, ...command, terms },
-			cookie
-		);
-		if (!result.ok) {
-			if (result.error.status === 401) redirect(303, '/login');
-			return quoteFailure(result.error.status, values);
-		}
-		applySetCookies(cookies, result.setCookies);
-		if (
-			!isQuotePreview(result.data, { inquiryId: params.inquiryId }) ||
-			result.data.reviewedDocumentVersion !== version ||
-			!previewMatchesSelections(command, result.data)
-		)
-			return quoteFailure(503, values);
-		return {
-			preview: result.data,
-			quoteValues: {
-				...values,
-				reviewToken: result.data.reviewToken,
-				reviewedFingerprint: fingerprint
-			},
-			notices: { reviewStale: stale },
-			reviewRequired: false
-		};
-	}
-	if (!issue) return preview();
-	const current = await getStaffRequest(config, params.inquiryId, cookie);
-	if (!current.ok) {
-		if (current.error.status === 401) redirect(303, '/login');
-		return quoteFailure(current.error.status, values);
-	}
-	applySetCookies(cookies, current.setCookies);
-	if (!isCurrentStaffRequest(current.data, params.inquiryId))
-		return quoteFailure(503, values, true);
-	if (
-		!isProposalEligible(current.data) ||
-		current.data.financial.version !== version ||
-		current.data.financial.currency !== CURRENCY ||
-		(values.deposit.depositChoice === 'suggested' &&
-			!matchesReviewedSuggestion(values.deposit, current.data.suggestedDepositTerms))
-	)
-		return quoteFailure(409, values, true);
-	if (Object.keys(errors).length)
-		return fail(422, {
-			quoteError: 'Check the highlighted fields.',
-			quoteValues: values,
-			fieldErrors: errors,
-			reviewRequired: false
-		});
-	if (!values.reviewToken || fingerprint !== values.reviewedFingerprint) return preview(true);
-	const result = await issueInquiryProposal(config, params.inquiryId, version, terms, cookie, {
-		...command,
-		reviewToken: values.reviewToken
-	});
-	if (!result.ok) {
-		if (result.error.status === 401) redirect(303, '/login');
-		if (result.error.code === 'QUOTE_REVIEW_STALE') return preview(true);
-		return quoteFailure(result.error.status, values, true);
-	}
-	applySetCookies(cookies, result.setCookies);
-	redirect(303, workspaceRedirect(url));
-}
 export const actions: Actions = {
 	markServed: fulfillmentAction('markServed'),
 	closeInquiry: fulfillmentAction('closeInquiry'),
 	recordDeposit: paymentAction(true),
 	recordInvoicePayment: paymentAction(false),
 	declineInquiry: declineAction,
-	previewQuote: (event) => quoteAction(event, false),
-	issueQuote: (event) => quoteAction(event, true)
+	[editorActions.INITIAL_QUOTE.preview]: (event) => editorAction(event, 'INITIAL_QUOTE', false),
+	[editorActions.INITIAL_QUOTE.publish]: (event) => editorAction(event, 'INITIAL_QUOTE', true),
+	[editorActions.QUOTE_REVISION.preview]: (event) => editorAction(event, 'QUOTE_REVISION', false),
+	[editorActions.QUOTE_REVISION.publish]: (event) => editorAction(event, 'QUOTE_REVISION', true),
+	[editorActions.INVOICE_AMENDMENT.preview]: (event) =>
+		editorAction(event, 'INVOICE_AMENDMENT', false),
+	[editorActions.INVOICE_AMENDMENT.publish]: (event) =>
+		editorAction(event, 'INVOICE_AMENDMENT', true)
 };
 
 function fulfillmentAction(action: FulfillmentAction): Actions[string] {

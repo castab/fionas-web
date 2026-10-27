@@ -1,30 +1,29 @@
 <script lang="ts">
 	import CategorizedSelections from './categorized-selections.svelte';
 	import { Card } from '@fionas/ui';
-	import type {
-		CurrentStaffRequest,
-		InquiryLifecycle,
-		InquiryProposalResponse
-	} from '$lib/request-contract.js';
-	import type { ServicePlanResponse } from '$lib/quote-contract.js';
+	import type { CurrentStaffRequest } from '$lib/request-contract.js';
+	import { approvalSource, serviceCommitment } from '$lib/service-plan.js';
 	import { formatMoney, submittedDateLabel } from '$lib/presentation.js';
 	import { financialStageLabel } from '$lib/request-workspace.js';
-	let {
-		financial,
-		stage: lifecycleStage,
-		proposal = null,
-		servicePlan = null
-	}: {
-		financial: CurrentStaffRequest['financial'];
-		stage: InquiryLifecycle['stage'];
-		proposal?: InquiryProposalResponse | null;
-		servicePlan?: ServicePlanResponse | null;
-	} = $props();
-	/** Why each line exists, from the plan approved with exactly this Quote version. */
+	let { request }: { request: CurrentStaffRequest } = $props();
+	const financial = $derived(request.financial);
+	const proposal = $derived(request.proposal ?? null);
+	const lifecycleStage = $derived(request.inquiry.lifecycle.stage);
+	/** The fulfillment commitment: the latest approval, which may be a deliberate clearing. */
+	const commitment = $derived(serviceCommitment(request));
+	/** The plan the deposit accepted, offered separately only when an amendment has moved on from it. */
+	const accepted = $derived(
+		request.acceptedServicePlan &&
+			!request.acceptedServicePlan.cleared &&
+			request.acceptedServicePlan.revision !== request.effectiveServicePlan?.revision
+			? request.acceptedServicePlan
+			: null
+	);
+	/** Why each line exists. Retained notes keep their stable line IDs across financial versions. */
 	const provenance = $derived(
 		new Map(
-			servicePlan && servicePlan.documentVersion === financial.version
-				? servicePlan.lineNotes.map((line) => [line.lineItemId, line.note])
+			commitment.state === 'APPROVED'
+				? commitment.plan.lineNotes.map((line) => [line.lineItemId, line.note])
 				: []
 		)
 	);
@@ -42,6 +41,7 @@
 				? 'Quote total'
 				: 'Total'
 	);
+	const guests = (n?: number) => (n ? ` · ${n} guest${n === 1 ? '' : 's'}` : '');
 	const caps =
 		'm-0 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-heading) uppercase';
 	const micro =
@@ -69,21 +69,50 @@
 			data-testid="financial-version">{stage} v{financial.version}{issued}</span
 		>
 	</div>
-	{#if servicePlan}
+	{#if commitment.state === 'APPROVED'}
+		{@const plan = commitment.plan}
 		<div class="flex flex-col gap-2 rounded-input bg-cream-200 p-3" data-testid="service-plan">
 			<p class={micro}>
-				{served ? 'What you served' : 'What you’ll serve'}{servicePlan.guestCount
-					? ` · ${servicePlan.guestCount} guest${servicePlan.guestCount === 1 ? '' : 's'}`
-					: ''}
+				{served ? 'What you served' : 'What you’ll serve'}{guests(plan.guestCount)}
 			</p>
-			<p class="m-0 text-[13px] leading-[1.6] whitespace-pre-wrap">{servicePlan.description}</p>
-			{#if servicePlan.items.length}
-				<CategorizedSelections items={servicePlan.items} inset />
+			<p class="m-0 text-[13px] leading-[1.6] whitespace-pre-wrap">{plan.description}</p>
+			{#if plan.items.length}
+				<CategorizedSelections items={plan.items} inset />
 			{/if}
-			<p class="m-0 text-[11px] text-(--text-muted)">
-				Approved with Quote v{servicePlan.documentVersion}
+			<p class="m-0 text-[11px] text-(--text-muted)" data-testid="service-plan-provenance">
+				Approved with {approvalSource(plan, request)} v{plan.documentVersion} · plan revision {plan.revision}
+				· {submittedDateLabel(plan.approvedAt)}
 			</p>
 		</div>
+	{:else if commitment.state === 'CLEARED'}
+		<div
+			class="flex flex-col gap-1 rounded-input bg-cream-200 p-3"
+			data-testid="service-plan-cleared"
+		>
+			<p class={micro}>Service plan removed</p>
+			<p class="m-0 text-[13px] leading-[1.6]">
+				Staff removed the approved service plan. Nothing is currently committed.
+			</p>
+			<p class="m-0 text-[11px] text-(--text-muted)">
+				Plan revision {commitment.plan.revision} · {submittedDateLabel(commitment.plan.approvedAt)}
+			</p>
+		</div>
+	{/if}
+	{#if accepted}
+		<details class="rounded-input border border-(--border-soft) px-3" data-testid="accepted-plan">
+			<summary class="min-h-11 cursor-pointer py-2.5 text-[12.5px] font-semibold"
+				>Plan accepted with the deposit (revision {accepted.revision})</summary
+			>
+			<div class="flex flex-col gap-2 pb-3">
+				<p class="m-0 text-[13px] leading-[1.6] whitespace-pre-wrap">
+					{accepted.description}{guests(accepted.guestCount)}
+				</p>
+				{#if accepted.items.length}<CategorizedSelections
+						items={accepted.items}
+						headingLevel={4}
+					/>{/if}
+			</div>
+		</details>
 	{/if}
 	<ul class="m-0 flex list-none flex-col p-0" aria-label="Financial line items">
 		{#each financial.lines as line (line.id)}

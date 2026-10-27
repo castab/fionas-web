@@ -1,4 +1,5 @@
-import { isRequestedItem, isServicePlanItems } from './service-selections.js';
+import { isRequestedItem } from './service-selections.js';
+import { isCoherentServicePlanState } from './service-plan.js';
 import type {
 	InquiryStage,
 	LineAuthorship,
@@ -25,6 +26,17 @@ export const PROPOSAL_PERMISSIONS = [
 ] as const;
 export function hasProposalPermissions(permissions: string[]): boolean {
 	return PROPOSAL_PERMISSIONS.every((permission) => permissions.includes(permission));
+}
+/**
+ * Invoice amendments need the financial-document and financial-terms authorities but never the
+ * deposit one: the accepted deposit is immutable, so nothing about it is managed.
+ */
+export const INVOICE_AMENDMENT_PERMISSIONS = [
+	'commerce.financial-document.create',
+	'fionas.financial-terms.manage'
+] as const;
+export function hasInvoiceAmendmentPermissions(permissions: string[]): boolean {
+	return INVOICE_AMENDMENT_PERMISSIONS.every((permission) => permissions.includes(permission));
 }
 /**
  * The booking progression shown in the progress strip. DECLINED is deliberately absent: it is a
@@ -190,7 +202,9 @@ export function requestSummaryDescription(data: CurrentStaffRequest, today: stri
 			? 'The Invoice balance must be exactly zero before closing this event.'
 			: 'This event has been served. Record the remaining payment before closing it.';
 	}
-	const guests = data.servicePlan?.guestCount;
+	const plan = data.effectiveServicePlan;
+	// The fulfillment commitment, which an Invoice amendment may have changed; a clearing has none.
+	const guests = plan && !plan.cleared ? plan.guestCount : undefined;
 	const event = [
 		eventDateLabel(inquiry.eventDate),
 		guests
@@ -319,7 +333,7 @@ export function isCurrentStaffRequest(
 			financial.stage === 'ESTIMATE' &&
 			proposal == null &&
 			deposit.state === 'NONE' &&
-			data.servicePlan == null &&
+			isCoherentServicePlanState(data as CurrentStaffRequest) &&
 			inquiry.lifecycle.served == null &&
 			inquiry.lifecycle.closed == null
 		);
@@ -328,7 +342,7 @@ export function isCurrentStaffRequest(
 			financial.stage === 'ESTIMATE' &&
 			proposal == null &&
 			deposit.state === 'NONE' &&
-			data.servicePlan == null
+			isCoherentServicePlanState(data as CurrentStaffRequest)
 		);
 	if (
 		!proposal ||
@@ -359,7 +373,7 @@ export function isCurrentStaffRequest(
 			(!version(deposit.previousRevision) || deposit.previousRevision >= deposit.revision))
 	)
 		return false;
-	if (!isCoherentServicePlan(data.servicePlan, data as CurrentStaffRequest)) return false;
+	if (!isCoherentServicePlanState(data as CurrentStaffRequest)) return false;
 	return inquiry.lifecycle.stage === 'QUOTED'
 		? financial.stage === 'QUOTE' && financial.version === proposal.documentVersion
 		: ['BOOKED', 'SERVED', 'CLOSED'].includes(inquiry.lifecycle.stage) &&
@@ -418,44 +432,16 @@ export function describeRejectedStaffRequest(data: StaffRequestResponse | null, 
 		depositState: deposit?.state ?? null,
 		depositDocumentIdMatches: deposit?.documentId === financial?.id,
 		hasProposal: proposal != null,
-		hasServicePlan: data.servicePlan != null
+		hasServicePlan: data.servicePlan != null,
+		hasEffectiveServicePlan: data.effectiveServicePlan != null,
+		hasAcceptedServicePlan: data.acceptedServicePlan != null,
+		proposalHistoryCount: Array.isArray(data.proposalHistory) ? data.proposalHistory.length : null,
+		servicePlanHistoryCount: Array.isArray(data.servicePlanHistory)
+			? data.servicePlanHistory.length
+			: null
 	};
 }
 
-/**
- * An approved plan belongs to exactly the latest proposal's Quote. While that Quote is current its
- * lines are the plan's lines, in order. Absent is legitimate (deposit-only issuance); contradictory is not.
- */
-function isCoherentServicePlan(
-	plan: StaffRequestResponse['servicePlan'],
-	data: CurrentStaffRequest
-): boolean {
-	if (plan == null) return true;
-	const { financial, proposal } = data;
-	return (
-		!!proposal &&
-		plan.documentId === financial.id &&
-		plan.documentVersion === proposal.documentVersion &&
-		Number.isInteger(plan.reviewedDocumentVersion) &&
-		plan.reviewedDocumentVersion > 0 &&
-		plan.reviewedDocumentVersion < plan.documentVersion &&
-		typeof plan.description === 'string' &&
-		!!plan.description.trim() &&
-		typeof plan.approvedBy === 'string' &&
-		!!plan.approvedBy &&
-		Number.isFinite(Date.parse(plan.approvedAt)) &&
-		isServicePlanItems(plan.items) &&
-		Array.isArray(plan.lineNotes) &&
-		new Set(plan.lineNotes.map((n) => n.lineItemId)).size === plan.lineNotes.length &&
-		plan.lineNotes.every(
-			(n) =>
-				typeof n.lineItemId === 'string' &&
-				typeof n.note === 'string' &&
-				(financial.version !== plan.documentVersion ||
-					financial.lines.some((l) => l.id === n.lineItemId))
-		)
-	);
-}
 export function isProposalEligible(data: StaffRequestResponse): boolean {
 	return (
 		data.inquiry.lifecycle.stage === 'REQUESTED' &&

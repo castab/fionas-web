@@ -30,7 +30,7 @@ is unavailable rather than an assumed zero balance.
 (`businessDate`), so a countdown ("scooping in 25 days") never depends on the host or browser
 clock. Its figures are backend values only: Estimate or Quote total and the active deposit while
 QUOTED; Invoice total, `reconciliation.netApplied` (Paid) and balance afterwards. Its action row
-holds Build quote / Decline, Mark event served / Close event, and Record deposit / Record payment.
+holds Build quote / Revise quote / Amend invoice / Decline, Mark event served / Close event, and Record deposit / Record payment.
 Payment entry opens below the card from `?payment` (a plain link, so it works without JavaScript)
 or stays open while a returned payment result is shown; success PRGs to the clean path, which
 closes it.
@@ -47,7 +47,111 @@ Preview posts expectedDocumentVersion, lines, optional servicePlan and terms wit
 
 Issuance rereads the coherent authoritative request, checks its version, USD currency, deposit suggestion and permission intersection, and compares a SHA-256 fingerprint of the full ordered command/plan/terms with the reviewed form. A changed input or QUOTE_REVIEW_STALE previews again and requires another click. It sends the same lines/plan/terms and reviewToken once, never retries a mutation, and requires reload after an ambiguous outcome. A 303 to the clean path lets the authoritative GET confirm Quote, deposit and approved service plan. Issuance does not imply delivery or booking.
 
-Quote/deposit revision controls remain outside the current UI, as before this migration; the backend's corresponding identity-bearing endpoints are not emulated. Manual payments and served/closed workflows below are retained. Current read validators reject absent/corrupt requested service, line identities/amounts/authorship, reconciliation, proposal/deposit pairs and plan notes instead of substituting zero or success.
+Revising a Quote and amending an Invoice reuse this editor; see [Revising quotes and amending invoices](#revising-quotes-and-amending-invoices). Current read validators reject absent/corrupt requested service, line identities/amounts/authorship, reconciliation, proposal/deposit pairs and plan notes instead of substituting zero or success.
+
+## Revising quotes and amending invoices
+
+Depends on fionas-commerce PR #31 (merged; `docs/quote-invoice-revisions-frontend-handoff.md` in that
+repository is the contract, and is deliberately not copied here). One editor serves the whole booking:
+the lifecycle picks what it does, so staff meet one continuous workflow rather than three accounting tools.
+
+| Lifecycle | Action        | Editor mode         | Edits                              | Authority                                                                     |
+| --------- | ------------- | ------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| REQUESTED | Build quote   | `INITIAL_QUOTE`     | lines, service plan, deposit terms | financial-document.create, deposit-requirement.manage, financial-terms.manage |
+| QUOTED    | Revise quote  | `QUOTE_REVISION`    | lines, service plan, deposit terms | the same three                                                                |
+| BOOKED    | Amend invoice | `INVOICE_AMENDMENT` | lines, service plan                | financial-document.create, financial-terms.manage (no deposit authority)      |
+| SERVED    | Amend invoice | `INVOICE_AMENDMENT` | lines, service plan                | the same two                                                                  |
+| CLOSED    | none          | read only           | nothing                            | n/a                                                                           |
+| DECLINED  | none          | read only           | nothing                            | n/a                                                                           |
+
+Eligibility lives in `$lib/financial-editor.ts` (`canReviseQuote`, `canAmendInvoice`, `openEditorMode`) and is
+checked again on the server for every preview and publication. A revision is offered only while the deposit
+requirement is unsatisfied; the backend stays the authority and refuses anything else.
+
+**Panels.** `?quote`, `?quote-revision` and `?invoice-revision` open the editor and `?history` loads the
+optional financial history. They are plain links (no JavaScript needed), keep `from=`, and are reloadable. A flag
+opens only the mode the lifecycle offers now: `?quote` on a QUOTED request, or any editor flag on a CLOSED or
+DECLINED one, opens nothing and exposes no action, so combinations resolve deterministically (the lifecycle
+picks at most one editor). Cancel returns to the workspace with its return context, and every preview and
+publication posts to `workspaceAction(context, name, panel)` and redirects with `workspaceRedirect`.
+
+**Shared editor, per-mode behavior.** `quote-builder.svelte` (lines, service description, guests, selections,
+notes, validation, dirty/pending state, accessible errors) is shared. A mode decides which backend operation
+runs, which identity must match, whether deposit terms are editable (an Invoice amendment shows the accepted
+deposit read-only and posts none), what preview is shown (`editor-preview.svelte`) and the labels
+(`editorCopy`). `$lib/server/editor-actions.ts` is the one server handler; it is parameterized by mode and
+holds no per-mode forks beyond the operation table. This is a small abstraction, not a workflow engine.
+
+| Mode                | Preview                           | Publication                        |
+| ------------------- | --------------------------------- | ---------------------------------- |
+| `INITIAL_QUOTE`     | `POST …/quote-preview`            | `POST …/proposals`                 |
+| `QUOTE_REVISION`    | `POST …/quote-revision-preview`   | `POST …/proposals/quote-revisions` |
+| `INVOICE_AMENDMENT` | `POST …/invoice-revision-preview` | `POST …/invoice-revisions`         |
+
+Publication sends the identical body as the preview plus the preview's own top-level `reviewToken`. The
+dedicated `…/proposals/deposit-revisions` route is intentionally not wired: a deposit-only change is one more
+reviewed Quote revision, so there are not two ways to do the same thing.
+
+**Seeding.** `editorValues` starts from the authoritative current state, never the customer's inquiry. An
+initial quote is seeded from the Estimate, the customer's picks and the suggested terms. A revision or
+amendment is seeded from the current financial lines and the _effective_ service approval (description, guests,
+ordered selections, line notes), and a Quote revision keeps the negotiated deposit terms rather than
+resetting to the suggested percentage. A cleared or never-approved plan seeds empty and is never
+resurrected from the original picks. A revision opens unpreviewed (previewing the unchanged state would only
+answer `NO_MATERIAL_CHANGE`), unlike the first quote, which still opens previewed.
+
+**Service plan actions.** The backend takes `RETAIN`, `REPLACE` or `CLEAR` and never infers one from field
+presence. The browser does not choose one either: the server derives it from the posted draft against the
+current effective plan (`planIntent`). An unchanged plan is `RETAIN` (nothing is sent, even when only prices
+change); any change to the description, guests, selections or their order, or a line note is `REPLACE` with the
+complete plan; `CLEAR` needs the deliberate "Remove the service plan" choice and an approved plan. A blank
+description alone is refused with that guidance, never read as a clearing. Removing a noted line forces a
+replacement without that note, and the editor and preview both list the notes that leave with their line. A
+plan's `durationMinutes`, which this console never authors, is carried unchanged through a replacement.
+
+**Preview integrity.** The review fingerprint (`reviewFingerprint`) binds the mode, the reviewed document
+version, the deposit revision, the proposal ID, the service approval revision, the plan action, the complete
+lines and plan, and the terms. Publication re-reads the request, refuses (409 and reload) if any reviewed
+identity moved, and re-previews instead of publishing if the posted form is not exactly the reviewed command.
+This is a local guard only; `reviewToken` stays authoritative. `409 QUOTE_REVIEW_STALE` returns a fresh preview
+for renewed human review and never resubmits a new token. `422 NO_MATERIAL_CHANGE` is shown as guidance
+("Nothing has changed…") and is not a publication. An uncertain publication response blocks every mutation
+until a reload. Nothing is retried, and no approver is ever sent: the backend derives it from the session.
+
+**Preview content.** A Quote revision shows the **Current total** (on the revision endpoint `estimateTotal` is
+the current Quote total), the proposed total, the difference, the current and proposed deposit, whether the
+service commitment changes and whether a new financial version is created at all. A service-only or
+deposit-only revision publishes a new proposal while `quote.quoteVersion` stays. An Invoice amendment shows the
+current and revised invoice, the change, what is already paid, the remaining balance and the settlement
+(`UNDERPAID`, `SETTLED`, `OVERPAID`), all from the backend. Only the presentational difference is computed
+locally (`decimalDifference`, exact `BigInt`, no floating point). An overpaid invoice is legitimate: it is
+neither closed nor refunded automatically (refunds are separate backend operations), and an amendment never
+marks the event served or closed.
+
+**Service approvals.** `servicePlan` is the approval bound to the latest proposal; `effectiveServicePlan` is
+the latest approval, which governs fulfillment; `acceptedServicePlan` is the proposal's approval once
+booked. They can differ after an Invoice amendment, and a retained approval can reference an older financial
+snapshot, which is valid. The Serving plan card shows the effective plan, labelled with the document it was
+approved against ("Approved with Quote v2" or "Invoice v3", plus the plan's own revision), a deliberate
+"Service plan removed" state for a clearing, and the plan that booked the event separately when an
+amendment replaced it. `service-plan.ts` validates each approval (positive revision, provenance, document
+references, content unless `cleared`) and the joins between `servicePlanHistory`, `proposalHistory` and the
+three plans. Missing histories fail the request closed rather than reading as empty.
+
+**Revision history.** The Revision history card composes `proposalHistory` (Quote publications, with what
+changed against the previous one, and whether it is current or the accepted Quote) and `servicePlanHistory`
+(approvals, including clearings, each plan viewable but never editable). They stay separate lists because
+financial versions, deposit revisions and service revisions do not advance together. **Show versions**
+(`?history`) additionally reads `GET /financial-documents/{id}/history` and `…/deposit-requirement/history`; a
+failed or malformed read shows "unavailable" for that section only, and the booking above it stays usable.
+
+**Payments and fulfillment** are unchanged. Deposit recording uses the current proposal's ID, so a stale ID
+from before a revision can never be recorded; payment controls use the latest Invoice version and the
+authoritative balance. Mark served stays independent of amendments, and Close event still needs SERVED and an
+exact-zero balance.
+
+**Deployment.** Requires fionas-commerce with PR #31 (commerce-runtime 0.0.26 and the additive Fiona V4
+migration). The backend no longer accepts a tokenless Quote revision; this console never sent one.
 
 ## Manual payments and booking
 

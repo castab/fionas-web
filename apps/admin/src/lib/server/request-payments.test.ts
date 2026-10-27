@@ -178,7 +178,10 @@ describe('reviewed payment actions', () => {
 				if (data.depositRequirement.state === 'ACTIVE')
 					data.depositRequirement.approvalDocumentVersion++;
 			}
-			if (change === 'proposal') data.proposal!.id = '30000000-0000-0000-0000-000000000099';
+			if (change === 'proposal') {
+				data.proposal!.id = '30000000-0000-0000-0000-000000000099';
+				data.proposalHistory[0].id = data.proposal!.id;
+			}
 			vi.mocked(getStaffRequest).mockResolvedValue({ ok: true, data, setCookies: [] });
 			expect(await actions.recordDeposit(event())).toMatchObject({
 				status: 409,

@@ -184,8 +184,12 @@ export function readReturnContext(params: URLSearchParams): RequestListQuery | n
 	return problem ? null : query;
 }
 
-/** The workspace panels opened by a plain link (`?quote`, `?payment`, `?decline`). */
-export type WorkspacePanel = 'quote' | 'payment' | 'decline';
+/**
+ * The workspace panels opened by a plain link (`?quote`, `?quote-revision`, `?invoice-revision`,
+ * `?payment`, `?decline`, `?history`). Each is a bare flag, so reloads, Back and no-JavaScript work.
+ */
+export type WorkspacePanel =
+	'quote' | 'quote-revision' | 'invoice-revision' | 'payment' | 'decline' | 'history';
 
 /**
  * A workspace query string: an optional panel flag, then the return context. Without either it is

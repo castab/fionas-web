@@ -21,7 +21,7 @@ import { requestFixtures, mayaId } from '../../e2e/request-fixture.mjs';
 /** The quote form as a native browser posts it (financial lines omitted). */
 function form(v: QuoteFormValues) {
 	const f = new FormData();
-	for (const [k, value] of Object.entries(v.deposit)) f.set(k, value);
+	for (const [k, value] of Object.entries(v.deposit!)) f.set(k, value);
 	f.set('reviewedCurrency', 'USD');
 	f.set('planDescription', v.description);
 	f.set('planGuestCount', v.guestCount);
@@ -177,7 +177,13 @@ describe('review integrity', () => {
 		'the fingerprint binds a selection %s change',
 		(kind) => {
 			const v = seed();
-			const hash = () => reviewFingerprint(1, buildCommand(v), terms);
+			const hash = () =>
+				reviewFingerprint({
+					mode: 'INITIAL_QUOTE',
+					expectedDocumentVersion: 1,
+					command: buildCommand(v),
+					terms
+				});
 			const before = hash();
 			if (kind === 'order') [v.items[0], v.items[1]] = [v.items[1], v.items[0]];
 			else if (kind === 'remove') v.items.pop();
@@ -190,7 +196,13 @@ describe('review integrity', () => {
 
 	it('an unchanged command keeps its fingerprint across a native round trip', () => {
 		const v = { ...seed(), lines: [] }; // `form` posts no financial lines
-		const hash = (values: QuoteFormValues) => reviewFingerprint(1, buildCommand(values), terms);
+		const hash = (values: QuoteFormValues) =>
+			reviewFingerprint({
+				mode: 'INITIAL_QUOTE',
+				expectedDocumentVersion: 1,
+				command: buildCommand(values),
+				terms
+			});
 		expect(hash(readQuoteForm(form(v))!)).toBe(hash(v));
 	});
 

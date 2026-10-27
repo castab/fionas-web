@@ -2,27 +2,27 @@
 import { createHash } from 'node:crypto';
 import { proposalPair, resolveDepositAmount } from './request-fixture.mjs';
 /** @param {string} value */
-const units = (value) => {
+export const units = (value) => {
 	const negative = value.startsWith('-');
 	const [whole, fraction = ''] = value.replace('-', '').split('.');
 	const n = BigInt(whole) * 10n ** 18n + BigInt(fraction.padEnd(18, '0'));
 	return negative ? -n : n;
 };
 /** @param {bigint} amount */
-const decimal = (amount) => {
+export const decimal = (amount) => {
 	const negative = amount < 0n;
 	const n = negative ? -amount : amount;
 	return `${negative ? '-' : ''}${n / 100n}.${(n % 100n).toString().padStart(2, '0')}`;
 };
 /** @param {string} value */
-const minor = (value) => {
+export const minor = (value) => {
 	const n = units(value);
 	if (n % 10n ** 16n !== 0n) throw new Error('Nonsettleable');
 	return n / 10n ** 16n;
 };
 /** Commerce's canonical ServicePlanItem (PR #28): trimmed text, blank metadata as null.
  * @param {unknown} item */
-const selection = (item) => {
+export const selection = (item) => {
 	if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Legacy item');
 	const {
 		label,
@@ -41,6 +41,79 @@ const selection = (item) => {
 		throw new Error('Malformed item');
 	return { label, group, key };
 };
+/**
+ * Resolves proposed lines against the reviewed document the way the backend does: existing ids carry
+ * or replace, keys derive a new id, omission removes. Throws on anything the backend rejects.
+ * @param {import('../src/lib/request-contract.js').CurrentStaffRequest} request
+ * @param {import('../src/lib/quote-contract.js').ProposedLine[]} proposed */
+export function composeLines(request, proposed) {
+	const identities = new Set();
+	let total = 0n;
+	const lines = proposed.map((l) => {
+		if (!!l.lineItemId === !!l.key || !l.description || l.currency !== request.financial.currency)
+			throw new Error('Malformed line');
+		const existing = l.lineItemId
+			? request.financial.lines.find((x) => x.id === l.lineItemId)
+			: null;
+		if (l.lineItemId && !existing) throw new Error('Unknown line');
+		const id =
+			l.lineItemId ??
+			`${createHash('sha256')
+				.update(request.financial.id + ':' + request.financial.version + ':' + l.key)
+				.digest('hex')
+				.substring(0, 8)}-0000-4000-8000-000000000000`;
+		if (identities.has(id)) throw new Error('Duplicate');
+		identities.add(id);
+		const ext = l.quantity
+			? (units(l.unitPrice) * units(l.quantity)) / 10n ** 18n
+			: units(l.unitPrice);
+		if (ext % 10n ** 16n !== 0n) throw new Error('Nonsettleable');
+		const subtotal = ext / 10n ** 16n;
+		const tax = minor(l.taxAmount);
+		total += subtotal + tax;
+		const equal =
+			existing &&
+			/** @type {const} */ (['description', 'subDescription', 'currency']).every(
+				(k) => (existing[k] ?? null) === (l[k] ?? null)
+			) &&
+			units(existing.unitPrice) === units(l.unitPrice) &&
+			units(existing.taxAmount) === units(l.taxAmount) &&
+			(existing.quantity == null
+				? l.quantity == null
+				: l.quantity != null && units(existing.quantity) === units(l.quantity));
+		const { lineItemId, ...values } = l;
+		void lineItemId;
+		return {
+			...values,
+			id,
+			origin: /** @type {'CARRIED' | 'REPLACED' | 'NEW'} */ (
+				existing ? (equal ? 'CARRIED' : 'REPLACED') : 'NEW'
+			),
+			subtotal: decimal(subtotal),
+			total: decimal(subtotal + tax)
+		};
+	});
+	const financialChange =
+		lines.length !== request.financial.lines.length ||
+		lines.some((l, i) => l.id !== request.financial.lines[i]?.id || l.origin !== 'CARRIED');
+	return { lines, total, financialChange };
+}
+/** The plan as the preview and ledger carry it: canonical items, notes joined to final line ids.
+ * @param {import('../src/lib/quote-contract.js').ServicePlanRequest} plan
+ * @param {{id: string, key?: string}[]} lines */
+export function composePlan(plan, lines) {
+	const items = plan.items ?? [];
+	if (!Array.isArray(items) || items.length > 50) throw new Error('Too many items');
+	return {
+		...plan,
+		items: items.map(selection),
+		lineNotes: (plan.lineNotes ?? []).map((n) => {
+			const line = lines.find((l) => (n.lineItemId ? l.id === n.lineItemId : l.key === n.key));
+			if (!line) throw new Error('Plan identity missing');
+			return { lineItemId: line.id, note: n.note };
+		})
+	};
+}
 /** @param {{quoteEpoch?:number}} session
  * @param {import('../src/lib/request-contract.js').CurrentStaffRequest} request
  * @param {import('../src/lib/quote-contract.js').PreviewInquiryQuoteRequest} body */
@@ -50,71 +123,9 @@ export function previewQuote(session, request, body) {
 	if (!Array.isArray(body.lines) || !body.lines.length || body.lines.length > 100)
 		return { status: 422, body: { code: 'validation_failed' } };
 	try {
-		const identities = new Set();
-		let total = 0n;
-		const lines = body.lines.map((l) => {
-			if (!!l.lineItemId === !!l.key || !l.description || l.currency !== request.financial.currency)
-				throw new Error('Malformed line');
-			const existing = l.lineItemId
-				? request.financial.lines.find((x) => x.id === l.lineItemId)
-				: null;
-			if (l.lineItemId && !existing) throw new Error('Unknown line');
-			const id =
-				l.lineItemId ??
-				`${createHash('sha256')
-					.update(request.financial.id + ':' + request.financial.version + ':' + l.key)
-					.digest('hex')
-					.substring(0, 8)}-0000-4000-8000-000000000000`;
-			if (identities.has(id)) throw new Error('Duplicate');
-			identities.add(id);
-			const ext = l.quantity
-				? (units(l.unitPrice) * units(l.quantity)) / 10n ** 18n
-				: units(l.unitPrice);
-			if (ext % 10n ** 16n !== 0n) throw new Error('Nonsettleable');
-			const subtotal = ext / 10n ** 16n;
-			const tax = minor(l.taxAmount);
-			total += subtotal + tax;
-			const equal =
-				existing &&
-				/** @type {const} */ (['description', 'subDescription', 'currency']).every(
-					(k) => (existing[k] ?? null) === (l[k] ?? null)
-				) &&
-				units(existing.unitPrice) === units(l.unitPrice) &&
-				units(existing.taxAmount) === units(l.taxAmount) &&
-				(existing.quantity == null
-					? l.quantity == null
-					: l.quantity != null && units(existing.quantity) === units(l.quantity));
-			const { lineItemId, ...values } = l;
-			void lineItemId;
-			return {
-				...values,
-				id,
-				origin: existing ? (equal ? 'CARRIED' : 'REPLACED') : 'NEW',
-				subtotal: decimal(subtotal),
-				total: decimal(subtotal + tax)
-			};
-		});
+		const { lines, total, financialChange } = composeLines(request, body.lines);
 		if (total <= 0n) throw new Error('Quote must be positive');
-		const financialChange =
-			lines.length !== request.financial.lines.length ||
-			lines.some((l, i) => l.id !== request.financial.lines[i]?.id || l.origin !== 'CARRIED');
-		const servicePlan = body.servicePlan
-			? {
-					...body.servicePlan,
-					items: (() => {
-						const items = body.servicePlan.items ?? [];
-						if (!Array.isArray(items) || items.length > 50) throw new Error('Too many items');
-						return items.map(selection);
-					})(),
-					lineNotes: (body.servicePlan.lineNotes ?? []).map((n) => {
-						const line = lines.find((l) =>
-							n.lineItemId ? l.id === n.lineItemId : l.key === n.key
-						);
-						if (!line) throw new Error('Plan identity missing');
-						return { lineItemId: line.id, note: n.note };
-					})
-				}
-			: undefined;
+		const servicePlan = body.servicePlan ? composePlan(body.servicePlan, lines) : undefined;
 		const amount = decimal(total);
 		const reviewToken = createHash('sha256')
 			.update(
@@ -195,13 +206,24 @@ export function issueComposedQuote(request, preview, terms, userId) {
 			preview.currency
 		)
 	);
-	if (preview.servicePlan)
+	request.servicePlanHistory = [];
+	request.effectiveServicePlan = null;
+	request.servicePlan = null;
+	request.acceptedServicePlan = null;
+	if (preview.servicePlan) {
 		request.servicePlan = {
 			...preview.servicePlan,
 			documentId: request.financial.id,
 			documentVersion: preview.quoteVersion,
 			reviewedDocumentVersion: preview.reviewedDocumentVersion,
 			approvedAt: '2026-07-16T19:01:00Z',
-			approvedBy: userId
+			approvedBy: userId,
+			revision: 1,
+			cleared: false
 		};
+		request.servicePlanHistory = [request.servicePlan];
+		request.effectiveServicePlan = request.servicePlan;
+		request.proposal = /** @type {*} */ ({ ...request.proposal, servicePlanRevision: 1 });
+	}
+	request.proposalHistory = [structuredClone(/** @type {*} */ (request.proposal))];
 }

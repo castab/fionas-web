@@ -118,7 +118,7 @@ it.each(['EUR', 'JPY', 'usd', ''])(
 	(reviewed) => {
 		const v = initialQuoteValues(requestFixtures()[mayaId]);
 		const f = new FormData();
-		for (const [k, value] of Object.entries(v.deposit)) f.set(k, value);
+		for (const [k, value] of Object.entries(v.deposit!)) f.set(k, value);
 		for (const [k, value] of Object.entries({
 			planDescription: v.description,
 			planGuestCount: v.guestCount,
@@ -136,7 +136,7 @@ it('authors no service duration: the plan omits it and a posted duration is refu
 	const v = initialQuoteValues(requestFixtures()[mayaId]);
 	expect(buildCommand(v).servicePlan).not.toHaveProperty('durationMinutes');
 	const f = new FormData();
-	for (const [k, value] of Object.entries(v.deposit)) f.set(k, value);
+	for (const [k, value] of Object.entries(v.deposit!)) f.set(k, value);
 	for (const [k, value] of Object.entries({
 		planDescription: v.description,
 		planGuestCount: v.guestCount,
