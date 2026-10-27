@@ -191,32 +191,49 @@ test('selections are chips: remove one, add others under categories, then issue 
 	await waitForPreview(page);
 	await editor(page).getByRole('button', { name: '+ Add selection', exact: true }).click();
 	const label = editor(page).getByLabel('Selection', { exact: true });
-	const category = editor(page).getByLabel('Category Optional', { exact: true });
-	// Enter adds the chip without submitting the quote form.
+	const category = editor(page).getByLabel(/^Category/);
+	const hint = editor(page).getByRole('status');
+	// Enter adds the chip without submitting the quote form; the composer stays open.
 	await label.fill('Birthday flavor');
 	await category.fill('Party specials');
+	await expect(hint).toHaveText('Creates a new category, “Party specials”.');
 	await label.press('Enter');
 	await expect(label).toHaveValue('');
 	await label.fill('Custom cups');
 	await category.fill('Supplies');
 	await editor(page).getByRole('button', { name: 'Add', exact: true }).click();
-	await editor(page).getByRole('button', { name: 'Done', exact: true }).click();
-	// The "+" at the end of a category adds to it: the composer opens already filed there.
-	await editor(page).getByRole('button', { name: 'Add selection to Vessels', exact: true }).click();
-	await expect(category).toHaveValue('Vessels');
-	await expect(label).toBeFocused();
-	await label.fill('Paper bowls');
-	await label.press('Enter');
-	await editor(page).getByRole('button', { name: 'Done', exact: true }).click();
+	// A category typed in another case files under the existing one.
+	await label.fill('Extra sprinkles');
+	await category.fill('toppings');
+	await expect(hint).toHaveText('Adds to Toppings.');
+	await editor(page).getByRole('button', { name: 'Add', exact: true }).click();
+	await category.fill('');
+	await expect(hint).toHaveText('Leave the category blank to file it under Other selections.');
+	await editor(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+	// The dashed "+" at the end of a category swaps for a chip-shaped input in that category.
+	const quick = editor(page).getByRole('button', { name: 'Add selection to Vessels', exact: true });
+	await quick.click();
+	const inline = editor(page).getByLabel('New selection in Vessels', { exact: true });
+	await expect(inline).toBeFocused();
+	await inline.fill('Gift tags');
+	await inline.press('Escape');
+	await expect(inline).toHaveCount(0);
+	await expect(quick).toBeFocused();
+	await quick.click();
+	await inline.fill('Paper bowls');
+	await inline.press('Enter');
+	await expect(inline).toHaveValue('');
+	await editor(page).screenshot({ path: testInfo.outputPath('selection-inline-add.png') });
+	await inline.press('Escape');
 	await waitForPreview(page);
 	await editor(page).screenshot({ path: testInfo.outputPath('selection-chips.png') });
 
 	const proposed: [string, string[]][] = [
 		['Vessels', ['Waffle cones', 'Cups', 'Paper bowls']],
-		['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
-		['Other selections', ['Birthday candles']],
+		['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles', 'Extra sprinkles']],
 		['Party specials', ['Birthday flavor']],
-		['Supplies', ['Custom cups']]
+		['Supplies', ['Custom cups']],
+		['Other selections', ['Birthday candles']]
 	];
 	expect(await editorGroups(page)).toEqual(proposed);
 	expect(await groups(page.getByTestId('preview-service-plan'))).toEqual(proposed);
@@ -230,9 +247,10 @@ test('selections are chips: remove one, add others under categories, then issue 
 		{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
 		{ label: 'Cups', group: 'Vessels', key: 'cup' },
 		{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
-		{ label: 'Birthday candles', group: null, key: null },
 		{ label: 'Birthday flavor', group: 'Party specials', key: null },
 		{ label: 'Custom cups', group: 'Supplies', key: null },
+		{ label: 'Birthday candles', group: null, key: null },
+		{ label: 'Extra sprinkles', group: 'Toppings', key: null },
 		{ label: 'Paper bowls', group: 'Vessels', key: null }
 	]);
 	expect(await groups(page.getByTestId('service-plan'))).toEqual(proposed);

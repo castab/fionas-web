@@ -253,9 +253,12 @@ only while its label equals the label the key came with, so a substitution drops
 (restoring the label restores it). Nothing in a selection selects a price.
 
 Enhanced: selections show as removable chips under their category headings. Remove drops a chip. A
-dashed "+" at the end of each category opens the composer already filed under it, and "+ Add selection"
-opens it uncategorized (a label plus an optional category suggested from the draft); Enter adds
-without submitting the quote form, and a new selection is keyless. Chips carry the same hidden
+dashed "+" at the end of each category swaps for a chip-shaped input in that category (Enter or Add
+adds and keeps it open for the next pick; Escape or × closes it). "+ Add selection" opens a composer
+with a label and an optional category picked from the draft or typed; a live hint says whether it adds
+to a category, creates one, or files under Other selections. Typed categories match existing ones
+regardless of case, and a new category is placed before Other selections, which stays last. Enter
+never submits the quote form. A new selection is keyless; chips carry the same hidden
 `selectionIdentity`/label/group/key/source fields, edits feed the debounced preview, and order follows
 the draft (original picks first, additions after). Renaming or regrouping is a remove plus add, which
 drops provenance as above. Native: every row posts

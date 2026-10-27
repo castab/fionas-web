@@ -6,6 +6,7 @@
 		GROUP_MAX,
 		LABEL_MAX,
 		MAX_SELECTIONS,
+		UNCATEGORIZED_HEADING,
 		selectionGroups
 	} from '$lib/service-selections.js';
 	import { fieldInput, fieldLabel, groupCaps, hint, lineTool } from './styles.js';
@@ -24,9 +25,13 @@
 	} = $props();
 	const uid = $props.id();
 	let root = $state<HTMLElement>();
+	/** The "+ Add selection" composer, with its label and category. */
 	let composing = $state(false);
 	let draftLabel = $state('');
 	let draftGroup = $state('');
+	/** The category whose inline chip input is open ('' is Other selections), if any. */
+	let inlineGroup = $state<string | null>(null);
+	let inlineLabel = $state('');
 	let draftError = $state('');
 	const categories = $derived([...new Set(items.map((item) => item.group.trim()).filter(Boolean))]);
 	const position = (rowId: string) => items.findIndex((row) => row.rowId === rowId);
@@ -48,9 +53,25 @@
 		changed();
 		void focus('[data-selection-add]');
 	}
-	function commit() {
-		const label = draftLabel.trim();
-		const group = draftGroup.trim();
+	/** A typed category matches an existing one regardless of case; "Other selections" means none. */
+	function resolveGroup(text: string) {
+		const typed = text.trim();
+		if (typed.toLowerCase() === UNCATEGORIZED_HEADING.toLowerCase()) return '';
+		return categories.find((c) => c.toLowerCase() === typed.toLowerCase()) ?? typed;
+	}
+	const hasGroup = (group: string) => items.some((item) => item.group.trim() === group);
+	const where = $derived.by(() => {
+		const typed = draftGroup.trim();
+		if (!typed) return `Leave the category blank to file it under ${UNCATEGORIZED_HEADING}.`;
+		const group = resolveGroup(typed);
+		return !group || categories.includes(group)
+			? `Adds to ${group || UNCATEGORIZED_HEADING}.`
+			: `Creates a new category, “${typed}”.`;
+	});
+	/** Adds a keyless selection; false (with a message) if it isn't valid. */
+	function add(labelText: string, groupText: string) {
+		const label = labelText.trim();
+		const group = resolveGroup(groupText);
 		if (!label) draftError = 'Name the selection first.';
 		else if (label.length > LABEL_MAX)
 			draftError = `Keep the selection to ${LABEL_MAX} characters.`;
@@ -58,14 +79,25 @@
 		else if (items.length >= MAX_SELECTIONS)
 			draftError = `A serving plan lists at most ${MAX_SELECTIONS} selections.`;
 		else {
-			items.push({ rowId: crypto.randomUUID(), label, group, key: null, sourceLabel: '' });
-			draftLabel = '';
+			const row = { rowId: crypto.randomUUID(), label, group, key: null, sourceLabel: '' };
+			// A new category goes before Other selections, which always stays last.
+			const other = items.findIndex((item) => !item.group.trim());
+			if (hasGroup(group) || other < 0) items.push(row);
+			else items.splice(other, 0, row);
 			draftError = '';
 			changed();
-			void focus('[data-selection-draft]');
-			return;
+			return true;
 		}
+		return false;
+	}
+	function commit() {
+		// The composer stays open, keeping its category, so several picks can go in one by one.
+		if (add(draftLabel, draftGroup)) draftLabel = '';
 		void focus('[data-selection-draft]');
+	}
+	function commitInline() {
+		if (add(inlineLabel, inlineGroup ?? '')) inlineLabel = '';
+		void focus('[data-selection-inline]');
 	}
 	function closeComposer() {
 		composing = false;
@@ -74,18 +106,36 @@
 		draftError = '';
 		void focus('[data-selection-add]');
 	}
-	/** The quick-add pill at the end of a category opens the composer already filed under it. */
-	function openComposer(group = '') {
+	function openComposer() {
 		composing = true;
-		draftGroup = group;
+		inlineGroup = null;
 		draftError = '';
 		void focus('[data-selection-draft]');
 	}
-	/** Enter adds the selection; it must not submit the quote form. */
-	function onEnter(e: KeyboardEvent) {
-		if (e.key !== 'Enter') return;
-		e.preventDefault();
-		commit();
+	/** The dashed "+" at the end of a category swaps for a chip-shaped input in that category. */
+	function openInline(group: string) {
+		inlineGroup = group;
+		inlineLabel = '';
+		composing = false;
+		draftError = '';
+		void focus('[data-selection-inline]');
+	}
+	function closeInline() {
+		const group = inlineGroup;
+		inlineGroup = null;
+		inlineLabel = '';
+		draftError = '';
+		void focus(`[data-selection-quick="${CSS.escape(group ?? '')}"]`);
+	}
+	/** Enter adds and Escape cancels; neither may reach the quote form. */
+	function onKey(e: KeyboardEvent, submit: () => void, cancel: () => void) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			submit();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancel();
+		}
 	}
 </script>
 
@@ -225,20 +275,62 @@
 					{/if}
 				{/each}
 				{#if hydrated}
-					<li class="inline-flex">
-						<button
-							type="button"
-							class={`inline-flex min-h-8.5 cursor-pointer items-center justify-center rounded-full border border-dashed border-olive-700 bg-transparent px-3.5 py-1.5 font-sans text-[13px] leading-[1.4] font-semibold text-olive-800 transition-[background-color] duration-(--dur-fast) ease-(--ease-out) not-disabled:hover:bg-cream-200 disabled:cursor-not-allowed disabled:opacity-45 ${focusRing}`}
-							aria-label={`Add selection to ${group.heading}`}
-							title="Add to this category"
-							disabled={items.length >= MAX_SELECTIONS}
-							onclick={() => openComposer(group.group)}><span aria-hidden="true">+</span></button
+					{#if inlineGroup === group.group}
+						<li
+							class="inline-flex items-center gap-1 rounded-full border-[1.5px] border-olive-700 bg-(--surface-card) py-[3px] pr-1 pl-3 shadow-[0_0_0_3px_var(--focus-ring)]"
 						>
-					</li>
+							<input
+								class="min-h-7.5 w-37.5 min-w-0 border-0 bg-transparent p-0 font-sans text-[13px] leading-[1.4] text-(--text-body) outline-none"
+								value={inlineLabel}
+								maxlength="200"
+								placeholder="New selection…"
+								aria-label={`New selection in ${group.heading}`}
+								aria-invalid={draftError ? 'true' : undefined}
+								data-selection-inline
+								oninput={(e) => {
+									e.stopPropagation();
+									inlineLabel = e.currentTarget.value;
+									draftError = '';
+								}}
+								onchange={(e) => e.stopPropagation()}
+								onkeydown={(e) => onKey(e, commitInline, closeInline)}
+							/>
+							<button
+								type="button"
+								class={`min-h-7.5 cursor-pointer rounded-full border-0 bg-olive-700 px-3 font-sans text-[10.5px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-cream-200 uppercase transition-[background-color] duration-(--dur-fast) ease-(--ease-out) not-disabled:hover:bg-olive-800 disabled:cursor-not-allowed disabled:opacity-45 ${focusRing}`}
+								disabled={!inlineLabel.trim()}
+								onclick={commitInline}>Add</button
+							>
+							<button
+								type="button"
+								class={`grid size-7 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent p-0 text-base leading-none text-(--text-muted) transition-[background-color] duration-(--dur-fast) ease-(--ease-out) hover:bg-cream-200 ${focusRing}`}
+								aria-label={`Cancel adding to ${group.heading}`}
+								onclick={closeInline}><span aria-hidden="true">×</span></button
+							>
+						</li>
+					{:else}
+						<li class="inline-flex">
+							<button
+								type="button"
+								class={`inline-flex min-h-8.5 cursor-pointer items-center justify-center rounded-full border border-dashed border-olive-700 bg-transparent px-3.5 py-1.5 font-sans text-[13px] leading-[1.4] font-semibold text-olive-800 transition-[background-color] duration-(--dur-fast) ease-(--ease-out) not-disabled:hover:bg-cream-200 disabled:cursor-not-allowed disabled:opacity-45 ${focusRing}`}
+								aria-label={`Add selection to ${group.heading}`}
+								title="Add to this category"
+								data-selection-quick={group.group}
+								disabled={items.length >= MAX_SELECTIONS}
+								onclick={() => openInline(group.group)}><span aria-hidden="true">+</span></button
+							>
+						</li>
+					{/if}
 				{/if}
 			</ul>
 		</div>
 	{/each}
+	{#if hydrated && inlineGroup !== null && draftError}<p
+			role="alert"
+			class="m-0 text-xs text-rust-600"
+		>
+			{draftError}
+		</p>{/if}
 	{#if hydrated && errorList.length}<p role="alert" class="m-0 text-xs text-rust-600">
 			{errorList.join(' ')}
 		</p>{/if}
@@ -259,53 +351,57 @@
 		<div
 			role="group"
 			aria-label="Add a selection"
-			class="flex flex-col gap-2.5 rounded-input bg-cream-200 p-3.5"
+			class="flex flex-wrap items-end gap-2.5 rounded-input border-[1.5px] border-olive-700 bg-(--surface-card) px-3.5 py-3 shadow-[0_0_0_3px_var(--focus-ring)]"
 		>
-			<div class="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2">
-				<label class={fieldLabel}
-					>Selection<input
-						class={input}
-						value={draftLabel}
-						maxlength="200"
-						placeholder="e.g. Rainbow Sprinkles"
-						aria-invalid={draftError ? 'true' : undefined}
-						data-selection-draft
-						oninput={(e) => {
-							e.stopPropagation();
-							draftLabel = e.currentTarget.value;
-							draftError = '';
-						}}
-						onchange={(e) => e.stopPropagation()}
-						onkeydown={onEnter}
-					/></label
-				>
-				<label class={fieldLabel}
-					><span>Category <span class="font-normal text-(--text-muted)">Optional</span></span><input
-						class={input}
-						value={draftGroup}
-						maxlength="120"
-						list={`${uid}-categories`}
-						placeholder="e.g. Toppings"
-						oninput={(e) => {
-							e.stopPropagation();
-							draftGroup = e.currentTarget.value;
-							draftError = '';
-						}}
-						onchange={(e) => e.stopPropagation()}
-						onkeydown={onEnter}
-					/></label
-				>
-			</div>
-			{#if draftError}<p role="alert" class="m-0 text-xs text-rust-600">{draftError}</p>{/if}
-			<div class="flex flex-wrap items-center gap-2">
+			<label class={`${fieldLabel} flex-[1_1_180px]`}
+				>Selection<input
+					class={input}
+					value={draftLabel}
+					maxlength="200"
+					placeholder="e.g. Birthday candles"
+					aria-invalid={draftError ? 'true' : undefined}
+					data-selection-draft
+					oninput={(e) => {
+						e.stopPropagation();
+						draftLabel = e.currentTarget.value;
+						draftError = '';
+					}}
+					onchange={(e) => e.stopPropagation()}
+					onkeydown={(e) => onKey(e, commit, closeComposer)}
+				/></label
+			>
+			<label class={`${fieldLabel} flex-[1_1_160px]`}
+				><span
+					>Category
+					<span class="font-normal text-(--text-muted)">Optional — pick one or type a new one</span
+					></span
+				><input
+					class={input}
+					value={draftGroup}
+					maxlength="120"
+					list={`${uid}-categories`}
+					placeholder={UNCATEGORIZED_HEADING}
+					oninput={(e) => {
+						e.stopPropagation();
+						draftGroup = e.currentTarget.value;
+						draftError = '';
+					}}
+					onchange={(e) => e.stopPropagation()}
+					onkeydown={(e) => onKey(e, commit, closeComposer)}
+				/></label
+			>
+			<div class="flex items-center gap-1.5">
 				<Button
 					type="button"
-					variant="secondary"
 					class="min-h-11 px-4.5 py-2.5 text-[11px]"
+					disabled={!draftLabel.trim()}
 					onclick={commit}>Add</Button
 				>
-				<button type="button" class={lineTool} onclick={closeComposer}>Done</button>
+				<button type="button" class={lineTool} onclick={closeComposer}>Cancel</button>
 			</div>
+			<p class={`${hint} basis-full`} role={draftError ? 'alert' : 'status'}>
+				{#if draftError}<span class="text-rust-600">{draftError}</span>{:else}{where}{/if}
+			</p>
 		</div>
 	{:else}
 		<button
@@ -313,7 +409,7 @@
 			data-selection-add
 			disabled={items.length >= MAX_SELECTIONS}
 			class={`${lineTool} self-start`}
-			onclick={() => openComposer()}>+ Add selection</button
+			onclick={openComposer}>+ Add selection</button
 		>
 	{/if}
 </div>
