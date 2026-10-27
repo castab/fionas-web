@@ -20,21 +20,38 @@ test('override, reorder, remove, bespoke service and separate credit retain revi
 	await openBuilder(page);
 	const rows = page.getByTestId('quote-line-editor');
 	const original = (await session(context)).requests;
-	await rows.nth(0).getByLabel('Unit price', { exact: true }).fill('101.00');
-	await rows.nth(0).getByLabel('Reason or service note').fill('Negotiated base');
+	// Lines are summaries until opened; one editor is open at a time.
+	const editLine = (n: number) =>
+		rows
+			.nth(n)
+			.getByRole('button', { name: new RegExp(`^Edit line ${n + 1},`) })
+			.click();
+	const addLine = async (kind: string) => {
+		await page.getByRole('button', { name: 'Add line' }).click();
+		await page.getByRole('button', { name: new RegExp(`^${kind}`) }).click();
+	};
+	await editLine(0);
+	await rows.nth(0).getByRole('textbox', { name: 'Amount', exact: true }).fill('101.00');
+	await rows.nth(0).getByText('Tax & note').click();
+	await rows.nth(0).getByLabel('Why this line').fill('Negotiated base');
 	await waitForPreview(page);
+	await editLine(1);
 	await rows.nth(1).getByRole('button', { name: 'Move up' }).click();
 	await waitForPreview(page);
-	await rows.nth(2).getByRole('button', { name: 'Remove', exact: true }).click();
+	await editLine(2);
+	await rows.nth(2).getByRole('button', { name: 'Remove line' }).click();
 	await waitForPreview(page);
-	await page.getByRole('button', { name: '+ Add service', exact: true }).click();
+	await addLine('Service');
 	const bespoke = rows.nth(2);
-	await bespoke.getByLabel('Description', { exact: true }).fill('Bespoke churros');
-	await bespoke.getByLabel('Unit price', { exact: true }).fill('111.00');
-	await bespoke.getByLabel('Reason or service note').fill('Customer request');
+	await bespoke.getByLabel('What it’s for').fill('Bespoke churros');
+	await bespoke.getByRole('button', { name: 'Flat amount' }).click();
+	await bespoke.getByRole('textbox', { name: 'Amount', exact: true }).fill('111.00');
+	await bespoke.getByText('Tax & note').click();
+	await bespoke.getByLabel('Why this line').fill('Customer request');
 	await waitForPreview(page);
-	await page.getByRole('button', { name: '+ Credit', exact: true }).click();
-	await rows.nth(3).getByLabel('Unit price', { exact: true }).fill('-11.00');
+	await addLine('Credit');
+	await rows.nth(3).getByLabel('Credit name').fill('Credit');
+	await rows.nth(3).getByLabel('Credit amount').fill('11.00');
 	await page.getByLabel('Approved service description').fill('Churro catering for this party');
 	await waitForPreview(page);
 	await page
@@ -53,6 +70,7 @@ test('override, reorder, remove, bespoke service and separate credit retain revi
 		'Bespoke churros',
 		'Credit'
 	]);
+	expect(command.lines[3].unitPrice).toBe('-11.00');
 	expect(command.lines[0].lineItemId).toBe(
 		original[Object.keys(original).find((k) => original[k].inquiry.name === 'Maya Torres')!]
 			.financial.lines[1].id

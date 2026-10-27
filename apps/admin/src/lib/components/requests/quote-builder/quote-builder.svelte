@@ -1,20 +1,16 @@
 <script lang="ts">
 	import CategorizedSelections from '../categorized-selections.svelte';
+	import QuoteLinesEditor from './quote-lines-editor.svelte';
 	import ServiceSelectionsEditor from './service-selections-editor.svelte';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { onMount, untrack } from 'svelte';
 	import { Button, Card } from '@fionas/ui';
-	import { fieldInput, fieldLabel, groupCaps, hint, lineTool, panelCaps } from './styles.js';
+	import { fieldInput, fieldLabel, groupCaps, hint, panelCaps } from './styles.js';
 	import DepositChoices from '$lib/components/requests/deposit-choices.svelte';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
-	import {
-		initialQuoteValues,
-		type QuoteActionResult,
-		type LineDraft
-	} from '$lib/quote-builder.js';
+	import { initialQuoteValues, type QuoteActionResult } from '$lib/quote-builder.js';
 	import { formatMoney } from '$lib/presentation.js';
-	import { CURRENCY } from '$lib/currency.js';
 	let {
 		request,
 		result,
@@ -51,27 +47,6 @@
 		};
 	});
 	const input = `w-full font-normal ${fieldInput}`;
-	const pill =
-		'min-h-11 px-4 py-2.5 text-[11px] not-disabled:hover:bg-cream-300/50 disabled:opacity-45';
-	const blank = (): LineDraft => ({
-		key: crypto.randomUUID(),
-		description: '',
-		unitPrice: '',
-		taxAmount: '0.00',
-		currency: CURRENCY,
-		note: ''
-	});
-	const rows = $derived([
-		...values.lines,
-		{
-			key: 'blank-row',
-			description: '',
-			unitPrice: '',
-			taxAmount: '0.00',
-			currency: CURRENCY,
-			note: ''
-		}
-	]);
 	function changed() {
 		dirty = true;
 		error = '';
@@ -85,39 +60,7 @@
 		error = '';
 		clearTimeout(timer);
 	}
-	function move(i: number, d: number) {
-		if (i + d < 0 || i + d >= values.lines.length) return;
-		[values.lines[i], values.lines[i + d]] = [values.lines[i + d], values.lines[i]];
-		changed();
-	}
-	function remove(i: number) {
-		values.lines.splice(i, 1);
-		changed();
-	}
-	function add(kind = 'service') {
-		const row = blank();
-		if (kind !== 'service')
-			row.description =
-				kind === 'charge' ? 'Additional charge' : kind === 'discount' ? 'Discount' : 'Credit';
-		values.lines.push(row);
-		dirty = true;
-		clearTimeout(timer);
-	}
 </script>
-
-{#snippet toolIcon(path: string)}
-	<svg
-		width="14"
-		height="14"
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke="currentColor"
-		stroke-width="1.75"
-		stroke-linecap="round"
-		stroke-linejoin="round"
-		aria-hidden="true"><path d={path}></path></svg
-	>
-{/snippet}
 
 <Card
 	variant="flat"
@@ -198,147 +141,14 @@
 			disabled={blocked || reviewRequired || pending}
 			class="m-0 flex min-w-0 flex-col gap-5 border-0 p-0"
 		>
-			<fieldset class="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
-				<legend class={`mb-3 ${panelCaps}`}>Final quote lines</legend>
-				{#each rows as row, i (row.lineItemId ?? row.key)}
-					<div
-						class="flex flex-col gap-2.5 rounded-input bg-cream-200 px-3.5 pt-3 pb-3.5"
-						data-testid="quote-line-editor"
-					>
-						<input
-							type="hidden"
-							name="lineIdentity"
-							value={row.lineItemId ? `id:${row.lineItemId}` : `new:${row.key}`}
-						/>
-						<div class="flex flex-wrap items-center gap-1">
-							<span class={`flex-1 ${groupCaps}`}>
-								{i === values.lines.length
-									? 'Add a line'
-									: `Line ${i + 1} · ${row.lineItemId ? 'from Estimate' : 'new'}`}
-							</span>
-							{#if i < values.lines.length}
-								<button
-									type={hydrated ? 'button' : 'submit'}
-									name="rowAction"
-									value={`up:${i}`}
-									disabled={i === 0}
-									class={lineTool}
-									onclick={() => {
-										if (hydrated) move(i, -1);
-									}}>{@render toolIcon('m18 15-6-6-6 6')}Move up</button
-								>
-								<button
-									type={hydrated ? 'button' : 'submit'}
-									name="rowAction"
-									value={`down:${i}`}
-									disabled={i === values.lines.length - 1}
-									class={lineTool}
-									onclick={() => {
-										if (hydrated) move(i, 1);
-									}}>{@render toolIcon('m6 9 6 6 6-6')}Move down</button
-								>
-								<button
-									type={hydrated ? 'button' : 'submit'}
-									name="rowAction"
-									value={`remove:${i}`}
-									class={`${lineTool} text-rust-600`}
-									onclick={() => {
-										if (hydrated) remove(i);
-									}}>{@render toolIcon('M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14')}Remove</button
-								>
-							{/if}
-						</div>
-						<div class="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2">
-							<label class={fieldLabel}
-								>{i === values.lines.length ? 'New service or adjustment' : 'Description'}<input
-									class={input}
-									name="description"
-									value={row.description}
-									oninput={(e) => {
-										if (i < values.lines.length)
-											values.lines[i].description = e.currentTarget.value;
-									}}
-									maxlength="200"
-								/></label
-							>
-							<label class={fieldLabel}
-								>Detail<input
-									class={input}
-									name="subDescription"
-									value={row.subDescription ?? ''}
-									oninput={(e) => {
-										if (i < values.lines.length)
-											values.lines[i].subDescription = e.currentTarget.value;
-									}}
-									maxlength="500"
-								/></label
-							>
-						</div>
-						<div class="grid grid-cols-3 gap-2.5">
-							<label class={fieldLabel}
-								>Quantity<input
-									class={input}
-									name="quantity"
-									value={row.quantity ?? ''}
-									oninput={(e) => {
-										if (i < values.lines.length) values.lines[i].quantity = e.currentTarget.value;
-									}}
-									inputmode="decimal"
-								/></label
-							>
-							<label class={fieldLabel}
-								>Unit price<input
-									class={input}
-									name="unitPrice"
-									value={row.unitPrice}
-									oninput={(e) => {
-										if (i < values.lines.length) values.lines[i].unitPrice = e.currentTarget.value;
-									}}
-									inputmode="decimal"
-								/></label
-							>
-							<label class={fieldLabel}
-								>Line tax<input
-									class={input}
-									name="taxAmount"
-									value={row.taxAmount}
-									oninput={(e) => {
-										if (i < values.lines.length) values.lines[i].taxAmount = e.currentTarget.value;
-									}}
-									inputmode="decimal"
-								/></label
-							>
-						</div>
-						<label class={fieldLabel}
-							>Reason or service note<input
-								class={input}
-								name="note"
-								value={row.note}
-								placeholder="Optional — why this line changed"
-								oninput={(e) => {
-									if (i < values.lines.length) values.lines[i].note = e.currentTarget.value;
-								}}
-								maxlength="500"
-							/></label
-						>
-					</div>
-				{/each}
-				{#if hydrated}<div class="flex flex-wrap gap-2">
-						<Button type="button" variant="secondary" class={pill} onclick={() => add()}
-							>+ Add service</Button
-						><Button type="button" variant="secondary" class={pill} onclick={() => add('charge')}
-							>+ Charge</Button
-						><Button type="button" variant="secondary" class={pill} onclick={() => add('discount')}
-							>+ Discount</Button
-						><Button type="button" variant="secondary" class={pill} onclick={() => add('credit')}
-							>+ Credit</Button
-						>
-					</div>{/if}
-				<p class={hint}>
-					Leave quantity blank for a flat amount. Enter a negative unit price for a separate
-					discount or credit. Nothing is rounded.
-				</p>
-			</fieldset>
+			<QuoteLinesEditor
+				bind:lines={values.lines}
+				errors={fieldErrors}
+				guestCount={values.guestCount}
+				{hydrated}
+				{changed}
+				{editing}
+			/>
 			<div class="flex flex-col gap-3 border-t border-(--border-soft) pt-[18px]">
 				<h3 class={panelCaps}>What you’ll serve</h3>
 				<label class={fieldLabel}
