@@ -78,6 +78,18 @@ export type DocumentReconciliation = {
 	balance: string;
 	currency: string;
 };
+/**
+ * Who recorded a document's lines. A PRINCIPAL is a staff USER or a SERVICE credential. INTERNAL is a
+ * commerce component (such as inquiry intake pricing the first Estimate) with no principal at all.
+ * `originKind` is absent from commerce versions that predate internal origins: those are PRINCIPAL.
+ */
+export type LineAuthorship = {
+	originKind?: 'PRINCIPAL' | 'INTERNAL';
+	principalKind?: 'USER' | 'SERVICE' | null;
+	principalId?: string | null;
+	component?: string | null;
+	recordedAt: string;
+};
 export type FinancialDocumentResponse = {
 	id: string;
 	version: number;
@@ -86,7 +98,7 @@ export type FinancialDocumentResponse = {
 	/** OpenAPI describes the known stages but leaves this transport property a string. */
 	stage: string;
 	inquiryId: string;
-	linesAuthoredBy: { principalKind: 'USER' | 'SERVICE'; principalId: string; recordedAt: string };
+	linesAuthoredBy: LineAuthorship;
 	lines: FinancialDocumentLine[];
 	subtotal: string;
 	taxAmount: string;

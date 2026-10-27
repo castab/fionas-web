@@ -1,6 +1,7 @@
 import { isRequestedItem, isServicePlanItems } from './service-selections.js';
 import type {
 	InquiryStage,
+	LineAuthorship,
 	StaffRequestResponse,
 	CurrentStaffRequest
 } from './request-contract.js';
@@ -213,6 +214,28 @@ export function financialStageLabel(stage: string): string {
 	);
 }
 
+/**
+ * Exactly one origin: a principal (USER or SERVICE with an id) or an internal commerce component
+ * (a name, no principal). A missing `originKind` is a commerce that only knew principals.
+ */
+function isLineAuthorship(value: LineAuthorship | null | undefined): boolean {
+	if (
+		!value ||
+		typeof value.recordedAt !== 'string' ||
+		!Number.isFinite(Date.parse(value.recordedAt))
+	)
+		return false;
+	const text = (v: unknown) => typeof v === 'string' && !!v.trim();
+	if (value.originKind === 'INTERNAL')
+		return text(value.component) && value.principalKind == null && value.principalId == null;
+	return (
+		(value.originKind === undefined || value.originKind === 'PRINCIPAL') &&
+		(value.principalKind === 'USER' || value.principalKind === 'SERVICE') &&
+		text(value.principalId) &&
+		value.component == null
+	);
+}
+
 /** A partial/inconsistent projection is unavailable, never a zero balance or another inquiry's document. */
 export function isCurrentStaffRequest(
 	data: StaffRequestResponse | null,
@@ -240,12 +263,7 @@ export function isCurrentStaffRequest(
 		!Array.isArray(inquiry.requestedService.items) ||
 		!inquiry.requestedService.items.every(isRequestedItem) ||
 		typeof inquiry.requestedService.guestCountIsMinimum !== 'boolean' ||
-		!financial.linesAuthoredBy ||
-		!['USER', 'SERVICE'].includes(financial.linesAuthoredBy.principalKind) ||
-		typeof financial.linesAuthoredBy.principalId !== 'string' ||
-		!financial.linesAuthoredBy.principalId ||
-		typeof financial.linesAuthoredBy.recordedAt !== 'string' ||
-		!Number.isFinite(Date.parse(financial.linesAuthoredBy.recordedAt)) ||
+		!isLineAuthorship(financial.linesAuthoredBy) ||
 		financial.lines.length === 0 ||
 		!financial.lines.every((l) => l && typeof l === 'object') ||
 		![financial.subtotal, financial.taxAmount, financial.total].every(
@@ -387,9 +405,11 @@ export function describeRejectedStaffRequest(data: StaffRequestResponse | null, 
 		reconciliationCurrencyMatches: financial?.reconciliation?.currency === financial?.currency,
 		linesAuthoredBy: financial?.linesAuthoredBy
 			? {
-					principalKind: financial.linesAuthoredBy.principalKind,
+					valid: isLineAuthorship(financial.linesAuthoredBy),
+					originKind: financial.linesAuthoredBy.originKind ?? null,
+					principalKind: financial.linesAuthoredBy.principalKind ?? null,
 					hasPrincipalId: !!financial.linesAuthoredBy.principalId,
-					recordedAtValid: Number.isFinite(Date.parse(financial.linesAuthoredBy.recordedAt))
+					hasComponent: !!financial.linesAuthoredBy.component
 				}
 			: null,
 		paymentsIsArray: Array.isArray(data.payments),
