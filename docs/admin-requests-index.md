@@ -63,7 +63,9 @@ form (`all`, a blank search and page one are implicit).
   history. No page numbers or offsets are invented. Pages are not frozen across concurrent
   changes, as the API documents.
 - An unknown filter, an over-long (more than 200 characters) or control-character search, a
-  malformed cursor or a repeated parameter is recovered locally, without a backend read.
+  malformed cursor or a repeated parameter is recovered locally, without a backend read. As in the
+  API, an explicitly empty `cursor=` is malformed rather than the first page (which has no cursor);
+  a blank `q=` is simply no search.
 
 ## Presentation
 
@@ -126,7 +128,9 @@ a request that left the filter is simply gone from it.
 - E2E: `e2e/requests.e2e.ts` on desktop and mobile covers tiles (keyboard, zero counts), shell
   navigation, all seven filters, one read per load, name/email/partial/case-insensitive/UUID search
   with filters and clearing, cursor pagination with reload and history, the full return journey
-  through a deposit and a decline, panel links, malicious return values, forbidden/unavailable/
+  through a deposit and a decline, Quote issuance from filtered results (enhanced and native:
+  preview at the action URL, one proposal, PRG with the context, the list's updated membership),
+  panel links, malicious return values, forbidden/unavailable/
   malformed/invalid-cursor/unknown-filter states, layout overflow and touch targets, and a
   no-JavaScript journey.
 - The stub (`e2e/stub-commerce.mjs`) implements `GET /staff/requests` from each session's live

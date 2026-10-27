@@ -83,6 +83,7 @@ describe('Requests index load', () => {
 		['?filter=everything', 'filter', ''],
 		[`?filter=quoted&q=${'a'.repeat(201)}`, 'search', '?filter=quoted'],
 		['?filter=quoted&q=maria&cursor=has%20space', 'cursor', '?filter=quoted&q=maria'],
+		['?filter=quoted&q=maria&cursor=', 'cursor', '?filter=quoted&q=maria'],
 		['?filter=new&filter=quoted', 'filter', '']
 	])('recovers %s locally, without a backend read', async (search, reason, recovery) => {
 		const result = await run(event(search));

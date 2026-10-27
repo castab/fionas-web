@@ -1,6 +1,13 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mayaId, sofiaId } from './request-fixture.mjs';
-import { session, signIn, stubUrl } from './request-helpers.js';
+import {
+	issueButton,
+	previewThenIssue,
+	session,
+	signIn,
+	stubUrl,
+	waitForPreview
+} from './request-helpers.js';
 
 const lenaId = '00000000-0000-0000-0000-000000000001';
 const hannahId = '00000000-0000-0000-0000-000000000008';
@@ -23,6 +30,12 @@ async function noOverflow(page: Page) {
 		)
 	).toBeLessThanOrEqual(0);
 }
+/** Where a link leads, resolved; server-rendered hrefs may be relative without JavaScript. */
+const destination = (link: Locator) =>
+	link.evaluate((a) => {
+		const url = new URL((a as HTMLAnchorElement).href);
+		return url.pathname + url.search;
+	});
 /** The return parameter a workspace link carries for this list query. */
 const from = (query: string) => `from=${encodeURIComponent(query)}`;
 
@@ -349,6 +362,72 @@ test('Quote and Decline panels keep the return link, and a decline PRGs back wit
 	await expect(page.getByTestId('decline-record')).toContainText('Fully booked that weekend.');
 });
 
+for (const native of [false, true]) {
+	test.describe(native ? 'native quote issuance' : 'enhanced quote issuance', () => {
+		test.use({ javaScriptEnabled: !native });
+		test('a quote issued from filtered results keeps the return context through preview and PRG', async ({
+			page,
+			context
+		}) => {
+			const listQuery = 'filter=new&q=maya';
+			const workspace = `/requests/${mayaId}?${from(listQuery)}`;
+			await page.goto(`/requests?${listQuery}`);
+			await row(page, 'Maya').click();
+			await expect(page).toHaveURL(workspace);
+			await page.getByTestId('build-quote').click();
+			await expect(page).toHaveURL(`/requests/${mayaId}?quote&${from(listQuery)}`);
+			await expect(page.getByTestId('quote-builder')).toBeVisible();
+			const builder = page.getByTestId('quote-builder');
+			if (native) {
+				// A native preview re-renders at its action URL, which still carries the context.
+				await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+				await expect(page).toHaveURL(`/requests/${mayaId}?quote&${from(listQuery)}&/previewQuote`);
+				await expect(page.getByTestId('quote-deposit')).toContainText('$83');
+				expect(await destination(back(page))).toBe(`/requests?${listQuery}`);
+				expect(await destination(builder.getByRole('link', { name: 'Cancel' }))).toBe(workspace);
+				await issueButton(page).click();
+			} else {
+				await waitForPreview(page);
+				expect(await destination(back(page))).toBe(`/requests?${listQuery}`);
+				expect(await destination(builder.getByRole('link', { name: 'Cancel' }))).toBe(workspace);
+				const response = page.waitForResponse(
+					(response) =>
+						response.request().method() === 'POST' && response.url().includes('issueQuote')
+				);
+				await previewThenIssue(page);
+				expect(await (await response).json()).toMatchObject({
+					type: 'redirect',
+					status: 303,
+					location: workspace
+				});
+			}
+			// Post/Redirect/Get lands on the clean workspace, context intact, with the issued Quote.
+			await expect(page).toHaveURL(workspace);
+			await expect(page.getByTestId('quote-builder')).toHaveCount(0);
+			await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
+			await expect(page.getByTestId('financial-version')).toContainText('Quote v2');
+			const attempts = (await session(context)).proposalAttempts;
+			expect(attempts).toHaveLength(1);
+			expect(attempts[0]).toMatchObject({
+				inquiryId: mayaId,
+				body: { expectedDocumentVersion: 1 }
+			});
+			await back(page).click();
+			await expect(page).toHaveURL(`/requests?${listQuery}`);
+			await expect(searchBox(page)).toHaveValue('maya');
+			// Maya left New; the search carries over to where she is now.
+			await expect(page.getByTestId('request-list-empty')).toContainText(
+				'No requests match “maya”.'
+			);
+			await filters(page).getByRole('link', { name: 'Quoted' }).click();
+			await expect(page).toHaveURL('/requests?filter=quoted&q=maya');
+			await expect(names(page)).toHaveText(['Maya Torres']);
+			await expect(row(page, 'Maya').getByTestId('request-row-stage')).toHaveText('Quoted');
+			expect((await session(context)).proposalAttempts).toHaveLength(1);
+		});
+	});
+}
+
 for (const [name, value] of [
 	['an absolute URL', 'https://evil.example/requests'],
 	['a protocol-relative URL', '//evil.example'],
@@ -406,6 +485,16 @@ test('an expired cursor or unknown filter recovers safely, keeping valid criteri
 	);
 	await expect(page.getByText('PRIVATE', { exact: false })).toHaveCount(0);
 	expect((await session(context)).requestListReads - before.requestListReads).toBe(1);
+	await page.getByRole('link', { name: 'Start from the first page' }).click();
+	await expect(page).toHaveURL('/requests?filter=quoted&q=ortiz');
+	await expect(names(page)).toHaveText(['Lena Ortiz']);
+	// An explicitly empty cursor is malformed (as the API says), not the first page.
+	const reads = (await session(context)).requestListReads;
+	await page.goto('/requests?filter=quoted&q=ortiz&cursor=');
+	await expect(page.getByRole('alert')).toContainText(
+		'This page of results is no longer available.'
+	);
+	expect((await session(context)).requestListReads).toBe(reads);
 	await page.getByRole('link', { name: 'Start from the first page' }).click();
 	await expect(page).toHaveURL('/requests?filter=quoted&q=ortiz');
 	await expect(names(page)).toHaveText(['Lena Ortiz']);

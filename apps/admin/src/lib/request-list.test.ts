@@ -89,7 +89,11 @@ describe('Requests URL state', () => {
 	it('carries an opaque cursor unchanged and only refuses an unusable one', () => {
 		const cursor = 'WyJxdW90ZWR8IiwiMjAyNi0wNy0xMFQxOTowMDowMFoiXQ';
 		expect(readListQuery(params(`filter=quoted&cursor=${cursor}`)).query.cursor).toBe(cursor);
-		expect(readListQuery(params('cursor=')).query.cursor).toBeNull();
+		// The API refuses an explicitly empty cursor; the first page simply has none.
+		expect(readListQuery(params('filter=quoted&q=maria&cursor='))).toEqual({
+			query: query({ filter: 'quoted', q: 'maria' }),
+			problem: 'cursor'
+		});
 		expect(readListQuery(params('cursor=a%20b')).problem).toBe('cursor');
 		expect(readListQuery(params(`cursor=${'a'.repeat(513)}`)).problem).toBe('cursor');
 	});
@@ -205,6 +209,7 @@ describe('workspace return context', () => {
 		['repeated key', 'filter=quoted&filter=new'],
 		['over-long search', `filter=all&q=${'a'.repeat(201)}`],
 		['control characters', 'filter=all&q=a%0Ab'],
+		['empty cursor', 'filter=quoted&cursor='],
 		['empty value', '']
 	])('rejects a %s as a return destination', (_name, value) => {
 		expect(readReturnContext(params(`from=${encodeURIComponent(value)}`))).toBeNull();

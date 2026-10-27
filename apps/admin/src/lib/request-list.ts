@@ -87,8 +87,10 @@ export function readListQuery(params: URLSearchParams): {
 		else q = trimmed;
 	}
 	let cursor: string | null = null;
-	if (rawCursor) {
-		if (rawCursor.length > CURSOR_MAX_LENGTH || /[\s\p{Cc}]/u.test(rawCursor)) problem ??= 'cursor';
+	// Like the API, an explicitly empty `cursor=` is malformed, not the first page (which has none).
+	if (rawCursor !== null) {
+		if (rawCursor === '' || rawCursor.length > CURSOR_MAX_LENGTH || /[\s\p{Cc}]/u.test(rawCursor))
+			problem ??= 'cursor';
 		else cursor = rawCursor;
 	}
 	return { query: { filter, q, cursor }, problem };
