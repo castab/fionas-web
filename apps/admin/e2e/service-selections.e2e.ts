@@ -90,118 +90,144 @@ test('the original request shows the customer’s picks under their categories',
 	await picks.screenshot({ path: testInfo.outputPath('original-selections.png') });
 });
 
-for (const native of [false, true]) {
-	test.describe(native ? 'native selections' : 'enhanced selections', () => {
-		test.use({ javaScriptEnabled: !native });
-		test('edit, add, remove and reorder categorized commitments, then issue them', async ({
-			page,
-			context
-		}, testInfo) => {
-			await signIn(page);
-			await openMaya(page);
-			const original = (await session(context)).requests[mayaId].inquiry.requestedService;
-			await openBuilder(page, native);
-			// The draft starts as the customer's picks, categories, order and duplicates intact.
-			expect(await editorGroups(page)).toEqual([
-				['Soft serve', ['Vanilla', 'Strawberry']],
-				['Vessels', ['Waffle cones', 'Cups']],
-				['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
-				['Other selections', ['Birthday candles']]
-			]);
+test.describe('native selections', () => {
+	test.use({ javaScriptEnabled: false });
+	test('edit, add, remove and reorder categorized commitments, then issue them', async ({
+		page,
+		context
+	}, testInfo) => {
+		await signIn(page);
+		await openMaya(page);
+		const original = (await session(context)).requests[mayaId].inquiry.requestedService;
+		await openBuilder(page, true);
+		// The draft starts as the customer's picks, categories, order and duplicates intact.
+		expect(await editorGroups(page)).toEqual([
+			['Soft serve', ['Vanilla', 'Strawberry']],
+			['Vessels', ['Waffle cones', 'Cups']],
+			['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
+			['Other selections', ['Birthday candles']]
+		]);
 
-			// Substitute the first pick under a new category.
-			await expand(page, 1);
-			await page.getByLabel('Selection 1 label', { exact: true }).fill('Birthday flavor');
-			await setCategory(page, 1, 'Party specials');
-			if (!native) await waitForPreview(page);
-			// Remove Strawberry, then add a custom selection under a new category.
-			await action(page, 'Remove', 2).click();
-			if (!native) await waitForPreview(page);
-			await editor(page).getByRole('button', { name: '+ Add selection', exact: true }).click();
-			await expect(page.getByLabel('Selection 7 label', { exact: true })).toBeVisible();
-			await page.getByLabel('Selection 7 label', { exact: true }).fill('Custom cups');
-			await setCategory(page, 7, 'Supplies');
-			if (!native) await waitForPreview(page);
-			// Move it above the uncategorized candles.
-			await action(page, 'Move up', 7).click();
-			await expect(row(page, 6)).toContainText('Custom cups');
-			if (native) await page.getByRole('button', { name: 'Update preview', exact: true }).click();
-			else await waitForPreview(page);
+		// Substitute the first pick under a new category.
+		await expand(page, 1);
+		await page.getByLabel('Selection 1 label', { exact: true }).fill('Birthday flavor');
+		await setCategory(page, 1, 'Party specials');
+		// Remove Strawberry, then add a custom selection under a new category.
+		await action(page, 'Remove', 2).click();
+		await editor(page).getByRole('button', { name: '+ Add selection', exact: true }).click();
+		await expect(page.getByLabel('Selection 7 label', { exact: true })).toBeVisible();
+		await page.getByLabel('Selection 7 label', { exact: true }).fill('Custom cups');
+		await setCategory(page, 7, 'Supplies');
+		// Move it above the uncategorized candles.
+		await action(page, 'Move up', 7).click();
+		await expect(row(page, 6)).toContainText('Custom cups');
+		await page.getByRole('button', { name: 'Update preview', exact: true }).click();
 
-			const proposed: [string, string[]][] = [
-				['Party specials', ['Birthday flavor']],
-				['Vessels', ['Waffle cones', 'Cups']],
-				['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
-				['Supplies', ['Custom cups']],
-				['Other selections', ['Birthday candles']]
-			];
-			expect(await groups(page.getByTestId('preview-service-plan'))).toEqual(proposed);
-			const total = await page.getByTestId('quote-total').locator('dd').innerText();
-			const deposit = await page.getByTestId('quote-deposit').locator('dd').innerText();
-			await noHorizontalOverflow(page);
-			await page.screenshot({ path: testInfo.outputPath('selection-editor.png'), fullPage: true });
-			await page
-				.getByTestId('quote-preview')
-				.screenshot({ path: testInfo.outputPath('selection-preview.png') });
+		const proposed: [string, string[]][] = [
+			['Party specials', ['Birthday flavor']],
+			['Vessels', ['Waffle cones', 'Cups']],
+			['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
+			['Supplies', ['Custom cups']],
+			['Other selections', ['Birthday candles']]
+		];
+		expect(await groups(page.getByTestId('preview-service-plan'))).toEqual(proposed);
+		const total = await page.getByTestId('quote-total').locator('dd').innerText();
+		const deposit = await page.getByTestId('quote-deposit').locator('dd').innerText();
+		await noHorizontalOverflow(page);
+		await page.screenshot({ path: testInfo.outputPath('selection-editor.png'), fullPage: true });
+		await page
+			.getByTestId('quote-preview')
+			.screenshot({ path: testInfo.outputPath('selection-preview.png') });
 
-			await issueButton(page).click();
-			await expect(page).toHaveURL(route);
-			const state = await session(context);
-			expect(state.proposalAttempts).toHaveLength(1);
-			expect(state.proposalAttempts[0].body.servicePlan.items).toEqual([
-				{ label: 'Birthday flavor', group: 'Party specials', key: null },
-				{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' },
-				{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
-				{ label: 'Cups', group: 'Vessels', key: 'cup' },
-				{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
-				{ label: 'Custom cups', group: 'Supplies', key: null },
-				{ label: 'Birthday candles', group: null, key: null }
-			]);
-			expect(state.requests[mayaId].inquiry.requestedService).toEqual(original);
+		await issueButton(page).click();
+		await expect(page).toHaveURL(route);
+		const state = await session(context);
+		expect(state.proposalAttempts).toHaveLength(1);
+		expect(state.proposalAttempts[0].body.servicePlan.items).toEqual([
+			{ label: 'Birthday flavor', group: 'Party specials', key: null },
+			{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' },
+			{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+			{ label: 'Cups', group: 'Vessels', key: 'cup' },
+			{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+			{ label: 'Custom cups', group: 'Supplies', key: null },
+			{ label: 'Birthday candles', group: null, key: null }
+		]);
+		expect(state.requests[mayaId].inquiry.requestedService).toEqual(original);
 
-			for (const reload of [false, true]) {
-				if (reload) await page.reload();
-				const plan = page.getByTestId('service-plan');
-				expect(await groups(plan)).toEqual(proposed);
-				await expect(plan).toContainText('Approved with Quote v2');
-				// Money comes back from commerce, unchanged by any selection edit.
-				await expect(page.getByTestId('financial-document')).toContainText(total);
-				await expect(page.getByTestId('deposit-summary')).toContainText(deposit);
-			}
-			await noHorizontalOverflow(page);
-			await page.screenshot({
-				path: testInfo.outputPath('approved-selections.png'),
-				fullPage: true
-			});
+		for (const reload of [false, true]) {
+			if (reload) await page.reload();
+			const plan = page.getByTestId('service-plan');
+			expect(await groups(plan)).toEqual(proposed);
+			await expect(plan).toContainText('Approved with Quote v2');
+			// Money comes back from commerce, unchanged by any selection edit.
+			await expect(page.getByTestId('financial-document')).toContainText(total);
+			await expect(page.getByTestId('deposit-summary')).toContainText(deposit);
+		}
+		await noHorizontalOverflow(page);
+		await page.screenshot({
+			path: testInfo.outputPath('approved-selections.png'),
+			fullPage: true
 		});
 	});
-}
+});
 
-test('a category typed after review blocks issuing until a fresh preview', async ({
+test('selections are chips: remove one, add others under categories, then issue them', async ({
 	page,
 	context
-}) => {
+}, testInfo) => {
 	await signIn(page);
 	await openMaya(page);
 	await openBuilder(page);
-	await expand(page, 2);
-	await page.getByLabel('Selection 2 category', { exact: true }).fill('Fruit');
-	// Mid-edit, the row stays put and the old review can't be issued.
-	await expect(row(page, 2)).toBeVisible();
-	await expect(issueButton(page)).toBeDisabled();
-	await page.getByLabel('Selection 2 category', { exact: true }).dispatchEvent('change');
-	await waitForPreview(page);
-	expect(await groups(page.getByTestId('preview-service-plan'))).toContainEqual([
-		'Fruit',
-		['Strawberry']
+	expect(await editorGroups(page)).toEqual([
+		['Soft serve', ['Vanilla', 'Strawberry']],
+		['Vessels', ['Waffle cones', 'Cups']],
+		['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
+		['Other selections', ['Birthday candles']]
 	]);
+	await expect(editor(page).getByTestId('selection-chip')).toHaveCount(7);
+	await editor(page).getByRole('button', { name: 'Remove Vanilla', exact: true }).click();
+	await waitForPreview(page);
+	await editor(page).getByRole('button', { name: 'Remove Strawberry', exact: true }).click();
+	await waitForPreview(page);
+	await editor(page).getByRole('button', { name: '+ Add selection', exact: true }).click();
+	const label = editor(page).getByLabel('Selection', { exact: true });
+	const category = editor(page).getByLabel('Category Optional', { exact: true });
+	// Enter adds the chip without submitting the quote form.
+	await label.fill('Birthday flavor');
+	await category.fill('Party specials');
+	await label.press('Enter');
+	await expect(label).toHaveValue('');
+	await label.fill('Custom cups');
+	await category.fill('Supplies');
+	await editor(page).getByRole('button', { name: 'Add', exact: true }).click();
+	await editor(page).getByRole('button', { name: 'Done', exact: true }).click();
+	await waitForPreview(page);
+	await editor(page).screenshot({ path: testInfo.outputPath('selection-chips.png') });
+
+	const proposed: [string, string[]][] = [
+		['Vessels', ['Waffle cones', 'Cups']],
+		['Toppings', ['Rainbow sprinkles', 'Rainbow sprinkles']],
+		['Other selections', ['Birthday candles']],
+		['Party specials', ['Birthday flavor']],
+		['Supplies', ['Custom cups']]
+	];
+	expect(await editorGroups(page)).toEqual(proposed);
+	expect(await groups(page.getByTestId('preview-service-plan'))).toEqual(proposed);
+	await noHorizontalOverflow(page);
 	await issueButton(page).click();
 	await expect(page).toHaveURL(route);
-	expect((await session(context)).proposalAttempts[0].body.servicePlan.items[1]).toEqual({
-		label: 'Strawberry',
-		group: 'Fruit',
-		key: 'strawberry'
-	});
+	const state = await session(context);
+	expect(state.proposalAttempts).toHaveLength(1);
+	expect(state.proposalAttempts[0].body.servicePlan.items).toEqual([
+		{ label: 'Waffle cones', group: 'Vessels', key: 'waffle-cone' },
+		{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+		{ label: 'Cups', group: 'Vessels', key: 'cup' },
+		{ label: 'Rainbow sprinkles', group: 'Toppings', key: 'rainbow-sprinkles' },
+		{ label: 'Birthday candles', group: null, key: null },
+		{ label: 'Birthday flavor', group: 'Party specials', key: null },
+		{ label: 'Custom cups', group: 'Supplies', key: null }
+	]);
+	expect(await groups(page.getByTestId('service-plan'))).toEqual(proposed);
 });
 
 for (const field of ['selectionGroup', 'selectionKey'])

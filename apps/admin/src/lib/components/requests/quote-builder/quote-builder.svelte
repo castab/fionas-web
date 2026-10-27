@@ -177,7 +177,6 @@
 					errors={fieldErrors}
 					{hydrated}
 					{changed}
-					{editing}
 				/>
 			</div>
 			<DepositChoices
