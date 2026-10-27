@@ -76,19 +76,21 @@
 			<label for="request-search" class={`text-(--text-heading) ${caps}`}>Search requests</label>
 			<div class="flex flex-wrap items-center gap-2">
 				{#if query.filter !== 'all'}<input type="hidden" name="filter" value={query.filter} />{/if}
-				<input
-					id="request-search"
-					name="q"
-					type="search"
-					value={query.q}
-					maxlength={SEARCH_MAX_LENGTH}
-					autocomplete="off"
-					spellcheck="false"
-					enterkeyhint="search"
-					aria-describedby="request-search-hint"
-					placeholder="Customer name or email"
-					class={`min-h-11 min-w-0 flex-[1_1_240px] rounded-input border border-olive-300/70 bg-cream-100 px-3.5 py-2.5 font-sans text-base leading-6 text-(--text-body) transition-[border-color,box-shadow] duration-(--dur-fast) ease-(--ease-out) placeholder:text-(--text-muted)/60 hover:border-olive-500 focus-visible:border-olive-700 ${focusRing}`}
-				/>
+				<!-- defaultValue, not value: hydration must keep text typed before it finishes. Keyed so
+				     a new search in the URL (submit, Clear search, history) still resets the field. -->
+				{#key query.q}<input
+						id="request-search"
+						name="q"
+						type="search"
+						defaultValue={query.q}
+						maxlength={SEARCH_MAX_LENGTH}
+						autocomplete="off"
+						spellcheck="false"
+						enterkeyhint="search"
+						aria-describedby="request-search-hint"
+						placeholder="Customer name or email"
+						class={`min-h-11 min-w-0 flex-[1_1_240px] rounded-input border border-olive-300/70 bg-cream-100 px-3.5 py-2.5 font-sans text-base leading-6 text-(--text-body) transition-[border-color,box-shadow] duration-(--dur-fast) ease-(--ease-out) placeholder:text-(--text-muted)/60 hover:border-olive-500 focus-visible:border-olive-700 ${focusRing}`}
+					/>{/key}
 				<Button type="submit" size="sm" class="min-h-11 flex-none px-5">Search</Button>
 				{#if query.q}
 					<Button

@@ -248,6 +248,25 @@ test('searches names and emails, partially and case-insensitively, with filters 
 	await expect(page).toHaveURL('/requests?filter=booked');
 });
 
+test('search text typed before hydration finishes is kept and submitted', async ({ page }) => {
+	// Hold the app's JavaScript so the server-rendered field is typed into before hydration.
+	let release = () => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/_app/immutable/**', async (route) => {
+		await held;
+		await route.continue();
+	});
+	await page.goto('/requests?filter=quoted', { waitUntil: 'commit' });
+	await searchBox(page).fill('example');
+	release();
+	// Hydration runs as soon as the held chunks arrive, well before the network goes idle.
+	await page.waitForLoadState('networkidle');
+	await expect(searchBox(page)).toHaveValue('example');
+	await page.getByRole('button', { name: 'Search', exact: true }).click();
+	await expect(page).toHaveURL('/requests?filter=quoted&q=example');
+	await expect(names(page)).toHaveText(['Sofia Ramirez-Delacruz', 'Lena Ortiz']);
+});
+
 test('pages forward with backend cursors; reload and history keep each page', async ({
 	page,
 	context
