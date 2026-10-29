@@ -108,6 +108,8 @@ export type FinancialDocumentResponse = {
 	reconciliation?: DocumentReconciliation;
 };
 export type StaffRequestResponse = {
+	/** Optional during deployment overlap. Validate separately so email never hides a booking. */
+	communication?: import('./conversation-contract.js').CommunicationSummary;
 	inquiry: InquiryResponse;
 	financial: FinancialDocumentResponse;
 	/** Absent before issuance; the API's example also uses null. */

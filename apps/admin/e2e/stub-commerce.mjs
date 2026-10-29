@@ -2,6 +2,7 @@
 // real API it demands a trusted Origin on login/logout and answers with a Secure, HttpOnly,
 // host-only session cookie.
 import { createServer } from 'node:http';
+import { conversationRoute } from './conversation-stub.mjs';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
 import {
@@ -33,6 +34,9 @@ const user = {
 	displayName: 'Brayan',
 	roles: ['commerce.administrator'],
 	permissions: [
+		'fionas.communications.read',
+		'fionas.communications.send',
+		'fionas.communications.acknowledge',
 		'fionas.inquiries.manage',
 		'fionas.inquiries.read',
 		'commerce.financial-document.read',
@@ -110,6 +114,8 @@ function listItem(request) {
 		eventType: inquiry.eventType,
 		stage: inquiry.lifecycle.stage,
 		needsClosing: needsClosing(request),
+		needsReply: request.communication?.needsReply ?? false,
+		awaitingReplySince: request.communication?.unacknowledgedSince,
 		documentId: financial.id,
 		version: financial.version,
 		financialStage: financial.stage,
@@ -385,6 +391,8 @@ createServer(async (req, res) => {
 		return send(res, result.status, result.body, { 'cache-control': 'no-store' });
 	}
 
+	if (await conversationRoute(req, res, currentSession, pathname, send, readJson, trustedOrigin))
+		return;
 	const requestMatch = /^\/staff\/requests\/([^/]+)$/.exec(pathname);
 	if (req.method === 'GET' && requestMatch) {
 		if (!currentSession) return send(res, 401);

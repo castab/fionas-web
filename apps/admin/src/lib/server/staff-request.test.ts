@@ -139,7 +139,12 @@ describe('staff request clients', () => {
 				body: undefined
 			})
 		);
-		expect(result).toEqual({ ok: true, data: projection, setCookies: ['session=renewed; Path=/'] });
+		expect(result).toEqual({
+			status: 200,
+			ok: true,
+			data: projection,
+			setCookies: ['session=renewed; Path=/']
+		});
 	});
 	it('issues the exact reviewed version on the inquiry proposal endpoint', async () => {
 		const quote = {
@@ -157,6 +162,7 @@ describe('staff request clients', () => {
 				'session=staff'
 			)
 		).toEqual({
+			status: 200,
 			ok: true,
 			data: quote,
 			setCookies: []

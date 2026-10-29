@@ -42,6 +42,10 @@
 						>Needs closing</Badge
 					>
 				{/if}
+				{#if row.needsReply === true}<Badge tone="rust" size="sm">Needs reply</Badge
+					>{:else if row.needsReply === undefined}<span class="text-xs text-(--text-muted)"
+						>Reply status unavailable</span
+					>{/if}
 			</div>
 			<p class="m-0 font-sans text-xs leading-[1.45] text-(--text-body)">{row.eventLabel}</p>
 			<p class="m-0 font-sans text-xs leading-[1.45] wrap-anywhere text-(--text-muted)">

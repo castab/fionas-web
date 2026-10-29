@@ -15,7 +15,7 @@ export type BackendConfig = {
 };
 
 export type ApiResult<T> =
-	| { ok: true; data: T; setCookies: string[] }
+	| { ok: true; data: T; setCookies: string[]; status?: number }
 	| { ok: false; error: ApiError; retryAfter: number | null };
 
 export type RequestOptions = {
@@ -23,6 +23,9 @@ export type RequestOptions = {
 	json?: unknown;
 	/** The browser's `Cookie` header, forwarded so the backend can identify the session. */
 	cookie?: string | null;
+	/** Only conversation replies may use these capabilities; never arbitrary browser headers. */
+	idempotencyKey?: string;
+	conversationReply?: boolean;
 };
 
 const TIMEOUT_MS = 8000;
@@ -37,8 +40,17 @@ function parseRetryAfter(value: string | null): number | null {
 export async function request<T = null>(
 	config: BackendConfig,
 	path: string,
-	{ method = 'GET', json, cookie }: RequestOptions = {}
+	{ method = 'GET', json, cookie, idempotencyKey, conversationReply = false }: RequestOptions = {}
 ): Promise<ApiResult<T>> {
+	if (
+		idempotencyKey !== undefined &&
+		(!/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey) ||
+			method !== 'POST' ||
+			!/^\/staff\/requests\/[^/]+\/conversation\/replies$/.test(path))
+	) {
+		throw new TypeError('Invalid reply transport options');
+	}
+	if (conversationReply && idempotencyKey === undefined) throw new TypeError('Reply key required');
 	const doFetch = config.fetch ?? fetch;
 	const headers: Record<string, string> = {
 		accept: 'application/json',
@@ -46,6 +58,7 @@ export async function request<T = null>(
 	};
 	if (json !== undefined) headers['content-type'] = 'application/json';
 	if (cookie) headers.cookie = cookie;
+	if (idempotencyKey) headers['idempotency-key'] = idempotencyKey;
 
 	let response: Response;
 	try {
@@ -54,7 +67,7 @@ export async function request<T = null>(
 			headers,
 			body: json === undefined ? undefined : JSON.stringify(json),
 			redirect: 'manual',
-			signal: AbortSignal.timeout(TIMEOUT_MS)
+			signal: AbortSignal.timeout(conversationReply ? 100000 : TIMEOUT_MS)
 		});
 	} catch {
 		return {
@@ -71,7 +84,12 @@ export async function request<T = null>(
 
 	if (response.ok) {
 		const data = response.status === 204 ? null : await response.json().catch(() => null);
-		return { ok: true, data: data as T, setCookies: response.headers.getSetCookie() };
+		return {
+			ok: true,
+			data: data as T,
+			setCookies: response.headers.getSetCookie(),
+			status: response.status
+		};
 	}
 
 	const body = await response.json().catch(() => null);
