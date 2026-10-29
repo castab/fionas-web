@@ -261,6 +261,8 @@ export function isStaffRequestListItem(value: unknown): value is StaffRequestLis
 		(EVENT_TYPES as readonly unknown[]).includes(item.eventType) &&
 		STAGES.includes(item.stage as InquiryStage) &&
 		typeof item.needsClosing === 'boolean' &&
+		(item.needsReply === undefined || typeof item.needsReply === 'boolean') &&
+		(item.awaitingReplySince == null || instant(item.awaitingReplySince)) &&
 		Number.isInteger(item.version) &&
 		(item.version as number) > 0 &&
 		typeof item.financialStage === 'string' &&
@@ -326,6 +328,7 @@ export type RequestRowView = {
 	stageLabel: string;
 	stageTone: ReturnType<typeof lifecycleTone>;
 	needsClosing: boolean;
+	needsReply?: boolean;
 	totalCaption: string;
 	totalLabel: string;
 	/** Only an Invoice's balance is shown: an Estimate or Quote balance is not money owed yet. */
@@ -352,6 +355,7 @@ export function requestRow(item: StaffRequestListItem): RequestRowView {
 		stageLabel: lifecycleLabel(item.stage),
 		stageTone: lifecycleTone(item.stage),
 		needsClosing: item.needsClosing,
+		needsReply: item.needsReply,
 		totalCaption:
 			item.stage === 'DECLINED' ? 'Declined estimate' : financialStageLabel(item.financialStage),
 		totalLabel: amountLabel(item),

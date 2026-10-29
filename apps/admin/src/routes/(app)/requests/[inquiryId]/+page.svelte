@@ -3,6 +3,8 @@
 	import { Badge, Button, Card, focusRing } from '@fionas/ui';
 	import { site } from '@fionas/shared';
 	import RequestDetails from '$lib/components/requests/request-details.svelte';
+	import ConversationCard from '$lib/components/requests/conversation/conversation-card.svelte';
+	import type { ConversationActionResult } from '$lib/conversation-contract.js';
 	import FinancialDocumentCard from '$lib/components/requests/financial-document-card.svelte';
 	import QuoteBuilder from '$lib/components/requests/quote-builder/quote-builder.svelte';
 	import PaymentControls from '$lib/components/requests/payment-controls.svelte';
@@ -443,6 +445,23 @@
 				userId={data.user.id}
 			/>
 		{/if}
+		{#key data.conversation}
+			<ConversationCard
+				blocked={mutationReviewRequired || mutationPending}
+				inquiry={request.inquiry}
+				timeline={data.conversation?.timeline ?? null}
+				summary={request.communication}
+				reply={data.conversation?.reply ?? null}
+				recoveryLost={data.conversation?.recoveryLost}
+				forbidden={data.conversation?.forbidden}
+				userId={data.user.id}
+				permissions={data.user.permissions}
+				{route}
+				endpoint={workspacePath + '/conversation'}
+				returnContext={data.returnContext}
+				result={form as ConversationActionResult | null}
+			/>
+		{/key}
 	{:else}
 		<h1 class="m-0 text-(--text-heading) [font:var(--type-h2)]">Request unavailable</h1>
 		<Card role="alert" class="flex flex-col items-start gap-4">

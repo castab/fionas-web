@@ -18,5 +18,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (!event.locals.user && !onLogin) redirect(303, LOGIN_PATH);
 	if (event.locals.user && onLogin) redirect(303, '/');
 
-	return resolve(event);
+	const response = await resolve(event);
+	// Includes enhanced action responses (which do not run page load). Reply bodies and recovery
+	// keys must never enter a browser/shared cache, including on validation or UNKNOWN outcomes.
+	if (event.url.pathname.startsWith('/requests/'))
+		response.headers.set('cache-control', 'no-store');
+	return response;
 };

@@ -29,6 +29,7 @@ describe('getDashboard', () => {
 		});
 		expect(init.body).toBeUndefined();
 		expect(result).toEqual({
+			status: 200,
 			ok: true,
 			data: dashboardFixture,
 			setCookies: ['session=renewed; Path=/']

@@ -17,6 +17,9 @@ export type StaffRequestListItem = {
 	stage: InquiryStage;
 	/** Backend-owned: SERVED with an exactly zero canonical Invoice balance. Never recomputed. */
 	needsClosing: boolean;
+	/** Absent on older deployments means unknown, never false. */
+	needsReply?: boolean;
+	awaitingReplySince?: string | null;
 	documentId: string;
 	version: number;
 	/** OpenAPI describes ESTIMATE, QUOTE and INVOICE but leaves this transport property a string. */

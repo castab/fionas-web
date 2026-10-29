@@ -164,3 +164,7 @@ Request projections and atomic proposal mutations also have session-isolated sta
 post-commit failure scenarios.
 Playwright starts it beside the admin preview. The real login is
 rate limited per IP, so don't point automated tests at it.
+
+## Conversation boundary
+
+See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. Only the staff reply route accepts a validated `idempotencyKey` and `conversationReply` timeout policy (100 seconds, no retry); all other calls keep eight seconds. No arbitrary browser headers pass through. Neither admin tier accesses Resend directly.

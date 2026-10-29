@@ -145,3 +145,7 @@ a request that left the filter is simply gone from it.
 
 `GET /staff/requests` ships in fionas-commerce PR #30. Until that backend is deployed the index
 shows its unavailable state (the endpoint answers 404); dashboard and workspaces are unaffected.
+
+## Communication attention
+
+Commerce PR #32 adds `needsReply` and optional `awaitingReplySince`. Rows show Needs reply only when the backend says true. Missing attention fields during deployment overlap display Reply status unavailable, never a false resolved state. No filter, membership, count, sort or cursor behavior changes. The workspace provides stale-safe acknowledgement and replies; see [admin-conversation.md](admin-conversation.md).

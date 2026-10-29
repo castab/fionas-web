@@ -94,3 +94,5 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   uncertain publication blocks until reload. `servicePlan` (bound to the proposal), `effectiveServicePlan` and
   `acceptedServicePlan` differ; retained plans may reference older snapshots and a clearing is valid. Histories
   stay separate; a failed optional history read must not hide the booking.
+
+- Admin Conversation uses `$lib/conversation-contract.ts`, `$lib/server/conversation.ts` and the optional timeline read. See `docs/admin-conversation.md`. Preserve backend order, historical money and attention; never call Resend directly. Replies require communication read/send permissions and an immutable key/body/original expectation. UNKNOWN reconciles only that command. Acknowledge posts the displayed watermark, never a fresh one, and only while messages are reviewable (READY plus communications.read, enforced in the action); it submits through the composer so unsent text survives the PRG. Recovery is bounded in memory: expired never-attempted/resolved drafts revive under a fresh draft, while attempted-unknown or unclassifiable pointers block resending.

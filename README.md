@@ -114,3 +114,7 @@ so they need no running backend.
 The public e2e tests start the compose NATS themselves. To use an already running server
 instead of Docker, set `E2E_NATS_URL`; its stream must be set up and its users must match
 `infra/nats/nats-server.conf`.
+
+### Staff conversations
+
+The admin request workspace integrates email with historical commerce milestones, Needs reply, acknowledgement and staff replies. See [Conversation operations and deployment](docs/admin-conversation.md) for the fionas-commerce PR #32 dependency, permissions, proxy timeouts and bounded UNKNOWN recovery. No live email provider is required for tests.

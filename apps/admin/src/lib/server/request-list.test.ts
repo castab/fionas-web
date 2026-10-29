@@ -66,7 +66,12 @@ describe('getStaffRequests', () => {
 			cookie: 'session=staff'
 		});
 		// The final page omits nextCursor; it is passed through as returned.
-		expect(result).toEqual({ ok: true, data: finalPage, setCookies: ['session=renewed; Path=/'] });
+		expect(result).toEqual({
+			status: 200,
+			ok: true,
+			data: finalPage,
+			setCookies: ['session=renewed; Path=/']
+		});
 		if (result.ok) expect('nextCursor' in result.data).toBe(false);
 	});
 	it('sends all explicitly, omits a blank search and the first page cursor, and leaves the page size to the API', async () => {

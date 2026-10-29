@@ -399,3 +399,7 @@ reorder, add and remove edits all require a fresh preview even when input handle
 A preview whose selections differ from the proposed ones is refused (503). Commerce's v3 review
 token independently binds the same facts. Issuance remains one attempt followed by the authoritative
 GET; financial lines, totals, deposits and permissions keep their existing authority.
+
+## Integrated Conversation
+
+The Conversation card follows financial and revision history at every stage, including CLOSED and DECLINED. It provides chronological email and historical commerce bands, backend-owned Needs reply, observed-watermark acknowledgement and plain-text staff replies. Optional failures never hide the booking. Native forms and enhanced refresh preserve the same authority and return context. See [admin-conversation.md](admin-conversation.md) for permissions, exact-key UNKNOWN recovery, availability states, deployment prerequisites and active-workspace notifications.

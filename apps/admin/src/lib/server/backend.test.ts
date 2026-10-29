@@ -43,6 +43,7 @@ describe('request', () => {
 		});
 		const result = await request<{ id: string }>(config(fetch), '/auth/me');
 		expect(result).toEqual({
+			status: 200,
 			ok: true,
 			data: { id: 'u1' },
 			setCookies: ['a=1; Path=/', 'b=2; Path=/']

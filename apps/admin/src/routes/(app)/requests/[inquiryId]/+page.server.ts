@@ -1,4 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { isCommunicationSummary } from '$lib/conversation.js';
+import {
+	loadConversation,
+	acknowledgeConversation,
+	sendConversationReply
+} from '$lib/server/conversation-actions.js';
 import { applySetCookies } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
 import {
@@ -101,6 +107,10 @@ export const load: PageServerLoad = async ({
 	}
 	applySetCookies(cookies, result.setCookies);
 	const data = result.data;
+	const conversation = isCommunicationSummary(data.communication)
+		? await loadConversation({ params, request, url, cookies, locals })
+		: null;
+	if (!isCommunicationSummary(data.communication)) delete data.communication;
 	const permissions = locals.user?.permissions ?? [];
 	// At most one editor opens, and only the one this lifecycle makes eligible: a stale or mismatched
 	// flag opens nothing and exposes no action.
@@ -146,6 +156,7 @@ export const load: PageServerLoad = async ({
 	return {
 		inquiryId: params.inquiryId,
 		staffRequest: data,
+		conversation,
 		requestError: null,
 		quoteOpen,
 		editorMode,
@@ -159,6 +170,8 @@ export const load: PageServerLoad = async ({
 	};
 };
 export const actions: Actions = {
+	acknowledgeConversation,
+	sendConversationReply,
 	markServed: fulfillmentAction('markServed'),
 	closeInquiry: fulfillmentAction('closeInquiry'),
 	recordDeposit: paymentAction(true),
