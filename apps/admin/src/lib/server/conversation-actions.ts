@@ -8,13 +8,15 @@ import {
 } from './conversation.js';
 import {
 	createIntent,
-	findIntent,
 	publicIntent,
 	REPLY_COOKIE,
+	REPLY_POINTER_MAX_AGE_S,
 	REPLY_TTL_MS,
-	replyBodyDigest
+	replyBodyDigest,
+	resolveIntent,
+	type RetiredIntent
 } from './reply-intents.js';
-import { replyBody, replyError, replyExpectation } from '../conversation.js';
+import { plainNewlines, replyBody, replyError, replyExpectation } from '../conversation.js';
 import { workspaceRedirect } from '../request-list.js';
 import type { ReplyExpectation } from '../conversation-contract.js';
 
@@ -25,9 +27,17 @@ function remember(event: Event, key: string) {
 		httpOnly: true,
 		sameSite: 'strict',
 		secure: event.url.protocol === 'https:',
-		maxAge: 7 * 24 * 60 * 60
+		maxAge: REPLY_POINTER_MAX_AGE_S
 	});
 }
+/** A fresh, never-attempted draft in place of an expired one that left no unresolved send. */
+function revive(event: Event, userId: string, retired: RetiredIntent, body: string) {
+	const intent = createIntent(userId, event.params.inquiryId!, retired.expectation, body);
+	if (intent) remember(event, intent.key);
+	return intent;
+}
+const draftText = (value: FormDataEntryValue | null) =>
+	typeof value === 'string' ? plainNewlines(value).slice(0, 6000) : '';
 export async function loadConversation(event: Event) {
 	const { params, locals, cookies, request, url } = event;
 	const result = await getStaffTimeline(
@@ -38,11 +48,13 @@ export async function loadConversation(event: Event) {
 	if (result.ok) applySetCookies(cookies, result.setCookies);
 	const timeline = result.ok ? result.data : null;
 	const pointer = cookies.get(REPLY_COOKIE);
-	let intent = findIntent(pointer, locals.user!.id, params.inquiryId!);
-	const lost = !!pointer && !intent;
+	const resolved = pointer ? resolveIntent(pointer, locals.user!.id, params.inquiryId!) : null;
+	let intent = resolved?.kind === 'intent' ? resolved.intent : null;
+	// Only a possibly sent reply, or a pointer this process cannot classify, blocks the composer.
+	const lost = resolved?.kind === 'lost';
 	const expectation = replyExpectation(timeline);
 	if (
-		(!pointer || intent?.state === 'accepted') &&
+		(!resolved || resolved.kind === 'expired' || intent?.state === 'accepted') &&
 		expectation &&
 		locals.user?.permissions.includes('fionas.communications.send') &&
 		locals.user.permissions.includes('fionas.communications.read')
@@ -62,11 +74,26 @@ export async function loadConversation(event: Event) {
 }
 export async function acknowledgeConversation(event: Event) {
 	if (!event.locals.user) redirect(303, '/login');
-	if (!event.locals.user.permissions.includes('fionas.communications.acknowledge'))
+	const user = event.locals.user;
+	if (!user.permissions.includes('fionas.communications.acknowledge'))
 		return fail(403, {
 			conversationError: 'You do not have permission to mark communication as read.'
 		});
+	if (!user.permissions.includes('fionas.communications.read'))
+		return fail(403, {
+			conversationError: 'Mark as read requires permission to read the customer’s messages.'
+		});
 	const form = await event.request.formData();
+	// Submitted through the composer: keep its unsent text across the PRG. Never a send attempt.
+	const key = form.get('key');
+	if (typeof key === 'string' && form.getAll('key').length === 1 && form.has('body')) {
+		const resolved = resolveIntent(key, user.id, event.params.inquiryId!);
+		if (resolved.kind === 'intent' && resolved.intent.state === 'draft') {
+			resolved.intent.body = draftText(form.get('body'));
+			resolved.intent.expires = Date.now() + REPLY_TTL_MS;
+		} else if (resolved.kind === 'expired')
+			revive(event, user.id, resolved.retired, draftText(form.get('body')));
+	}
 	const raw = form.get('throughRecordedOrder');
 	if (
 		form.getAll('throughRecordedOrder').length !== 1 ||
@@ -75,7 +102,19 @@ export async function acknowledgeConversation(event: Event) {
 		!Number.isSafeInteger(Number(raw))
 	)
 		return fail(422, { conversationError: 'Review the conversation before marking it as read.' });
-	// The submitted observation is never replaced by a fresh backend read.
+	// Messages must be reviewable now. This read only gates availability: the submitted
+	// observation is posted unchanged and is never replaced by the read's newer watermark.
+	const view = await getStaffTimeline(
+		backendConfig(event.url.origin),
+		event.params.inquiryId!,
+		event.request.headers.get('cookie')
+	);
+	if (!view.ok || view.data.conversation.state !== 'READY')
+		return fail(409, {
+			conversationError:
+				'Customer messages cannot be reviewed right now, so they cannot be marked as read. Refresh once the conversation is available.'
+		});
+	applySetCookies(event.cookies, view.setCookies);
 	const result = await acknowledgeInquiryCommunication(
 		backendConfig(event.url.origin),
 		event.params.inquiryId!,
@@ -119,10 +158,25 @@ export async function sendConversationReply(event: Event) {
 		return fail(403, { conversationError: replyError('forbidden') });
 	const form = await event.request.formData();
 	const key = form.get('key');
-	let intent =
+	const resolved =
 		typeof key === 'string' && form.getAll('key').length === 1
-			? findIntent(key, user.id, event.params.inquiryId!)
-			: null;
+			? resolveIntent(key, user.id, event.params.inquiryId!)
+			: ({ kind: 'lost' } as const);
+	if (resolved.kind === 'expired') {
+		// No send under this key is unresolved. Never send under a new key from this request:
+		// staff confirm the kept text with a second, deliberate submission.
+		const fresh = revive(event, user.id, resolved.retired, draftText(form.get('body')));
+		if (!fresh)
+			return fail(503, { conversationError: 'Reply preparation is temporarily unavailable.' });
+		return fail(409, {
+			reply: publicIntent(fresh),
+			conversationError:
+				resolved.retired.state === 'accepted'
+					? 'This reply form is no longer current, and your text was not sent from it. Review the conversation, then send it only if it is still needed.'
+					: 'This reply form expired before anything was sent from it. Nothing was sent. Review the conversation, then send your kept text.'
+		});
+	}
+	let intent = resolved.kind === 'intent' ? resolved.intent : null;
 	if (!intent)
 		return fail(409, {
 			recoveryLost: true,
@@ -138,7 +192,7 @@ export async function sendConversationReply(event: Event) {
 					'This key already belongs to an accepted reply. Your different draft was not sent. Copy it before reloading to review the conversation.',
 				reply: {
 					...publicIntent(intent),
-					body: typeof input === 'string' ? input.slice(0, 6000) : ''
+					body: draftText(input)
 				}
 			});
 		redirect(303, workspaceRedirect(event.url) + '#conversation');
@@ -175,7 +229,7 @@ export async function sendConversationReply(event: Event) {
 		return fail(422, {
 			reply: {
 				...publicIntent(intent),
-				body: typeof input === 'string' ? input.slice(0, 6000) : intent.body
+				body: typeof input === 'string' ? draftText(input) : intent.body
 			},
 			conversationError: replyError('validation_failed')
 		});

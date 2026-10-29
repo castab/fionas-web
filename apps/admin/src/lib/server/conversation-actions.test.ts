@@ -9,7 +9,7 @@ import {
 	getStaffTimeline,
 	sendStaffConversationReply
 } from './conversation.js';
-import { createIntent, findIntent, REPLY_TTL_MS } from './reply-intents.js';
+import { createIntent, findIntent, REPLY_TTL_MS, resolveIntent } from './reply-intents.js';
 import { conversationFixture } from '../../../e2e/conversation-fixture.mjs';
 import { mayaId } from '../../../e2e/request-fixture.mjs';
 
@@ -161,7 +161,7 @@ describe('immutable reply actions', () => {
 		expect(result).toMatchObject({ reply: { state: 'draft', body: 'Original' } });
 		expect(sendStaffConversationReply).toHaveBeenCalledOnce();
 	});
-	it('refuses unauthorized, blank, oversized, expired and foreign intents without sending', async () => {
+	it('refuses unauthorized, blank, oversized and foreign intents without sending', async () => {
 		const intent = createIntent('me', mayaId, { expectEmptyConversation: true })!;
 		for (const body of [' ', 'a'.repeat(5001)])
 			expect(await sendConversationReply(event({ key: intent.key, body }))).toMatchObject({
@@ -172,28 +172,179 @@ describe('immutable reply actions', () => {
 		).toMatchObject({ status: 403 });
 		expect(findIntent(intent.key, 'other-user', mayaId)).toBeNull();
 		expect(findIntent(intent.key, 'me', 'other-inquiry')).toBeNull();
+		expect(sendStaffConversationReply).not.toHaveBeenCalled();
+	});
+});
+describe('expired reply intents', () => {
+	const expire = (intent: { expires: number }) => {
 		intent.expires = Date.now() - REPLY_TTL_MS;
-		expect((await loadConversation(event({}, intent.key))).recoveryLost).toBe(true);
-		expect(await sendConversationReply(event({ key: intent.key, body: 'Hi' }))).toMatchObject({
-			data: { recoveryLost: true }
+	};
+	it('replaces an untouched expired draft on load instead of blocking new sends', async () => {
+		const stale = createIntent('me', mayaId, { expectEmptyConversation: true })!;
+		expire(stale);
+		const e = event({}, stale.key);
+		const loaded = await loadConversation(e);
+		expect(loaded.recoveryLost).toBe(false);
+		expect(loaded.reply).toMatchObject({ state: 'draft', body: '' });
+		expect(loaded.reply!.key).not.toBe(stale.key);
+		expect(e.cookies.set).toHaveBeenCalledWith(
+			'fionas_reply_intent',
+			loaded.reply!.key,
+			expect.objectContaining({ httpOnly: true, maxAge: 7 * 24 * 60 * 60 })
+		);
+	});
+	it('keeps the text of a submission from an expired draft form but never sends it', async () => {
+		const stale = createIntent('me', mayaId, { expectedLatestMessageId: 'm1' })!;
+		expire(stale);
+		const result = await sendConversationReply(event({ key: stale.key, body: 'Kept text' }));
+		expect(result).toMatchObject({
+			status: 409,
+			data: {
+				reply: {
+					state: 'draft',
+					body: 'Kept text',
+					expectation: { expectedLatestMessageId: 'm1' }
+				},
+				conversationError: expect.stringContaining('Nothing was sent')
+			}
+		});
+		const fresh = (result as { data: { reply: { key: string } } }).data.reply.key;
+		expect(fresh).not.toBe(stale.key);
+		expect(sendStaffConversationReply).not.toHaveBeenCalled();
+		await sendConversationReply(event({ key: fresh, body: 'Kept text' }));
+		expect(sendStaffConversationReply).toHaveBeenCalledExactlyOnceWith(
+			expect.anything(),
+			mayaId,
+			fresh,
+			{ body: 'Kept text', expectedLatestMessageId: 'm1' },
+			'session=staff'
+		);
+	});
+	it('does not claim nothing was sent for an expired accepted form', async () => {
+		const sent = createIntent('me', mayaId, { expectEmptyConversation: true })!;
+		sent.state = 'accepted';
+		expire(sent);
+		expect(await sendConversationReply(event({ key: sent.key, body: 'Again?' }))).toMatchObject({
+			data: { conversationError: expect.stringContaining('was not sent from it') }
 		});
 		expect(sendStaffConversationReply).not.toHaveBeenCalled();
 	});
-	it('uses only the observed watermark, with no pre-acknowledgement read', async () => {
+	it('fails closed when an attempted send expires unresolved', async () => {
+		const intent = createIntent('me', mayaId, { expectEmptyConversation: true })!;
+		await sendConversationReply(event({ key: intent.key, body: 'Maybe sent' }));
+		expect(intent.state).toBe('uncertain');
+		expire(intent);
+		const e = event({}, intent.key);
+		const loaded = await loadConversation(e);
+		expect(loaded).toMatchObject({ recoveryLost: true, reply: null });
+		expect(e.cookies.set).not.toHaveBeenCalled();
+		expect(resolveIntent(intent.key, 'me', mayaId)).toEqual({ kind: 'lost' });
+		expect(
+			await sendConversationReply(event({ key: intent.key, body: 'Maybe sent' }))
+		).toMatchObject({ status: 409, data: { recoveryLost: true } });
+		expect(sendStaffConversationReply).toHaveBeenCalledOnce();
+	});
+	it('fails closed for pointers this process never issued, such as after a restart', async () => {
+		const loaded = await loadConversation(event({}, '00000000-0000-4000-8000-000000000000'));
+		expect(loaded).toMatchObject({ recoveryLost: true, reply: null });
+		const stale = createIntent('me', mayaId, { expectEmptyConversation: true })!;
+		expire(stale);
+		expect(resolveIntent(stale.key, 'someone-else', mayaId)).toEqual({ kind: 'lost' });
+	});
+});
+describe('acknowledgement', () => {
+	it('posts only the observed watermark, even when the gate read shows a newer one', async () => {
+		const newer = conversationFixture();
+		newer.attention.throughRecordedOrder = 13;
+		vi.mocked(getStaffTimeline).mockResolvedValue({ ok: true, data: newer, setCookies: [] });
 		vi.mocked(acknowledgeInquiryCommunication).mockResolvedValue({
 			ok: false,
 			retryAfter: null,
 			error: { status: 409, code: 'conversation_changed', message: 'PRIVATE', violations: [] }
 		});
-		expect(await acknowledgeConversation(event({ throughRecordedOrder: '12' }))).toMatchObject({
-			status: 409
-		});
+		const result = await acknowledgeConversation(event({ throughRecordedOrder: '12' }));
+		expect(result).toMatchObject({ status: 409 });
+		expect(JSON.stringify(result)).not.toContain('PRIVATE');
 		expect(acknowledgeInquiryCommunication).toHaveBeenCalledExactlyOnceWith(
 			expect.anything(),
 			mayaId,
 			12,
 			'session=staff'
 		);
+	});
+	it('refuses when staff cannot read the messages', async () => {
+		const grants = permissions.filter((p) => p !== 'fionas.communications.read');
+		expect(
+			await acknowledgeConversation(event({ throughRecordedOrder: '12' }, undefined, grants))
+		).toMatchObject({ status: 403 });
 		expect(getStaffTimeline).not.toHaveBeenCalled();
+		expect(acknowledgeInquiryCommunication).not.toHaveBeenCalled();
+	});
+	for (const state of ['UNAVAILABLE', 'FORBIDDEN', 'MISSING', 'EMPTY'] as const)
+		it(`refuses while the conversation is ${state}`, async () => {
+			const timeline = conversationFixture();
+			timeline.conversation = { state };
+			timeline.items = timeline.items.filter((i) => i.kind !== 'MESSAGE');
+			vi.mocked(getStaffTimeline).mockResolvedValue({ ok: true, data: timeline, setCookies: [] });
+			expect(await acknowledgeConversation(event({ throughRecordedOrder: '12' }))).toMatchObject({
+				status: 409,
+				data: { conversationError: expect.stringContaining('cannot be reviewed') }
+			});
+			expect(acknowledgeInquiryCommunication).not.toHaveBeenCalled();
+		});
+	it('refuses when the availability read itself fails', async () => {
+		vi.mocked(getStaffTimeline).mockResolvedValue({
+			ok: false,
+			retryAfter: null,
+			error: { status: 503, code: 'unavailable', message: 'PRIVATE', violations: [] }
+		});
+		expect(await acknowledgeConversation(event({ throughRecordedOrder: '12' }))).toMatchObject({
+			status: 409
+		});
+		expect(acknowledgeInquiryCommunication).not.toHaveBeenCalled();
+	});
+	it('keeps an unsent composer draft across the acknowledgement PRG, without sending', async () => {
+		vi.mocked(acknowledgeInquiryCommunication).mockResolvedValue({
+			ok: true,
+			status: 204,
+			data: null,
+			setCookies: []
+		});
+		const intent = createIntent('me', mayaId, { expectedLatestMessageId: 'm1' })!;
+		await expect(
+			acknowledgeConversation(
+				event({ throughRecordedOrder: '12', key: intent.key, body: '  Half-written\nreply' })
+			)
+		).rejects.toMatchObject({ status: 303 });
+		expect((await loadConversation(event({}, intent.key))).reply).toMatchObject({
+			key: intent.key,
+			state: 'draft',
+			body: '  Half-written\nreply'
+		});
+		expect(sendStaffConversationReply).not.toHaveBeenCalled();
+	});
+	it('never rewrites a locked uncertain reply and revives an expired draft with its text', async () => {
+		vi.mocked(acknowledgeInquiryCommunication).mockResolvedValue({
+			ok: true,
+			status: 204,
+			data: null,
+			setCookies: []
+		});
+		const locked = createIntent('me', mayaId, { expectEmptyConversation: true })!;
+		await sendConversationReply(event({ key: locked.key, body: 'Original' }));
+		await expect(
+			acknowledgeConversation(event({ throughRecordedOrder: '12', key: locked.key, body: 'Edit' }))
+		).rejects.toMatchObject({ status: 303 });
+		expect(locked.body).toBe('Original');
+		const stale = createIntent('me', mayaId, { expectEmptyConversation: true })!;
+		stale.expires = Date.now() - REPLY_TTL_MS;
+		const e = event({ throughRecordedOrder: '12', key: stale.key, body: 'Still typing' });
+		await expect(acknowledgeConversation(e)).rejects.toMatchObject({ status: 303 });
+		const pointer = vi.mocked(e.cookies.set).mock.calls[0][1];
+		expect((await loadConversation(event({}, pointer))).reply).toMatchObject({
+			state: 'draft',
+			body: 'Still typing'
+		});
+		expect(sendStaffConversationReply).toHaveBeenCalledOnce();
 	});
 });

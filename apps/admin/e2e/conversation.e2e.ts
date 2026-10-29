@@ -1,5 +1,5 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
-import { signIn, route, session, stubUrl } from './request-helpers.js';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { postAction, signIn, route, session, stubUrl } from './request-helpers.js';
 import {
 	conversationFixture,
 	customerMessageId,
@@ -304,4 +304,108 @@ test('conversation keyboard submission keeps Enter as a newline and exposes one 
 	await expect(page.getByText('Accepted by email provider', { exact: true })).toBeVisible();
 	expect((await conversation(context)).attempts[0].body.body).toBe('Hello\nM');
 	await expect(page.getByTestId('conversation').getByRole('status')).toHaveCount(1);
+});
+
+const strip = (page: Page) =>
+	page.getByTestId('conversation').getByText('Customer message needs attention.');
+const markAsRead = (page: Page) => page.getByRole('button', { name: 'Mark as read', exact: true });
+
+for (const javaScriptEnabled of [true, false]) {
+	test.describe(`acknowledgement gate (${javaScriptEnabled ? 'enhanced' : 'native'})`, () => {
+		test.use({ javaScriptEnabled });
+		for (const blocked of ['FORBIDDEN', 'UNAVAILABLE', 'outage'] as const)
+			test(`${blocked} keeps Needs reply visible but not acknowledgeable`, async ({
+				page,
+				context
+			}) => {
+				await signIn(page);
+				await conversation(
+					context,
+					blocked === 'outage' ? { mode: 'timeline-error' } : { availability: blocked }
+				);
+				await page.goto(route);
+				await expect(strip(page)).toBeVisible();
+				await expect(
+					page.getByText('Mark as read becomes available once', { exact: false })
+				).toBeVisible();
+				await expect(markAsRead(page)).toHaveCount(0);
+				expect((await conversation(context)).acknowledgements).toEqual([]);
+			});
+
+		test('a provider outage after loading refuses acknowledgement and keeps attention', async ({
+			page,
+			context
+		}) => {
+			await signIn(page);
+			await conversation(context, {});
+			await page.goto(route);
+			await conversation(context, { mode: 'timeline-error' });
+			await markAsRead(page).click();
+			await expect(page.getByText('cannot be reviewed right now', { exact: false })).toBeVisible();
+			await expect(strip(page)).toBeVisible();
+			expect((await conversation(context)).acknowledgements).toEqual([]);
+		});
+
+		test('Mark as read keeps an unsent draft, which then sends once', async ({ page, context }) => {
+			await signIn(page);
+			await conversation(context, {});
+			await page.goto(route);
+			const body = page.getByLabel('Message', { exact: true });
+			await body.fill('Half-written reply\nabout the garden');
+			await markAsRead(page).click();
+			await expect(strip(page)).toHaveCount(0);
+			await expect(body).toHaveValue('Half-written reply\nabout the garden');
+			const state = await conversation(context);
+			expect(state.acknowledgements).toEqual([{ throughRecordedOrder: 12 }]);
+			expect(state.attempts).toEqual([]);
+			await page.getByRole('button', { name: 'Send reply', exact: true }).click();
+			await expect(page.getByText('Accepted by email provider', { exact: true })).toBeVisible();
+			expect((await conversation(context)).attempts.map((a: { body: unknown }) => a.body)).toEqual([
+				{ body: 'Half-written reply\nabout the garden', expectedLatestMessageId: customerMessageId }
+			]);
+		});
+	});
+}
+
+test('the server refuses crafted acknowledgements while messages are unreviewable', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	await conversation(context, {});
+	await page.goto(route);
+	await conversation(context, { availability: 'UNAVAILABLE' });
+	expect(
+		await postAction(page, `${route}?/acknowledgeConversation`, { throughRecordedOrder: '12' })
+	).toMatchObject({ status: 409 });
+	const state = await session(context);
+	await session(context, {
+		permissions: state.permissions.filter((p: string) => p !== 'fionas.communications.read')
+	});
+	expect(
+		await postAction(page, `${route}?/acknowledgeConversation`, { throughRecordedOrder: '12' })
+	).toMatchObject({ status: 403 });
+	expect((await conversation(context)).acknowledgements).toEqual([]);
+});
+
+test('a reply pointer this server never issued fails closed instead of minting a key', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	await conversation(context, {});
+	await context.addCookies([
+		{
+			name: 'fionas_reply_intent',
+			value: '00000000-0000-4000-8000-000000000000',
+			domain: '127.0.0.1',
+			path: route
+		}
+	]);
+	await page.goto(route);
+	await expect(
+		page.getByText('The original send intent is no longer available', { exact: false })
+	).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Send reply', exact: true })).toHaveCount(0);
+	expect((await conversation(context)).attempts).toEqual([]);
 });

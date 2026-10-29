@@ -2,6 +2,7 @@
 	import { untrack, tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { enhance, applyAction } from '$app/forms';
+	import type { ActionResult } from '@sveltejs/kit';
 	import { Badge, Button, Card } from '@fionas/ui';
 	import type {
 		CommunicationSummary,
@@ -70,6 +71,38 @@
 		permissions.includes('fionas.communications.read') &&
 			permissions.includes('fionas.communications.send')
 	);
+	// Attention stays visible, but it can only be cleared once the messages themselves are shown.
+	const reviewable = $derived(
+		availability === 'READY' && permissions.includes('fionas.communications.read')
+	);
+	// When the composer form exists, Mark as read submits through it so its unsent text reaches
+	// the server natively and survives the PRG. Initialized from props for the no-JS render.
+	let composerActive = $state(
+		untrack(() => {
+			const draft = result?.reply ?? reply;
+			return (
+				canReply && !(result?.recoveryLost ?? recoveryLost) && !!draft && draft.state !== 'accepted'
+			);
+		})
+	);
+	const acknowledgeAction = $derived(workspaceAction(returnContext, 'acknowledgeConversation'));
+	function acknowledgeSubmit({ cancel }: { cancel: () => void }) {
+		if (acknowledging || blocked) {
+			cancel();
+			return;
+		}
+		acknowledging = true;
+		return async ({ result }: { result: ActionResult }) => {
+			acknowledging = false;
+			if (result.type === 'redirect') await applyAction(result);
+			else
+				await announce(
+					result.type === 'failure'
+						? String(result.data?.conversationError ?? 'Acknowledgement was not confirmed.')
+						: 'Acknowledgement was not confirmed. Refresh and review.'
+				);
+		};
+	}
 	async function announce(message: string) {
 		status = message;
 		await tick();
@@ -156,41 +189,34 @@
 							textarea?.focus();
 						}}>Reply</Button
 					>{/if}
-				{#if permissions.includes('fionas.communications.acknowledge')}
-					<form
-						method="POST"
-						action={workspaceAction(returnContext, 'acknowledgeConversation')}
-						use:enhance={({ cancel }) => {
-							if (acknowledging || blocked) {
-								cancel();
-								return;
-							}
-							acknowledging = true;
-							return async ({ result }) => {
-								acknowledging = false;
-								if (result.type === 'redirect') await applyAction(result);
-								else
-									await announce(
-										result.type === 'failure'
-											? String(
-													result.data?.conversationError ?? 'Acknowledgement was not confirmed.'
-												)
-											: 'Acknowledgement was not confirmed. Refresh and review.'
-									);
-							};
-						}}
-					>
-						<input
-							type="hidden"
-							name="throughRecordedOrder"
-							value={attention.throughRecordedOrder}
-						/><Button
+				{#if permissions.includes('fionas.communications.acknowledge') && reviewable}
+					{#if composerActive}<Button
 							type="submit"
+							form="conversation-reply-form"
+							formaction={acknowledgeAction}
+							formnovalidate
+							name="throughRecordedOrder"
+							value={String(attention.throughRecordedOrder)}
 							variant="secondary"
 							size="sm"
 							disabled={acknowledging || blocked}>Mark as read</Button
-						>
-					</form>
+						>{:else}<form method="POST" action={acknowledgeAction} use:enhance={acknowledgeSubmit}>
+							<input
+								type="hidden"
+								name="throughRecordedOrder"
+								value={attention.throughRecordedOrder}
+							/><Button
+								type="submit"
+								variant="secondary"
+								size="sm"
+								disabled={acknowledging || blocked}>Mark as read</Button
+							>
+						</form>{/if}
+				{:else if permissions.includes('fionas.communications.acknowledge')}<p
+						class="m-0 text-xs text-(--text-muted)"
+					>
+						Mark as read becomes available once the customer’s messages can be reviewed here.
+					</p>
 				{/if}
 			</div>
 		</div>
@@ -256,6 +282,10 @@
 			action={workspaceAction(returnContext, 'sendConversationReply')}
 			lost={result?.recoveryLost ?? recoveryLost}
 			{announce}
+			acknowledge={acknowledgeSubmit}
+			onActiveChange={(active) => {
+				composerActive = active;
+			}}
 		/>{:else}<p class="mt-5 border-t border-olive-200 pt-4 text-sm text-(--text-muted)">
 			Reply requires communication read and send permissions.
 		</p>{/if}

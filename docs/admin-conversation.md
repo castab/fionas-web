@@ -37,7 +37,7 @@ labels; failed, delayed, bounced, complained, suppressed and indeterminate state
 
 Existing inquiry/financial read permissions govern the workspace. Email content additionally needs
 `fionas.communications.read`; the composer requires that plus `fionas.communications.send` on the
-signed-in staff USER. Mark as read requires `fionas.communications.acknowledge`. Backend authorization
+signed-in staff USER. Mark as read requires `fionas.communications.acknowledge` plus `fionas.communications.read`. Backend authorization
 is final. Roles are never used as permission proxies. Existing uncertainty blocks on financial or
 decline actions also disable communication mutations until reviewed.
 
@@ -47,6 +47,20 @@ The workspace submits exactly the displayed `throughRecordedOrder` to acknowledg
 fetches a newer watermark to make acknowledgement succeed. A 204 uses PRG; a stale conflict asks staff
 to refresh and review. Other ambiguous failures require review. Acknowledgement changes only commerce
 attention, not provider lifecycle or delivery.
+
+Attention can only be cleared by someone who can see what it is about. Needs reply stays visible in
+every state, but Mark as read appears only while the conversation is READY and the user holds
+`fionas.communications.read`. Otherwise the strip explains that it becomes available once the messages
+can be reviewed. The action enforces the same rule for native and crafted posts: it requires the read
+permission, then makes one availability read and refuses unless that read is READY (provider outage,
+FORBIDDEN, MISSING, EMPTY or a failed read). That read only gates availability; its watermark is never
+posted. The observed watermark is.
+
+Mark as read never discards an unsent reply. While the composer form exists, the button belongs to
+it (`form`, `formaction`, `formnovalidate`, with the watermark as the button's own name/value), so a
+native or enhanced post carries the composer's key and text. For a never-attempted draft the action
+stores that text in the draft's existing in-memory record before acknowledging, and the PRG restores
+it. Locked (uncertain) replies are never rewritten. Without a composer, a standalone form is used.
 
 ## Reply identity and recovery
 
@@ -70,15 +84,35 @@ the intent and lock the text. Staff can refresh/read the timeline and explicitly
 definitive rejection/stale conflict retains the draft; staff must review the visible conversation,
 explicitly prepare a new intent, edit, then separately submit. UNKNOWN cannot use that path.
 
-Expired text is purged at least once per minute, and accepted text immediately. The pointer lasts
-seven days so a missing record after expiry/restart fails closed instead of silently starting another
-email. Do not treat this as durable draft storage. Unsubmitted typing stays only in the page; submitted
-text can survive navigation/reload within the recovery window. No email body is written to localStorage,
-sessionStorage, cookies, URLs, logs or a draft database.
+Native forms encode newlines as CRLF and enhanced ones as LF; the server normalizes both to LF, so one
+message always has one body and one fingerprint.
+
+Expired text is purged at least once per minute, and accepted text immediately. An expired record
+leaves a body-free retirement marker (user, inquiry, expectation and final state) that outlives the
+seven-day pointer cookie, so every pointer this process issued stays classifiable:
+
+- **Never attempted, definitively refused or accepted:** no send under that key is unresolved. Loading
+  quietly mints a fresh draft. A submission from the expired form keeps its text in a fresh draft with
+  the same observed expectation, sends nothing, and asks staff to review and submit again. The copy
+  never says "nothing was sent" for an accepted key.
+- **Attempted with an unknown outcome:** fails closed (recoveryLost). No fresh key is issued because a
+  record went missing.
+- **Unknown to this process** (restart, another replica, tampered cookie): fails closed.
+
+Do not treat this as durable draft storage. Unsubmitted typing stays only in the page, except text
+carried by Mark as read, which lives only in that draft's two-hour record. Submitted text can survive
+navigation/reload within the recovery window. No email body is written to localStorage, sessionStorage,
+cookies, URLs, logs or a draft database. Both stores are bounded (1,000 records, 20,000 markers); a full
+store shows no composer rather than an unclassifiable pointer.
 
 **Operational limitation:** run one admin replica, or use sticky routing for the recovery window.
-A process restart, expired record, cleared browser cookie, new browser or lost session can make the
-original command unavailable. With a surviving pointer the composer blocks and tells staff to review
+A process restart, an expired attempted record, a cleared browser cookie, a new browser or a lost
+session can make the original command unavailable. Expiry alone no longer blocks untouched drafts.
+**Restart tradeoff:** markers are process memory, so after a restart or deploy the server cannot tell
+whether a pre-restart pointer was ever submitted. Any browser that viewed a workspace before the restart
+therefore sees the blocked state on that inquiry, even for a draft it never sent. This is deliberate:
+classifying it as safe would risk a duplicate email whenever an attempt's response was lost. Prefer
+deploying when no replies are being composed, and resolve blocked inquiries as below. With a surviving pointer the composer blocks and tells staff to review
 the timeline and contact an administrator. Without the original command, do not resend under a new
 key while the old send may surface. Follow commerce's abandoned-UNKNOWN runbook. An administrator may
 clear the inquiry-scoped `fionas_reply_intent` cookie only after resolving whether a prior send exists;
@@ -118,8 +152,12 @@ and provider send-key lookup are small upstream improvements for later iteration
 ## Tests
 
 Contract/presentation, transport and action tests cover safe validation, statuses, exact commands,
-timeouts, observed acknowledgement, scoped recovery, duplicate clicks, expiry and explicit review.
+timeouts, observed acknowledgement, the reviewable-messages gate, draft retention across Mark as read,
+scoped recovery, duplicate clicks, expired-draft versus attempted-send classification and explicit review.
 The session-isolated commerce stub models accepted/replayed/unknown replies, stale expectations,
 concurrent inbound attention and acknowledgements without live email credentials. Playwright covers
 desktop/mobile and native forms, return context, historical Quote expansion, escaped/null content,
-permissions, refresh preservation, attention and uncertain reconciliation.
+permissions, refresh preservation, attention and uncertain reconciliation. Enhanced and native runs
+cover Mark as read being withheld under FORBIDDEN, UNAVAILABLE and provider outage, refusal of an
+outage that starts after loading, refusal of crafted posts, draft survival across Mark as read, and
+fail-closed handling of a pointer the server never issued. Two-hour expiry is covered by unit tests.

@@ -201,8 +201,10 @@ export function replyExpectation(timeline: StaffTimeline | null): ReplyExpectati
 		? { expectedLatestMessageId: c.latestMessageId }
 		: null;
 }
+/** Native form encoding sends CRLF; enhanced submissions send LF. One body, one fingerprint. */
+export const plainNewlines = (value: string) => value.replace(/\r\n?/g, '\n');
 export function replyBody(value: string): string | null {
-	const body = value.trim();
+	const body = plainNewlines(value).trim();
 	// Backend Kotlin String length is UTF-16, as is JavaScript's length.
 	return body.length > 0 &&
 		body.length <= 5000 &&

@@ -81,6 +81,7 @@ describe('conversation boundary', () => {
 	});
 	it('normalizes only edge whitespace and rejects controls or invalid length', () => {
 		expect(replyBody('  Hello\n\nMaya\t!  ')).toBe('Hello\n\nMaya\t!');
+		expect(replyBody('Hello\r\nMaya\rthere')).toBe('Hello\nMaya\nthere');
 		for (const body of ['', '  ', 'a'.repeat(5001), 'Hello\u0000', 'Hello\u0085'])
 			expect(replyBody(body)).toBeNull();
 		expect(replyBody('a'.repeat(5000))).toHaveLength(5000);

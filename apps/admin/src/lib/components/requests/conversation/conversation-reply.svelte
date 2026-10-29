@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance, applyAction } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import { Button, focusRing } from '@fionas/ui';
 	import type {
 		ConversationActionResult,
@@ -16,7 +17,9 @@
 		action,
 		lost,
 		blocked,
-		announce
+		announce,
+		acknowledge,
+		onActiveChange
 	}: {
 		initial: ReplyDraft | null;
 		expectation: ReplyExpectation | null;
@@ -26,12 +29,18 @@
 		lost: boolean;
 		blocked: boolean;
 		announce: (message: string) => void;
+		/** Mark as read may submit through this form (keeping its text); the card handles it. */
+		acknowledge: SubmitFunction;
+		onActiveChange: (active: boolean) => void;
 	} = $props();
 	let draft = $state<ReplyDraft | null>(untrack(() => initial));
 	let body = $state(untrack(() => initial?.body ?? ''));
 	let pending = $state(false);
 	let recoveryLost = $state(untrack(() => lost));
 	const locked = $derived(draft?.state !== 'draft');
+	$effect(() => {
+		onActiveChange(!recoveryLost && !!draft && draft.state !== 'accepted');
+	});
 	const canSubmit = $derived(
 		!!draft &&
 			!recoveryLost &&
@@ -66,10 +75,13 @@
 				its exact key, message and original conversation expectation. It does not create a new email.
 			</p>{/if}
 		<form
+			id="conversation-reply-form"
 			method="POST"
 			{action}
 			class="mt-3 space-y-3"
-			use:enhance={({ cancel, formData }) => {
+			use:enhance={(input) => {
+				const { cancel, formData } = input;
+				if (input.action.search.includes('/acknowledgeConversation')) return acknowledge(input);
 				if (pending || blocked || !draft) {
 					cancel();
 					return;
