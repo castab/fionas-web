@@ -30,7 +30,7 @@
 <details bind:open id={`message-${message.messageId}`} class="group min-w-0">
 	<summary
 		class={cn(
-			'flex cursor-pointer list-none items-start gap-3 px-[18px] py-3.5 [&::-webkit-details-marker]:hidden',
+			'relative flex cursor-pointer list-none items-start gap-3 px-[18px] py-3.5 [&::-webkit-details-marker]:hidden',
 			'transition-colors duration-(--dur-fast) ease-(--ease-out) hover:bg-cream-200/45',
 			focusRing,
 			'focus-visible:-outline-offset-3'
