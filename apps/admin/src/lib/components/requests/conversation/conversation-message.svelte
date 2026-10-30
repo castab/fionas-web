@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { cn, focusRing } from '@fionas/ui';
 	import type { ConversationMessage } from '$lib/conversation-contract.js';
-	import { messageStatus } from '$lib/conversation.js';
+	import { messageStatus, splitQuotedTrail } from '$lib/conversation.js';
 	import { receivedTimeLabel } from '$lib/payments.js';
 	let { message, newest }: { message: ConversationMessage; newest: boolean } = $props();
 	// Initialize once. Keyed message identity preserves the staff member's disclosure on refresh.
@@ -10,7 +10,9 @@
 	const unavailable = 'Plain-text content is unavailable for this email.';
 	const inbound = $derived(message.direction === 'inbound');
 	const name = $derived(message.senderName || message.senderAddress);
-	const snippet = $derived(message.text?.replace(/\s+/g, ' ').trim().slice(0, 180) || unavailable);
+	// Earlier mail a client quoted below the reply is folded, never removed.
+	const split = $derived(message.text == null ? null : splitQuotedTrail(message.text));
+	const snippet = $derived(split?.body.replace(/\s+/g, ' ').trim().slice(0, 180) || unavailable);
 	const failed = [
 		'Bounced',
 		'Failed to send',
@@ -69,7 +71,25 @@
 					>{/each}
 			</div>{/if}
 		<p class="m-0 text-[13.5px] leading-[1.65] wrap-anywhere whitespace-pre-wrap">
-			{message.text ?? unavailable}
+			{split?.body ?? unavailable}
 		</p>
+		{#if split?.quoted}<details class="group/quote min-w-0">
+				<summary
+					class={cn(
+						'inline-flex cursor-pointer list-none items-center rounded-full bg-olive-700/10 px-2.5 py-1 [&::-webkit-details-marker]:hidden',
+						'font-sans text-[10px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-olive-800 uppercase',
+						'transition-colors duration-(--dur-fast) ease-(--ease-out) hover:bg-olive-700/18',
+						focusRing
+					)}
+					><span class="group-open/quote:hidden">Show quoted text</span><span
+						class="hidden group-open/quote:inline">Hide quoted text</span
+					></summary
+				>
+				<p
+					class="m-0 mt-2.5 border-l-2 border-(--border-soft) pl-3 text-[12.5px] leading-[1.6] wrap-anywhere whitespace-pre-wrap text-(--text-muted)"
+				>
+					{split.quoted}
+				</p>
+			</details>{/if}
 	</div>
 </details>

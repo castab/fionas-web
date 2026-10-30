@@ -233,6 +233,46 @@ export function messageStatus(message: ConversationMessage): string[] {
 	};
 	return [send[message.sendState], delivery[message.deliveryState ?? 'unknown']];
 }
+const blankLine = (line: string) => !line.trim();
+const quotedLine = (line: string) => /^\s*>/.test(line);
+/** Where a mail client's trailing quoted history starts: an `On … wrote:` attribution (wrapped over
+ * up to three lines) above `>` lines, two or more bare `>` lines, or an Outlook header block. */
+function quotedTrailStart(lines: string[]): number | null {
+	let start = lines.length;
+	while (start > 0 && (blankLine(lines[start - 1]) || quotedLine(lines[start - 1]))) start--;
+	while (start < lines.length && blankLine(lines[start])) start++;
+	if (start < lines.length) {
+		let above = start - 1;
+		while (above >= 0 && blankLine(lines[above])) above--;
+		if (above >= 0 && /wrote:\s*$/i.test(lines[above])) {
+			for (let i = above; i >= Math.max(0, above - 2) && !blankLine(lines[i]); i--)
+				if (/^\s*On\s/i.test(lines[i])) return i;
+			return above;
+		}
+		return lines.slice(start).filter(quotedLine).length >= 2 ? start : null;
+	}
+	for (let i = 0; i < lines.length; i++) {
+		if (/^\s*-{2,}\s*Original Message\s*-{2,}\s*$/i.test(lines[i])) return i;
+		const header = lines.slice(i + 1, i + 6);
+		if (
+			/^\s*From:\s*\S/i.test(lines[i]) &&
+			header.some((l) => /^\s*(Sent|Date):\s*\S/i.test(l)) &&
+			header.some((l) => /^\s*Subject:/i.test(l))
+		)
+			return i;
+	}
+	return null;
+}
+/** Display only: separates a message's own words from the quoted history appended below it, so the
+ * workspace can fold it. Inline replies, fully quoted messages and unmatched text stay whole. */
+export function splitQuotedTrail(text: string): { body: string; quoted: string | null } {
+	const lines = plainNewlines(text).split('\n');
+	const start = quotedTrailStart(lines);
+	const body = start === null ? '' : lines.slice(0, start).join('\n').trimEnd();
+	return start === null || blankLine(body)
+		? { body: text, quoted: null }
+		: { body, quoted: lines.slice(start).join('\n').trim() };
+}
 export function actorLabel(actor: TimelineActor, userId: string): string {
 	return actor.principalKind === 'USER'
 		? actor.principalId === userId

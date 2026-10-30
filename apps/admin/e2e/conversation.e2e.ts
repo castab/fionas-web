@@ -161,6 +161,35 @@ for (const availability of ['EMPTY', 'MISSING', 'UNAVAILABLE', 'FORBIDDEN'] as c
 	});
 }
 
+test('quoted reply history is folded behind a disclosure, never dropped', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	await conversation(context, {});
+	await conversation(context, {
+		inbound: [
+			'Another follow up.',
+			'',
+			'On Thu, Oct 29, 2026 at 1:14 PM Maya <',
+			'maya@example.com> wrote:',
+			'',
+			'> Great! It works!',
+			'>',
+			'>> We got your request!'
+		].join('\n')
+	});
+	await page.goto(route);
+	const card = page.getByTestId('conversation');
+	await expect(
+		card.getByText('Another follow up.', { exact: true }).filter({ visible: true })
+	).toBeVisible();
+	await expect(card.getByText('> Great! It works!', { exact: false })).toBeHidden();
+	await card.getByText('Show quoted text', { exact: true }).click();
+	await expect(card.getByText('> Great! It works!', { exact: false })).toBeVisible();
+	await expect(card.getByText('Hide quoted text', { exact: true })).toBeVisible();
+});
+
 test('null text, long addresses, escaped markup and permission gaps', async ({ page, context }) => {
 	await signIn(page);
 	const timeline = conversationFixture();
