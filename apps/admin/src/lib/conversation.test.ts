@@ -6,7 +6,8 @@ import {
 	messageStatus,
 	replyBody,
 	replyError,
-	replyExpectation
+	replyExpectation,
+	splitQuotedTrail
 } from './conversation.js';
 import type { ConversationMessage, DeliveryState, SendState } from './conversation-contract.js';
 import { conversationFixture, milestoneFixture } from '../../e2e/conversation-fixture.mjs';
@@ -123,5 +124,55 @@ describe('conversation boundary', () => {
 		expect(actorLabel({ principalKind: 'USER', principalId: 'other' }, 'me')).toBe('Staff');
 		expect(actorLabel({ principalKind: 'SERVICE', principalId: 'service' }, 'me')).toBe('System');
 		expect(replyError('PRIVATE backend secret')).not.toContain('PRIVATE');
+	});
+});
+
+describe('quoted reply history', () => {
+	it('folds a wrapped Gmail attribution and its nested quotes', () => {
+		const text = [
+			'Another follow up just to see.',
+			'',
+			'On Thu, Oct 29, 2026 at 1:14 PM Brayan Castaneda <',
+			'bcastaneda@example.com> wrote:',
+			'',
+			'> Great! It works!',
+			'>',
+			'> On Thu, Oct 29, 2026, 1:13 PM Fiona’s Ice Cream <',
+			'> bookings@example.com> wrote:',
+			'>',
+			'>> Hey there, we got your request!',
+			'>>',
+			'>'
+		].join('\r\n');
+		const { body, quoted } = splitQuotedTrail(text);
+		expect(body).toBe('Another follow up just to see.');
+		expect(quoted).toMatch(/^On Thu, Oct 29, 2026 at 1:14 PM/);
+		expect(quoted).toContain('>> Hey there, we got your request!');
+	});
+
+	it('folds bare quote blocks and Outlook headers', () => {
+		expect(splitQuotedTrail('Sounds good.\n\n> Can you come at 3?\n> Thanks')).toEqual({
+			body: 'Sounds good.',
+			quoted: '> Can you come at 3?\n> Thanks'
+		});
+		expect(
+			splitQuotedTrail(
+				'See you then.\n\nFrom: Fiona’s <bookings@example.com>\nSent: Thursday\nTo: Maya\nSubject: Booking\n\nHello'
+			).quoted
+		).toMatch(/^From: Fiona’s/);
+		expect(splitQuotedTrail('Yes.\n-----Original Message-----\nFrom: someone').quoted).toMatch(
+			/^-----Original Message-----/
+		);
+	});
+
+	it('keeps inline replies, single quoted lines, fully quoted mail and plain text whole', () => {
+		for (const text of [
+			'Just a plain note.\nFrom: me, a happy customer',
+			'> Can you come at 3?\nYes, 3 works.\n> Parking?\nStreet parking is fine.',
+			'We will have\n> 50 guests',
+			'On Monday, Maya wrote:\n> Hello\n> again',
+			'> only\n> quoted'
+		])
+			expect(splitQuotedTrail(text)).toEqual({ body: text, quoted: null });
 	});
 });

@@ -23,6 +23,10 @@ during overlap and labels that state unavailable rather than treating it as fals
 
 Items retain backend order and stable IDs. Messages use escaped plain text, preserved whitespace,
 native disclosures and Pacific timestamps. Null text explicitly means unavailable plain text.
+Quoted history a mail client appends below a reply (`On … wrote:` over `>` lines, two or more bare
+`>` lines, or an Outlook header block) is folded behind a native Show quoted text disclosure by
+`splitQuotedTrail`. It is display only: the text is never altered, inline replies and fully quoted
+messages stay whole, and the collapsed preview uses the reply's own words.
 Financial bands render the supplied historical snapshot, deposit revision, receipt classification,
 allocations and refund unwind without recomputing money. A publication is not an email. User
 attribution is You/Staff; service attribution is System.
