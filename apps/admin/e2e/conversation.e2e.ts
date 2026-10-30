@@ -175,6 +175,7 @@ test('null text, long addresses, escaped markup and permission gaps', async ({ p
 		page
 			.getByTestId('conversation')
 			.getByText('Plain-text content is unavailable for this email.')
+			.filter({ visible: true })
 			.first()
 	).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -186,6 +187,7 @@ test('null text, long addresses, escaped markup and permission gaps', async ({ p
 		page
 			.getByTestId('conversation')
 			.getByText(/<script>alert/)
+			.filter({ visible: true })
 			.first()
 	).toBeVisible();
 	const state = await session(context);
