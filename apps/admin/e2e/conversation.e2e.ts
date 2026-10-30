@@ -161,6 +161,21 @@ for (const availability of ['EMPTY', 'MISSING', 'UNAVAILABLE', 'FORBIDDEN'] as c
 	});
 }
 
+test('conversation keeps scrolling inside the desktop shell, not the page', async ({
+	page,
+	context
+}) => {
+	test.skip((page.viewportSize()?.width ?? 0) < 900, 'The shell scrolls its own column at ≥900px');
+	await signIn(page);
+	await conversation(context, {});
+	await page.goto(route);
+	await expect(page.getByTestId('conversation')).toBeVisible();
+	// Visually hidden labels are absolutely positioned; unanchored, they stretch the document.
+	expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(
+		true
+	);
+});
+
 test('null text, long addresses, escaped markup and permission gaps', async ({ page, context }) => {
 	await signIn(page);
 	const timeline = conversationFixture();
