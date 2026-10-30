@@ -26,7 +26,10 @@ native disclosures and Pacific timestamps. Null text explicitly means unavailabl
 Quoted history a mail client appends below a reply (`On … wrote:` over `>` lines, two or more bare
 `>` lines, or an Outlook header block) is folded behind a native Show quoted text disclosure by
 `splitQuotedTrail`. It is display only: the text is never altered, inline replies and fully quoted
-messages stay whole, and the collapsed preview uses the reply's own words.
+messages stay whole, and the collapsed preview uses the reply's own words. A customer email's
+recipient is the per-conversation reply-routing address, an internal identifier, so its header
+reads "To Fiona's Ice Cream"; staff replies show the customer address they went to. For debugging,
+a collapsed Message details disclosure lists the exact From and To addresses and the message ID.
 Financial bands render the supplied historical snapshot, deposit revision, receipt classification,
 allocations and refund unwind without recomputing money. A publication is not an email. User
 attribution is You/Staff; service attribution is System.

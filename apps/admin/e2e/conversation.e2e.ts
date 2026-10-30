@@ -205,6 +205,22 @@ test('conversation keeps scrolling inside the desktop shell, not the page', asyn
 	);
 });
 
+test('the internal reply-routing address stays under Message details', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	await conversation(context, {});
+	await page.goto(route);
+	const message = page.locator(`#message-${customerMessageId}`);
+	await expect(message.getByText(/ · To Fiona's Ice Cream$/)).toBeVisible();
+	const routing = message.getByText('bookings@fionas.example', { exact: true });
+	await expect(routing).toBeHidden();
+	await message.getByText('Message details', { exact: true }).click();
+	await expect(routing).toBeVisible();
+	await expect(message.getByText(customerMessageId, { exact: true })).toBeVisible();
+});
+
 test('null text, long addresses, escaped markup and permission gaps', async ({ page, context }) => {
 	await signIn(page);
 	const timeline = conversationFixture();

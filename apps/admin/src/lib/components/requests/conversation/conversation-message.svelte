@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { site } from '@fionas/shared';
 	import { cn, focusRing } from '@fionas/ui';
 	import type { ConversationMessage } from '$lib/conversation-contract.js';
 	import { messageStatus, splitQuotedTrail } from '$lib/conversation.js';
@@ -10,6 +11,13 @@
 	const unavailable = 'Plain-text content is unavailable for this email.';
 	const inbound = $derived(message.direction === 'inbound');
 	const name = $derived(message.senderName || message.senderAddress);
+	// An inbound recipient is the per-conversation reply-routing address: internal, so it is kept
+	// out of the header and shown only under Message details.
+	const addressLine = $derived(
+		inbound
+			? `${message.senderName ? `${message.senderAddress} · ` : ''}To ${site.name}`
+			: `To ${message.recipient}`
+	);
 	// Earlier mail a client quoted below the reply is folded, never removed.
 	const split = $derived(message.text == null ? null : splitQuotedTrail(message.text));
 	const snippet = $derived(split?.body.replace(/\s+/g, ' ').trim().slice(0, 180) || unavailable);
@@ -57,7 +65,7 @@
 			</span>
 			<span class="truncate text-[12.5px] text-(--text-muted) group-open:hidden">{snippet}</span>
 			<span class="hidden text-[12.5px] wrap-anywhere text-(--text-muted) group-open:block"
-				>{message.senderAddress} · To {message.recipient}</span
+				>{addressLine}</span
 			>
 		</span>
 	</summary>
@@ -91,5 +99,38 @@
 					{split.quoted}
 				</p>
 			</details>{/if}
+		<details class="group/details min-w-0">
+			<summary
+				class={cn(
+					'inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-[11px] text-(--text-muted) [&::-webkit-details-marker]:hidden',
+					'underline-offset-2 hover:underline',
+					focusRing
+				)}
+			>
+				Message details<svg
+					width="12"
+					height="12"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.75"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+					class="-rotate-90 transition-transform duration-(--dur-fast) ease-(--ease-out) group-open/details:rotate-0"
+					><path d="m6 9 6 6 6-6"></path></svg
+				>
+			</summary>
+			<dl
+				class="m-0 mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11.5px] leading-[1.5] text-(--text-muted)"
+			>
+				<dt>From</dt>
+				<dd class="m-0 wrap-anywhere select-all">{message.senderAddress}</dd>
+				<dt>To</dt>
+				<dd class="m-0 wrap-anywhere select-all">{message.recipient}</dd>
+				<dt>Message ID</dt>
+				<dd class="m-0 wrap-anywhere select-all">{message.messageId}</dd>
+			</dl>
+		</details>
 	</div>
 </details>
