@@ -84,7 +84,7 @@
 			id="conversation-reply-form"
 			method="POST"
 			{action}
-			class="flex flex-col gap-2.5"
+			class="relative flex flex-col gap-2.5"
 			use:enhance={(input) => {
 				const { cancel, formData } = input;
 				if (input.action.search.includes('/acknowledgeConversation')) return acknowledge(input);
