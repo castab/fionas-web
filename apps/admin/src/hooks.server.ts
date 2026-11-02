@@ -9,6 +9,12 @@ const LOGIN_PATH = '/login';
  * the API's `/auth/me`, then keep signed-out visitors on the login page.
  */
 export const handle: Handle = async ({ event, resolve }) => {
+	// Only this GET endpoint delegates authentication to the actual SSE handshake. A failed
+	// /auth/me must never redirect EventSource to HTML or misclassify an outage as sign-out.
+	if (event.request.method === 'GET' && event.route.id === '/(app)/requests/[inquiryId]/updates') {
+		event.locals.user = null;
+		return resolve(event);
+	}
 	event.locals.user = await getCurrentUser(
 		backendConfig(event.url.origin),
 		event.request.headers.get('cookie')

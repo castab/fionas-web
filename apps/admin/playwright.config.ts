@@ -31,11 +31,14 @@ export default defineConfig({
 			}
 		},
 		{
-			command: `npm run build && npm run preview -- --port ${port} --host 127.0.0.1`,
+			command: 'npm run build && node build/index.js',
 			url: origin,
 			reuseExistingServer: !process.env.CI,
 			timeout: 180_000,
 			env: {
+				PORT: port,
+				HOST: '127.0.0.1',
+				ORIGIN: origin,
 				COMMERCE_API_URL: stubUrl,
 				ADMIN_ORIGIN: origin
 			}

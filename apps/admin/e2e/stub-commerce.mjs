@@ -307,6 +307,10 @@ createServer(async (req, res) => {
 	}
 
 	if (route === 'GET /auth/me') {
+		if (sessions.get(sessionToken(req))?.authUnavailable) {
+			send(res, 503);
+			return;
+		}
 		const token = sessionToken(req);
 		if (!token || !sessions.has(token)) {
 			return send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });

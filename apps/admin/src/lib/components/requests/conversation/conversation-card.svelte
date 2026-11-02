@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { untrack, tick } from 'svelte';
+	import { timelineRefresh } from '$lib/timeline-refresh.js';
+	import { timelineSubscription, type LiveState } from '$lib/timeline-subscription.js';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { enhance, applyAction } from '$app/forms';
 	import type { ActionResult } from '@sveltejs/kit';
@@ -49,6 +51,7 @@
 	let timeline = $state(untrack(() => initialTimeline));
 	let refreshing = $state(false);
 	let acknowledging = $state(false);
+	let submittedAttention = $state<CommunicationSummary | undefined>();
 	let status = $state(untrack(() => result?.conversationError ?? reply?.message ?? ''));
 	let statusElement: HTMLDivElement;
 	let newMessage = $state<string | null>(null);
@@ -60,9 +63,11 @@
 		)
 	);
 	const seen = new SvelteSet(
-		untrack(() => initialTimeline?.items.filter((i) => i.kind === 'MESSAGE').map((i) => i.id) ?? [])
+		untrack(
+			() => initialTimeline?.items.filter((i) => i.kind === 'MESSAGE').map((i) => i.messageId) ?? []
+		)
 	);
-	const attention = $derived(timeline?.attention ?? summary);
+	const attention = $derived(acknowledging ? submittedAttention : (timeline?.attention ?? summary));
 	const availability = $derived(
 		timeline?.conversation.state ?? (forbidden ? 'FORBIDDEN' : 'UNAVAILABLE')
 	);
@@ -103,6 +108,7 @@
 			cancel();
 			return;
 		}
+		submittedAttention = attention;
 		acknowledging = true;
 		return async ({ result }: { result: ActionResult }) => {
 			acknowledging = false;
@@ -120,38 +126,94 @@
 		await tick();
 		statusElement?.focus();
 	}
+	let liveState = $state<LiveState | null>(null);
+	let detailsChanged = $state(false);
+	let coordinator: ReturnType<typeof timelineRefresh<StaffTimeline>> | undefined;
+	let subscription: ReturnType<typeof timelineSubscription> | undefined;
+	const financialHistory = (value: StaffTimeline | null) =>
+		JSON.stringify(
+			value?.items.filter(
+				(item) => item.kind !== 'MESSAGE' && item.kind !== 'COMMUNICATION_ACKNOWLEDGED'
+			) ?? []
+		);
+	const initialHistory = untrack(() =>
+		initialTimeline ? financialHistory(initialTimeline) : null
+	);
+	$effect(() => {
+		const id = inquiry.id;
+		const target = endpoint;
+		const eligible = [
+			'fionas.inquiries.read',
+			'commerce.financial-document.read',
+			'fionas.communications.read'
+		].every((permission) => permissions.includes(permission));
+		return untrack(() => {
+			const refreshes = timelineRefresh<StaffTimeline>({
+				async read(signal) {
+					const response = await fetch(target, {
+						cache: 'no-store',
+						signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
+					});
+					const next: unknown = await response.json();
+					if (!response.ok || !isStaffTimeline(next, id)) throw new Error('Unavailable timeline');
+					return next;
+				},
+				apply(next) {
+					for (const item of next.items) {
+						if (item.kind !== 'MESSAGE') continue;
+						if (item.direction === 'inbound' && !seen.has(item.messageId) && haveMessageBaseline)
+							newMessage = item.messageId;
+						seen.add(item.messageId);
+					}
+					if (next.conversation.state === 'READY' || next.conversation.state === 'EMPTY')
+						haveMessageBaseline = true;
+					if (initialHistory === null || financialHistory(next) !== initialHistory)
+						detailsChanged = true;
+					timeline = next;
+				},
+				busy(value) {
+					refreshing = value;
+				},
+				failure(manual) {
+					liveState = 'Updates paused';
+					if (manual)
+						void announce(
+							'Conversation refresh was unavailable. The previously loaded view is still shown.'
+						);
+				}
+			});
+			coordinator = refreshes;
+			const live = eligible
+				? timelineSubscription({
+						inquiryId: id,
+						invalidate: () => refreshes.request(),
+						state(value) {
+							liveState = value;
+						}
+					})
+				: undefined;
+			subscription = live;
+			const visibility = () => {
+				if (document.visibilityState === 'hidden' || !navigator.onLine) live?.pause();
+				else live?.resume();
+			};
+			visibility();
+			document.addEventListener('visibilitychange', visibility);
+			window.addEventListener('online', visibility);
+			window.addEventListener('offline', visibility);
+			return () => {
+				live?.dispose();
+				refreshes.dispose();
+				document.removeEventListener('visibilitychange', visibility);
+				window.removeEventListener('online', visibility);
+				window.removeEventListener('offline', visibility);
+			};
+		});
+	});
 	async function refresh(event: SubmitEvent) {
 		event.preventDefault();
-		if (refreshing) return;
-		refreshing = true;
-		try {
-			const response = await fetch(endpoint, { cache: 'no-store' });
-			const next: unknown = await response.json();
-			if (!response.ok || !isStaffTimeline(next, inquiry.id)) {
-				await announce(
-					'Conversation refresh was unavailable. The previously loaded view is still shown.'
-				);
-				return;
-			}
-			let detected = false;
-			for (const item of next.items) {
-				if (item.kind === 'MESSAGE' && item.direction === 'inbound' && !seen.has(item.id))
-					if (haveMessageBaseline) {
-						newMessage = item.messageId;
-						detected = true;
-					}
-				seen.add(item.id);
-			}
-			if (next.conversation.state === 'READY') haveMessageBaseline = true;
-			timeline = next;
-			await announce(
-				detected ? `New customer email for ${inquiry.name}.` : 'Conversation refreshed.'
-			);
-		} catch {
-			await announce('Conversation refresh was unavailable. Try again when connected.');
-		} finally {
-			refreshing = false;
-		}
+		if (await coordinator?.request(true)) await announce('Conversation refreshed.');
+		subscription?.resume();
 	}
 </script>
 
@@ -164,15 +226,23 @@
 		<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
 			<h2 class={`m-0 text-(--text-heading) ${capsXs}`}>Conversation</h2>
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+				{#if liveState}<span class="text-[11px] text-(--text-muted)" data-testid="live-status"
+						>{refreshing ? 'Refreshing' : liveState}</span
+					>{/if}
 				{#if counts}<span class="text-[11px] text-(--text-muted)">{counts}</span>{/if}
 				<form method="GET" action={route + '#conversation'} onsubmit={refresh}>
 					{#if returnContext}<input type="hidden" name="from" value={fromQuery} />{/if}
-					<Button type="submit" variant="secondary" size="sm" disabled={refreshing}
-						>{refreshing ? 'Refreshing…' : 'Refresh conversation'}</Button
-					>
+					<Button type="submit" variant="secondary" size="sm">Refresh conversation</Button>
 				</form>
 			</div>
 		</div>
+		{#if detailsChanged}<p class="m-0 text-xs text-(--text-muted)">
+				Request details changed — <button
+					type="button"
+					class="cursor-pointer underline"
+					onclick={() => window.location.reload()}>reload to review</button
+				>. Save unfinished work before reloading.
+			</p>{/if}
 		<p class="m-0 mt-1 text-[15px] leading-[1.35] font-semibold wrap-anywhere">
 			{timeline?.conversation.subject ?? 'Booking correspondence'}
 		</p>
@@ -299,6 +369,7 @@
 		</p>{/if}
 	{#if newMessage}
 		<div
+			role="status"
 			class="toast fixed right-4 bottom-4 z-50 flex w-[340px] max-w-[calc(100vw-32px)] items-start gap-3 rounded-card bg-olive-800 px-4 py-3.5 text-cream-200 shadow-card"
 		>
 			<div class="flex min-w-0 flex-1 flex-col gap-0.5">
