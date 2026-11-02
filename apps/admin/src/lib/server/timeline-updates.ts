@@ -10,6 +10,39 @@ const terminal = () => new Response(null, { status: 204, headers });
 const retryFrame = () => `retry: ${5000 + Math.floor(Math.random() * 2001)}\n\n`;
 const retry = () => new Response(retryFrame(), { headers });
 
+/** Only a complete, bounded commerce error can identify intentional disablement. */
+async function reportsDisabled(body: Response['body'], signal: AbortSignal): Promise<boolean> {
+	if (!body) return false;
+	const reader = body.getReader();
+	const cancel = () => {
+		void reader.cancel().catch(() => {});
+	};
+	signal.addEventListener('abort', cancel, { once: true });
+	const decoder = new TextDecoder();
+	let bytes = 0;
+	let diagnostic = '';
+	try {
+		while (!signal.aborted) {
+			const { value, done } = await reader.read();
+			if (done)
+				return (
+					!signal.aborted &&
+					JSON.parse(diagnostic + decoder.decode())?.code === 'timeline_updates_unavailable'
+				);
+			bytes += value.byteLength;
+			if (bytes > 8192) break;
+			diagnostic += decoder.decode(value, { stream: true });
+		}
+	} catch {
+		// An incomplete body or gateway error page still represents a 503.
+	} finally {
+		signal.removeEventListener('abort', cancel);
+		cancel();
+		reader.releaseLock();
+	}
+	return false;
+}
+
 /** Separate from the JSON transport: deadline covers handshake/error classification, not SSE body. */
 export async function subscribeTimeline(
 	config: BackendConfig,
@@ -48,35 +81,15 @@ export async function subscribeTimeline(
 				}
 			}
 		);
-		if (upstream.status !== 200) {
-			let temporary = false;
-			if (upstream.status === 503) {
-				// Bound error bodies; malformed diagnostics fail closed instead of looping forever.
-				const reader = upstream.body?.getReader();
-				let raw = '';
-				const decoder = new TextDecoder();
-				if (reader) {
-					try {
-						while (true) {
-							const chunk = await reader.read();
-							if (chunk.done) break;
-							raw += decoder.decode(chunk.value, { stream: true });
-							if (raw.length > 8192) {
-								cleanup();
-								return terminal();
-							}
-						}
-					} finally {
-						await reader.cancel().catch(() => {});
-					}
-				}
-				// Empty 503s are common ingress shutdown responses. 500/502 are deliberately
-				// terminal: this contract supplies no reliable transient classification for them.
-				const code: unknown = raw ? JSON.parse(raw)?.code : null;
-				temporary = !raw || (typeof code === 'string' && code !== 'timeline_updates_unavailable');
-			} else await upstream.body?.cancel();
+		if (upstream.status === 503) {
+			const disabled = await reportsDisabled(upstream.body, abort.signal);
 			cleanup();
-			return temporary ? retry() : terminal();
+			return disabled || signal.aborted ? terminal() : retry();
+		}
+		if (upstream.status !== 200) {
+			await upstream.body?.cancel();
+			cleanup();
+			return terminal();
 		}
 		if (
 			!/^text\/event-stream(?:\s*;\s*charset\s*=\s*utf-8)?\s*$/i.test(
@@ -119,9 +132,9 @@ export async function subscribeTimeline(
 			}),
 			{ headers }
 		);
-	} catch (error) {
+	} catch {
 		cleanup();
-		if (signal.aborted || error instanceof SyntaxError) return terminal();
+		if (signal.aborted) return terminal();
 		return retry();
 	}
 }

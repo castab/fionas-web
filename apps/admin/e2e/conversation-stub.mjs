@@ -113,7 +113,10 @@ export async function conversationRoute(
 			].every((p) => session.permissions.includes(p))
 		)
 			error(403, 'forbidden');
-		else if (state.updates === 'temporary') error(503, 'unavailable');
+		else if (state.updates === 'gateway') {
+			res.writeHead(503, { 'content-type': 'text/html' });
+			res.end('<html>PRIVATE gateway outage</html>');
+		} else if (state.updates === 'temporary') error(503, 'unavailable');
 		else if (['401', '403', '404'].includes(state.updates)) error(Number(state.updates), 'refused');
 		else if (!['live', 'silent'].includes(state.updates))
 			error(503, 'timeline_updates_unavailable');

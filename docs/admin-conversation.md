@@ -187,8 +187,10 @@ body has no whole-response timeout. Downstream cancellation aborts commerce. EOF
 ends cleanly, allowing native reconnection without invented events or diagnostics.
 
 Temporary network failures/timeouts and temporary 503s produce a short 200 SSE retry placeholder,
-with a uniformly jittered 5–7 second retry. It contains no event and never refreshes history. Disabled
-503 `timeline_updates_unavailable`, 400/401/403/404, redirects, missing bodies, malformed content and
+with a uniformly jittered 5–7 second retry. It contains no event and never refreshes history. A 503
+is retryable even with an empty, HTML, plain-text, malformed or oversized diagnostic body. Only a
+complete JSON error with code `timeline_updates_unavailable` identifies a disabled subscription.
+That disabled 503, 400/401/403/404, redirects, missing or malformed successful streams and
 unclassified statuses terminate with 204. 500/502 are terminal because the current contract provides
 no reliable transient classifier for them. Error-body classification is bounded to 8 KiB; private
 error content never reaches the browser. Healthy commerce streams replace the initial retry floor
@@ -216,7 +218,9 @@ revisions, govern the existing persistent inbound-email toast. Initial hydration
 
 The composer remains mounted; its draft, immutable original expectation/key and UNKNOWN recovery
 are untouched. Live updates never send, reconcile or acknowledge. Keyed native disclosures retain
-open state. Changes to authoritative non-communication history mark the rest of the workspace
+open state. The initial timeline supplies the financial and lifecycle history baseline. If it was
+unavailable, the first validated refresh establishes the baseline without raising a warning.
+Subsequent changes to authoritative non-communication history mark the rest of the workspace
 potentially stale with **Request details changed — reload to review**. This is an explicit full reload;
 staff must preserve unfinished work first. No automatic page invalidation replaces financial reviews,
 editors or mutation tokens. Timeline history alone cannot detect changes that commerce does not

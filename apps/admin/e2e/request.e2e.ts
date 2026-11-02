@@ -82,12 +82,14 @@ test('dashboard navigation renders the original request, financial facts and cur
 	await expect(page.getByLabel('Request lifecycle').locator('[aria-current="step"]')).toHaveText(
 		'Requested'
 	);
+	await expect(page.getByTestId('live-status')).toHaveText('Updates paused');
 	const after = await session(context);
 	expect(after.requestReads - before.requestReads).toBe(1);
 	// Catalog choices are read only once the builder opens.
 	expect(after.readPaths.slice(before.readPaths.length)).toEqual([
 		'/auth/me',
-		`/staff/requests/${mayaId}`
+		`/staff/requests/${mayaId}`,
+		`/staff/requests/${mayaId}/updates`
 	]);
 	expect(browserUrls.some((url) => url.startsWith(stubUrl))).toBe(false);
 	const response = await page.reload();

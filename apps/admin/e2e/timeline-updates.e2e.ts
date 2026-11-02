@@ -75,41 +75,50 @@ test('live history preserves composer, disclosures and workspace; disconnect rel
 	await expect.poll(async () => (await conversation(context)).activeStreams).toBe(0);
 });
 
-test('placeholder does not refresh; real hook permits outage recovery without login redirect', async ({
-	page,
-	context
-}) => {
-	await signIn(page);
-	await conversation(context, { updates: 'temporary' });
-	await page.goto(route);
-	await expect.poll(async () => (await conversation(context)).subscriptions).toBe(1);
-	const reads = (await conversation(context)).timelineReads;
-	await conversation(context, { authUnavailable: true });
-	// Real HTTP request passes SvelteKit routing and hooks while /auth/me is failing.
-	const result = await page.evaluate(async (path) => {
-		const response = await fetch(path, { redirect: 'manual' });
-		return {
-			status: response.status,
-			body: await response.text(),
-			type: response.headers.get('content-type')
-		};
-	}, `${route}/updates`);
-	expect(result.status).toBe(200);
-	expect(result.type).toContain('text/event-stream');
-	expect(result.body).toMatch(/^retry: [567]\d{3}\n\n$/);
-	await expect
-		.poll(async () => (await conversation(context)).subscriptions, { timeout: 15000 })
-		.toBeGreaterThanOrEqual(3);
-	expect((await conversation(context)).timelineReads).toBe(reads);
-	await conversation(context, {
-		authUnavailable: false,
-		updates: 'live',
-		inbound: 'Recovered after outage'
+for (const outage of ['temporary', 'gateway'])
+	test(`${outage} placeholder does not refresh; real hook permits outage recovery without login redirect`, async ({
+		page,
+		context
+	}) => {
+		await signIn(page);
+		await conversation(context, { updates: outage });
+		await page.goto(route);
+		await expect.poll(async () => (await conversation(context)).subscriptions).toBe(1);
+		const reads = (await conversation(context)).timelineReads;
+		await conversation(context, { authUnavailable: true });
+		// Real HTTP request passes SvelteKit routing and hooks while /auth/me is failing.
+		const result = await page.evaluate(async (path) => {
+			const response = await fetch(path, { redirect: 'manual' });
+			return {
+				status: response.status,
+				body: await response.text(),
+				type: response.headers.get('content-type')
+			};
+		}, `${route}/updates`);
+		expect(result.status).toBe(200);
+		expect(result.type).toContain('text/event-stream');
+		expect(result.body).toMatch(/^retry: [567]\d{3}\n\n$/);
+		await expect
+			.poll(async () => (await conversation(context)).subscriptions, { timeout: 15000 })
+			.toBeGreaterThanOrEqual(3);
+		expect((await conversation(context)).timelineReads).toBe(reads);
+		await conversation(context, {
+			authUnavailable: false,
+			updates: 'live',
+			inbound: 'Recovered after outage'
+		});
+		await expect(page.getByTestId('live-status')).toHaveText('Live', { timeout: 15000 });
+		await expect(page.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
+		await expect(page).toHaveURL(route);
+		await conversation(context, { inbound: 'After reconnection', notify: true });
+		await expect(
+			page
+				.getByTestId('conversation')
+				.getByText('After reconnection', { exact: true })
+				.filter({ visible: true })
+				.first()
+		).toBeVisible();
 	});
-	await expect(page.getByTestId('live-status')).toHaveText('Live', { timeout: 15000 });
-	await expect(page.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
-	await expect(page).toHaveURL(route);
-});
 
 for (const updates of ['disabled', '401', '403', '404']) {
 	test(`terminal ${updates} stops native reconnection and keeps manual refresh`, async ({
@@ -220,4 +229,36 @@ test('financial editor and its reviewed token survive live financial history', a
 	);
 	await expect(page.locator('input[name="reviewToken"]')).toHaveValue(token);
 	await expect(page.getByTestId('quote-builder')).toBeVisible();
+});
+
+test('first recovered history establishes the workspace baseline', async ({ page, context }) => {
+	await signIn(page);
+	await conversation(context, { updates: 'silent', mode: 'timeline-error' });
+	await page.goto(route);
+	await expect.poll(async () => (await conversation(context)).activeStreams).toBe(1);
+	const card = page.getByTestId('conversation');
+	const warning = card.getByText('Request details changed', { exact: false });
+	const quote = card.getByText('Quote v2 published', { exact: true });
+	await expect(quote).toHaveCount(0);
+	await conversation(context, { mode: 'accepted', notify: true });
+	await expect(quote).toBeVisible();
+	await expect(warning).toHaveCount(0);
+	await conversation(context, { inbound: 'After baseline', notify: true });
+	await expect(card.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
+	await expect(warning).toHaveCount(0);
+	const history = (await conversation(context)).timeline;
+	const milestone = milestoneFixture().items;
+	history.items.push(milestone.find((i) => i.kind === 'COMMUNICATION_ACKNOWLEDGED'));
+	await conversation(context, { timeline: history, notify: true });
+	await expect(card.getByText('Communication marked as read', { exact: true })).toBeVisible();
+	await expect(warning).toHaveCount(0);
+	history.items.push(milestone.find((i) => i.kind === 'INVOICE_AMENDED'));
+	await conversation(context, { timeline: history, notify: true });
+	await expect(warning).toBeVisible();
+	await card.getByRole('button', { name: 'Refresh conversation' }).click();
+	await expect(card.getByText('Conversation refreshed.', { exact: true })).toBeVisible();
+	await expect(warning).toBeVisible();
+	await page.reload();
+	await expect(quote).toBeVisible();
+	await expect(warning).toHaveCount(0);
 });

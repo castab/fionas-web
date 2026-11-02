@@ -136,9 +136,7 @@
 				(item) => item.kind !== 'MESSAGE' && item.kind !== 'COMMUNICATION_ACKNOWLEDGED'
 			) ?? []
 		);
-	const initialHistory = untrack(() =>
-		initialTimeline ? financialHistory(initialTimeline) : null
-	);
+	let historyBaseline = untrack(() => (initialTimeline ? financialHistory(initialTimeline) : null));
 	$effect(() => {
 		const id = inquiry.id;
 		const target = endpoint;
@@ -167,8 +165,9 @@
 					}
 					if (next.conversation.state === 'READY' || next.conversation.state === 'EMPTY')
 						haveMessageBaseline = true;
-					if (initialHistory === null || financialHistory(next) !== initialHistory)
-						detailsChanged = true;
+					const history = financialHistory(next);
+					historyBaseline ??= history;
+					if (history !== historyBaseline) detailsChanged = true;
 					timeline = next;
 				},
 				busy(value) {
