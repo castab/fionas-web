@@ -150,9 +150,9 @@ not overlap, and failed refreshes keep the previously displayed view with explic
 Keyed message components keep disclosure choices and the composer retains its original intent.
 
 There is no periodic polling: full timeline reads may fetch all provider history. New inbound IDs
-observed by a successful manual refresh produce one persistent, dismissible notification naming the
+observed by a successful manual or live refresh produce one persistent, dismissible notification naming the
 booking and linking/focusing the new message. Historical messages on initial load do not notify.
-This works only in the active workspace. Global notifications, cheap change signals, SSE, HTML,
+This works only in the active workspace. Global notifications, HTML,
 attachments and automatic email delivery are intentionally absent. A trustworthy timeline head/ETag
 and provider send-key lookup are small upstream improvements for later iterations.
 
@@ -168,3 +168,83 @@ permissions, refresh preservation, attention and uncertain reconciliation. Enhan
 cover Mark as read being withheld under FORBIDDEN, UNAVAILABLE and provider outage, refusal of an
 outage that starts after loading, refusal of crafted posts, draft survival across Mark as read, and
 fail-closed handling of a pointer the server never issued. Two-hour expiry is covered by unit tests.
+
+## Live timeline updates
+
+Native EventSource connects to `/requests/{inquiryId}/updates` on the admin origin. The server-only
+`timeline-updates.ts` transport forwards the staff Cookie, trusted `backendConfig` Origin and SSE
+Accept to commerce `/staff/requests/{inquiryId}/updates`. No SERVICE token, browser-selected headers
+or Last-Event-ID are forwarded. The exact GET route bypasses the hook's `/auth/me` lookup and login
+redirect; the actual commerce handshake authenticates and authorizes every subscription. Missing
+cookies and malformed UUIDs terminate locally; commerce remains the permission authority. Other
+page/form authentication is unchanged.
+
+A successful response streams bytes unchanged, with an initial BFF retry directive to cover admission
+ending before commerce sends its own. Framing, IDs, comments and ordering are preserved. Headers are
+`text/event-stream; charset=utf-8`, `Cache-Control: no-store, no-transform`, and
+`X-Accel-Buffering: no`. Only the handshake/error classification has an eight-second deadline; the
+body has no whole-response timeout. Downstream cancellation aborts commerce. EOF or body failure
+ends cleanly, allowing native reconnection without invented events or diagnostics.
+
+Temporary network failures/timeouts and temporary 503s produce a short 200 SSE retry placeholder,
+with a uniformly jittered 5–7 second retry. It contains no event and never refreshes history. A 503
+is retryable even with an empty, HTML, plain-text, malformed or oversized diagnostic body. Only a
+complete JSON error with code `timeline_updates_unavailable` identifies a disabled subscription.
+That disabled 503, 400/401/403/404, redirects, missing or malformed successful streams and
+unclassified statuses terminate with 204. 500/502 are terminal because the current contract provides
+no reliable transient classifier for them. Error-body classification is bounded to 8 KiB; private
+error content never reaches the browser. Healthy commerce streams replace the initial retry floor
+with their 3000ms directive. Their normal ~60-second termination is expected.
+
+One per-card controller connects only with inquiry, financial-document and communications read
+permissions; send/acknowledge permissions are not required. It closes on destruction, hidden pages
+and offline transitions, resuming on visible/online transitions unless the browser reported CLOSED
+(terminal). Native EventSource owns retries. Two minutes without successful synchronization pauses
+the source; manual Refresh conversation or a visible/online transition can resume that budget.
+Terminal subscriptions require a fresh page lifecycle after the underlying issue is resolved.
+There is no polling or global connection manager.
+
+Only validated `timeline.changed` data for this inquiry triggers the existing no-store conversation
+read. Revisions are opaque decimal strings, including zero; a repeated revision on a new connection
+still refreshes. Open, comments and placeholders do nothing. Live means a real notification followed
+by a successful authoritative read, not transport-open. The quiet status has no live region to avoid
+announcing routine reconnects. Previously displayed history remains available during failures.
+
+Manual and automatic hints share one serialized refresh loop: bursts coalesce, but a hint during a
+read schedules another read. Reads have a 15-second browser timeout, validate the entire timeline,
+and apply atomically. Disposal aborts reads and suppresses late results. Automatic failures cause no
+focus change, repeated toast or self-retry; a later hint/manual read can recover. Message IDs, not
+revisions, govern the existing persistent inbound-email toast. Initial hydration does not notify.
+
+The composer remains mounted; its draft, immutable original expectation/key and UNKNOWN recovery
+are untouched. Live updates never send, reconcile or acknowledge. Keyed native disclosures retain
+open state. The initial timeline supplies the financial and lifecycle history baseline. If it was
+unavailable, the first validated refresh establishes the baseline without raising a warning.
+Subsequent changes to authoritative non-communication history mark the rest of the workspace
+potentially stale with **Request details changed — reload to review**. This is an explicit full reload;
+staff must preserve unfinished work first. No automatic page invalidation replaces financial reviews,
+editors or mutation tokens. Timeline history alone cannot detect changes that commerce does not
+represent there (for example a service-only amendment); existing expected-version protections remain.
+
+### Deployment prerequisite and verification
+
+Deploy fionas-commerce PR #34, commerce-runtime 0.0.27, V7/V8 migrations and the backend's bounded
+PostgreSQL pool/transaction configuration first. Set **FIONAS_TIMELINE_UPDATES_ENABLED=true on commerce**;
+it defaults false. No new admin environment variable is needed. Complete mixed-version rollout and
+reconnect before relying on financial notifications. Provider changes depend on working commerce
+intake; direct ledger writes outside Fiona operations are not covered. Retain manual refresh.
+
+The installed adapter-node uses incremental Node response writes, backpressure and reader cancellation;
+it does not dynamically compress this endpoint. Local real-stream browser tests cover flushing and
+navigation cleanup. Production ingress has **not** been validated here. For every deployed hop verify:
+
+- Disable SSE buffering, compression, caching and response transformations; retain the response headers.
+- Permit long-lived responses and promptly flush delayed frames, with idle timeouts above the ~20s
+  heartbeat (at least 30s; a 90s+ response allowance accommodates the normal 60s stream).
+- Disconnect a browser and verify upstream subscriber release; keep ordinary requests responsive
+  while streams are open. Capacity is 256 per instance / 16 per inquiry.
+- Confirm native reconnection across the normal lifetime, transient outages and deployment; confirm
+  disabled/forbidden streams stop. Follow commerce's at-least-100s shutdown grace guidance.
+
+Backend reference: https://github.com/castab/fionas-commerce/blob/main/docs/staff-timeline-updates.md.
+Retry rationale and Chromium evidence: https://github.com/castab/fionas-ui/pull/238.

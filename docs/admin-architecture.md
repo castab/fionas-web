@@ -162,9 +162,22 @@ Quote + deposit + proposal issuance, the Quote revision and Invoice amendment pr
 session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
 Request projections and atomic proposal mutations also have session-isolated state, including stale and
 post-commit failure scenarios.
-Playwright starts it beside the admin preview. The real login is
+Playwright starts it beside the built Node adapter. The real login is
 rate limited per IP, so don't point automated tests at it.
 
 ## Conversation boundary
 
 See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. Only the staff reply route accepts a validated `idempotencyKey` and `conversationReply` timeout policy (100 seconds, no retry); all other calls keep eight seconds. No arbitrary browser headers pass through. Neither admin tier accesses Resend directly.
+
+## Request-scoped SSE exception
+
+`GET /requests/{inquiryId}/updates` proxies `/staff/requests/{inquiryId}/updates` through the narrow
+server-only `timeline-updates.ts` transport, reusing `backendConfig`, staff Cookie and trusted Origin.
+The JSON `request()` helper retains its existing behavior. The exact streaming GET route skips
+`/auth/me` and delegates admission to commerce, preventing outage-to-login redirects for EventSource.
+It cannot read business data or bypass backend permissions. All other hooks and authentication
+behavior remain unchanged. Successful bodies stream incrementally and cancel upstream on browser
+release. Retryable 200 placeholders differ from terminal 204s; only real timeline notifications cause
+an authoritative conversation read. No page-level invalidation or browser commerce connection exists.
+See [Live timeline updates](admin-conversation.md#live-timeline-updates) for classification, lifecycle,
+composer safety, backend enablement and the deployment proxy verification checklist.
