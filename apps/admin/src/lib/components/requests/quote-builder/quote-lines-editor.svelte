@@ -183,7 +183,7 @@
 			{@const error = errors[`line-${i}`]}
 			{@const signed = signedLayout(row)}
 			{@const per = !hydrated || perUnit(row)}
-			<li data-testid="quote-line-editor" data-line={id}>
+			<li data-testid="quote-line-editor" data-line={id} data-line-error={`line-${i}`}>
 				<input type="hidden" name="lineIdentity" value={identity(row)} />
 				{#if hydrated && !isOpen}
 					<button

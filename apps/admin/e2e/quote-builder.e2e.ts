@@ -214,3 +214,92 @@ test('an unavailable review preserves the draft for an explicit retry', async ({
 	await reviewQuote(page);
 	expect((await session(context)).proposalAttempts).toHaveLength(0);
 });
+
+test('correcting a reviewed line clears its error and leaves unrelated deposit feedback intact', async ({
+	page
+}) => {
+	await openBuilder(page);
+	const line = page.getByTestId('quote-line-editor').first();
+	await line.getByRole('button', { name: /^Edit line 1,/ }).click();
+	const amount = line.getByRole('textbox', { name: 'Amount', exact: true });
+	await amount.fill('invalid');
+	const guests = page.getByLabel('Guests', { exact: true });
+	await guests.fill('0');
+	await page.getByRole('radio', { name: 'Fixed amount' }).check();
+	const deposit = page.getByLabel('Deposit amount (USD)');
+	await deposit.fill('0');
+	let reviews = 0;
+	page.on('request', (request) => {
+		if (request.method() === 'POST' && request.url().includes('/previewQuote')) reviews++;
+	});
+	await page.getByRole('button', { name: 'Review quote', exact: true }).click();
+	await expect(line.getByRole('alert')).toContainText('exact amount');
+	await expect(deposit).toHaveAttribute('aria-invalid', 'true');
+	await amount.fill('125.00');
+	await expect(line.getByRole('alert')).toHaveCount(0);
+	await expect(page.getByText(/Check the description, exact amount/)).toHaveCount(0);
+	await expect(amount).toBeFocused();
+	await expect(amount).toHaveJSProperty('selectionStart', 6);
+	await expect(
+		page
+			.getByRole('alert')
+			.filter({ hasText: 'Check the approved service description and counts.' })
+	).toBeVisible();
+	await guests.fill('40');
+	await expect(deposit).toHaveAttribute('aria-invalid', 'true');
+	await page.getByRole('radio', { name: 'Custom percentage' }).check();
+	await expect(deposit).not.toHaveAttribute('aria-invalid', 'true');
+	await expect(page.getByRole('alert')).toHaveCount(0);
+	const percentage = page.getByLabel('Deposit percentage', { exact: true });
+	await percentage.fill('101');
+	await page.getByRole('button', { name: 'Review quote', exact: true }).click();
+	await expect(percentage).toHaveAttribute('aria-invalid', 'true');
+	await percentage.fill('25');
+	await expect(percentage).not.toHaveAttribute('aria-invalid', 'true');
+	await expect(issueButton(page)).toBeDisabled();
+	expect(reviews).toBe(2);
+	await previewThenIssue(page);
+	await expect(page).toHaveURL(route);
+	expect(reviews).toBe(3);
+});
+
+test('moving a line discards position-indexed feedback and late validation cannot restore it', async ({
+	page
+}) => {
+	await openBuilder(page);
+	const rows = page.getByTestId('quote-line-editor');
+	await rows
+		.first()
+		.getByRole('button', { name: /^Edit line 1,/ })
+		.click();
+	await rows.first().getByRole('textbox', { name: 'Amount', exact: true }).fill('invalid');
+	const review = page.getByRole('button', { name: 'Review quote', exact: true });
+	await review.click();
+	await expect(rows.first().getByRole('alert')).toContainText('exact amount');
+	await rows.first().getByRole('button', { name: 'Move down' }).click();
+	await expect(page.getByRole('alert')).toHaveCount(0);
+	const gate = Promise.withResolvers<void>();
+	await page.route(
+		'**/*/previewQuote',
+		async (intercepted) => {
+			const response = await intercepted.fetch();
+			await gate.promise;
+			await intercepted.fulfill({ response });
+		},
+		{ times: 1 }
+	);
+	await review.click();
+	const amount = rows.nth(1).getByRole('textbox', { name: 'Amount', exact: true });
+	try {
+		await expect(page.getByRole('button', { name: 'Reviewing…' })).toBeDisabled();
+		await amount.fill('105.00');
+	} finally {
+		gate.resolve();
+	}
+	await expect(review).toBeEnabled();
+	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(amount).toBeFocused();
+	await expect(amount).toHaveValue('105.00');
+	await expect(issueButton(page)).toBeDisabled();
+	await reviewQuote(page);
+});

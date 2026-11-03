@@ -324,3 +324,35 @@ test.describe('native review', () => {
 		});
 	});
 });
+
+test('only committed selection edits invalidate the reviewed quote', async ({ page, context }) => {
+	await signIn(page);
+	await openMaya(page);
+	await openBuilder(page);
+	await reviewQuote(page);
+	const token = page.locator('[name="reviewToken"]');
+	const verifiedToken = await token.inputValue();
+	expect(verifiedToken).not.toBe('');
+	const add = editor(page).getByRole('button', { name: '+ Add selection', exact: true });
+	const label = editor(page).getByLabel('Selection', { exact: true });
+	await add.click();
+	await label.fill('Candied ginger');
+	await editor(page)
+		.getByLabel(/^Category/)
+		.fill('Toppings');
+	await expect(issueButton(page)).toBeEnabled();
+	await editor(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(token).toHaveValue(verifiedToken);
+	await expect(issueButton(page)).toBeEnabled();
+	await add.click();
+	await label.fill('Candied ginger');
+	await editor(page).getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(token).toHaveValue('');
+	await expect(issueButton(page)).toBeDisabled();
+	expect((await session(context)).previewAttempts).toHaveLength(1);
+	await reviewQuote(page);
+	await editor(page).getByRole('button', { name: 'Remove Candied ginger', exact: true }).click();
+	await expect(issueButton(page)).toBeDisabled();
+	await expect(token).toHaveValue('');
+	expect((await session(context)).previewAttempts).toHaveLength(2);
+});

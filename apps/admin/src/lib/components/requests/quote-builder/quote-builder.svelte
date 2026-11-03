@@ -89,7 +89,30 @@
 	const accepted = $derived(
 		request.depositRequirement.state === 'ACTIVE' ? request.depositRequirement : null
 	);
-	function changed() {
+	function fieldChanged(event: Event) {
+		const field = event.target;
+		if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement))
+			return changed();
+		const row = field.closest<HTMLElement>('[data-line-error]')?.dataset.lineError;
+		if (row) return changed(row, field.name === 'note');
+		if (field.name.startsWith('deposit')) return changed('deposit');
+		if (['planDescription', 'planGuestCount', 'clearPlan'].includes(field.name))
+			return changed('service');
+		changed();
+	}
+	function changed(scope?: string, affectsService = scope === 'lines' || scope === 'selections') {
+		// Structural edits can shift every indexed error in that section. Service-plan
+		// validation also depends on the selected items and the notes on financial lines.
+		for (const key of Object.keys(fieldErrors)) {
+			if (
+				!scope ||
+				key === scope ||
+				(scope === 'lines' && key.startsWith('line-')) ||
+				(scope === 'selections' && key.startsWith('selection-')) ||
+				(key === 'service' && affectsService)
+			)
+				delete fieldErrors[key];
+		}
 		draftRevision++;
 		reviewed = null;
 		reviewStale = false;
@@ -135,8 +158,8 @@
 		method="POST"
 		action={workspaceAction(returnContext, actions.preview, panel)}
 		class="flex flex-col gap-5"
-		oninput={changed}
-		onchange={changed}
+		oninput={fieldChanged}
+		onchange={fieldChanged}
 		use:enhance={({ submitter, controller, cancel }) => {
 			const issuing =
 				submitter?.getAttribute('formaction')?.includes(`/${actions.publish}`) ?? false;
@@ -206,7 +229,7 @@
 				errors={fieldErrors}
 				guestCount={values.guestCount}
 				{hydrated}
-				{changed}
+				changed={() => changed('lines')}
 			/>
 			<div class="flex flex-col gap-3 border-t border-(--border-soft) pt-[18px]">
 				<h3 class={panelCaps}>What you’ll serve</h3>
@@ -238,7 +261,7 @@
 					bind:items={values.items}
 					errors={fieldErrors}
 					{hydrated}
-					{changed}
+					changed={() => changed('selections')}
 				/>
 			</div>
 			{#if editsDeposit(mode) && values.deposit}
