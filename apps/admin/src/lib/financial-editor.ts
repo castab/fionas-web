@@ -52,7 +52,7 @@ export type EditorCopy = {
 	publish: string;
 	/** What the Publish button is called in a sentence ("click Issue quote again"). */
 	publishVerb: string;
-	pendingPreview: string;
+	review: string;
 	/** The preview's pill: what is about to exist and that it does not yet. */
 	notYet: string;
 };
@@ -65,7 +65,7 @@ export const editorCopy: Record<FinancialEditorMode, EditorCopy> = {
 		previewHeading: 'Quote preview',
 		publish: 'Issue quote',
 		publishVerb: 'Issue quote',
-		pendingPreview: 'Preview required for current edits.',
+		review: 'Review quote',
 		notYet: 'not issued yet'
 	},
 	QUOTE_REVISION: {
@@ -76,7 +76,7 @@ export const editorCopy: Record<FinancialEditorMode, EditorCopy> = {
 		previewHeading: 'Revised quote preview',
 		publish: 'Publish revised quote',
 		publishVerb: 'Publish revised quote',
-		pendingPreview: 'Preview required for current edits.',
+		review: 'Review changes',
 		notYet: 'not published yet'
 	},
 	INVOICE_AMENDMENT: {
@@ -87,7 +87,7 @@ export const editorCopy: Record<FinancialEditorMode, EditorCopy> = {
 		previewHeading: 'Invoice amendment preview',
 		publish: 'Approve invoice amendment',
 		publishVerb: 'Approve invoice amendment',
-		pendingPreview: 'Preview required for current edits.',
+		review: 'Review amendment',
 		notYet: 'not approved yet'
 	}
 };

@@ -3,7 +3,7 @@ import {
 	signIn,
 	openMaya,
 	openBuilder,
-	waitForPreview,
+	reviewQuote,
 	issueButton,
 	session,
 	route
@@ -106,7 +106,7 @@ test.describe('native selections', () => {
 		await signIn(page);
 		await openMaya(page);
 		const original = (await session(context)).requests[mayaId].inquiry.requestedService;
-		await openBuilder(page, true);
+		await openBuilder(page);
 		// The draft starts as the customer's picks, categories, order and duplicates intact.
 		expect(await editorGroups(page)).toEqual([
 			['Soft serve', ['Vanilla', 'Strawberry']],
@@ -128,7 +128,7 @@ test.describe('native selections', () => {
 		// Move it above the uncategorized candles.
 		await action(page, 'Move up', 7).click();
 		await expect(row(page, 6)).toContainText('Custom cups');
-		await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+		await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 
 		const proposed: [string, string[]][] = [
 			['Party specials', ['Birthday flavor']],
@@ -196,9 +196,7 @@ test('selections are chips: remove one, add others under categories, then issue 
 	]);
 	await expect(editor(page).getByTestId('selection-chip')).toHaveCount(7);
 	await editor(page).getByRole('button', { name: 'Remove Vanilla', exact: true }).click();
-	await waitForPreview(page);
 	await editor(page).getByRole('button', { name: 'Remove Strawberry', exact: true }).click();
-	await waitForPreview(page);
 	await editor(page).getByRole('button', { name: '+ Add selection', exact: true }).click();
 	const label = editor(page).getByLabel('Selection', { exact: true });
 	const category = editor(page).getByLabel(/^Category/);
@@ -235,7 +233,7 @@ test('selections are chips: remove one, add others under categories, then issue 
 	await expect(inline).toHaveValue('');
 	await editor(page).screenshot({ path: testInfo.outputPath('selection-inline-add.png') });
 	await inline.press('Escape');
-	await waitForPreview(page);
+	await reviewQuote(page);
 	await editor(page).screenshot({ path: testInfo.outputPath('selection-chips.png') });
 
 	const proposed: [string, string[]][] = [
@@ -278,6 +276,7 @@ for (const field of ['selectionGroup', 'selectionKey'])
 		await signIn(page);
 		await openMaya(page);
 		await openBuilder(page);
+		await reviewQuote(page);
 		await page
 			.locator(`[name^="${field}:"]`)
 			.first()
@@ -286,7 +285,6 @@ for (const field of ['selectionGroup', 'selectionKey'])
 			});
 		await issueButton(page).click();
 		await expect(page.getByText('The quote changed since you reviewed it')).toBeVisible();
-		await waitForPreview(page);
 		expect((await session(context)).proposalAttempts).toHaveLength(0);
 		await issueButton(page).click();
 		await expect(page).toHaveURL(route);
@@ -305,8 +303,8 @@ test.describe('native review', () => {
 	}) => {
 		await signIn(page);
 		await openMaya(page);
-		await openBuilder(page, true);
-		await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+		await openBuilder(page);
+		await reviewQuote(page);
 		await expect(page.getByTestId('preview-service-plan')).toBeVisible();
 		await expand(page, 1);
 		await page.getByLabel('Selection 1 category', { exact: true }).fill('Changed after review');
@@ -325,4 +323,36 @@ test.describe('native review', () => {
 			key: 'vanilla'
 		});
 	});
+});
+
+test('only committed selection edits invalidate the reviewed quote', async ({ page, context }) => {
+	await signIn(page);
+	await openMaya(page);
+	await openBuilder(page);
+	await reviewQuote(page);
+	const token = page.locator('[name="reviewToken"]');
+	const verifiedToken = await token.inputValue();
+	expect(verifiedToken).not.toBe('');
+	const add = editor(page).getByRole('button', { name: '+ Add selection', exact: true });
+	const label = editor(page).getByLabel('Selection', { exact: true });
+	await add.click();
+	await label.fill('Candied ginger');
+	await editor(page)
+		.getByLabel(/^Category/)
+		.fill('Toppings');
+	await expect(issueButton(page)).toBeEnabled();
+	await editor(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(token).toHaveValue(verifiedToken);
+	await expect(issueButton(page)).toBeEnabled();
+	await add.click();
+	await label.fill('Candied ginger');
+	await editor(page).getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(token).toHaveValue('');
+	await expect(issueButton(page)).toBeDisabled();
+	expect((await session(context)).previewAttempts).toHaveLength(1);
+	await reviewQuote(page);
+	await editor(page).getByRole('button', { name: 'Remove Candied ginger', exact: true }).click();
+	await expect(issueButton(page)).toBeDisabled();
+	await expect(token).toHaveValue('');
+	expect((await session(context)).previewAttempts).toHaveLength(2);
 });

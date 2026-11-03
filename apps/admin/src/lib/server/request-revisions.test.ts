@@ -171,13 +171,9 @@ describe('opening the editor', () => {
 		});
 		const result = (await load(pageEvent(search)))!;
 		expect(result).toHaveProperty('editorMode', mode);
-		if (mode !== 'INITIAL_QUOTE') {
-			// A revision opens on the unchanged current state, which would be a no-op; nothing previews.
-			expect(previewInquiryQuote).not.toHaveBeenCalled();
-			expect(previewInquiryQuoteRevision).not.toHaveBeenCalled();
-			expect(previewInquiryInvoiceRevision).not.toHaveBeenCalled();
-			expect(result).toHaveProperty('initialQuote', null);
-		}
+		expect(previewInquiryQuote).not.toHaveBeenCalled();
+		expect(previewInquiryQuoteRevision).not.toHaveBeenCalled();
+		expect(previewInquiryInvoiceRevision).not.toHaveBeenCalled();
 	});
 	it('opens nothing for a flag the lifecycle does not offer, or without authority', async () => {
 		expect(await load(pageEvent('?quote'))).toHaveProperty('editorMode', null);

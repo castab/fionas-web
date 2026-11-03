@@ -30,7 +30,7 @@
 		result,
 		blocked = false,
 		focusOnOpen = false,
-		pending = $bindable(false),
+		pending: mutationPending = $bindable(false),
 		onReviewRequired
 	}: {
 		request: CurrentStaffRequest;
@@ -51,26 +51,36 @@
 	const panel = $derived(editorPanels[mode]);
 	const seed = untrack(() => result);
 	let values = $state(untrack(() => seed?.quoteValues ?? editorValues(request, mode)));
-	let preview = $state(seed?.preview ?? null);
+	function verified(result: QuoteActionResult | null) {
+		if (
+			!result?.preview ||
+			!result.quoteValues?.reviewToken ||
+			!result.quoteValues.reviewedFingerprint
+		)
+			return null;
+		const { reviewToken, reviewedFingerprint } = result.quoteValues;
+		return { preview: result.preview, reviewToken, reviewedFingerprint };
+	}
+	let reviewed = $state(verified(seed));
+	let reviewing = $state(false);
+	let draftRevision = 0;
 	let error = $state(seed?.quoteError ?? '');
+	let errorChoice = $state(seed?.quoteValues?.deposit?.depositChoice);
 	let fieldErrors = $state(seed?.fieldErrors ?? {});
 	let reviewRequired = $state(seed?.reviewRequired ?? false);
 	let reviewStale = $state(seed?.notices?.reviewStale ?? false);
 	let noChange = $state(seed?.notices?.noChange ?? false);
-	let dirty = $state(false);
+
 	let hydrated = $state(false);
-	let formElement = $state<HTMLFormElement>();
+
 	let heading = $state<HTMLElement>();
-	// Bound to the Button primitive's `ref`, whose fallback is null (undefined is rejected).
-	let previewButton = $state<HTMLButtonElement | null>(null);
-	let timer: ReturnType<typeof setTimeout>;
 	let sequence = 0;
 	let previewController: AbortController | undefined;
 	onMount(() => {
 		hydrated = true;
 		if (focusOnOpen) heading?.focus();
 		return () => {
-			clearTimeout(timer);
+			sequence++;
 			previewController?.abort();
 		};
 	});
@@ -79,20 +89,35 @@
 	const accepted = $derived(
 		request.depositRequirement.state === 'ACTIVE' ? request.depositRequirement : null
 	);
-	function changed() {
-		dirty = true;
-		error = '';
-		noChange = false;
-		clearTimeout(timer);
-		if (hydrated && !pending && !reviewRequired)
-			timer = setTimeout(() => formElement?.requestSubmit(previewButton), 300);
+	function fieldChanged(event: Event) {
+		const field = event.target;
+		if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement))
+			return changed();
+		const row = field.closest<HTMLElement>('[data-line-error]')?.dataset.lineError;
+		if (row) return changed(row, field.name === 'note');
+		if (field.name.startsWith('deposit')) return changed('deposit');
+		if (['planDescription', 'planGuestCount', 'clearPlan'].includes(field.name))
+			return changed('service');
+		changed();
 	}
-	/** Marks the review stale while a field is mid-edit, without scheduling a preview. */
-	function editing() {
-		dirty = true;
+	function changed(scope?: string, affectsService = scope === 'lines' || scope === 'selections') {
+		// Structural edits can shift every indexed error in that section. Service-plan
+		// validation also depends on the selected items and the notes on financial lines.
+		for (const key of Object.keys(fieldErrors)) {
+			if (
+				!scope ||
+				key === scope ||
+				(scope === 'lines' && key.startsWith('line-')) ||
+				(scope === 'selections' && key.startsWith('selection-')) ||
+				(key === 'service' && affectsService)
+			)
+				delete fieldErrors[key];
+		}
+		draftRevision++;
+		reviewed = null;
+		reviewStale = false;
 		error = '';
 		noChange = false;
-		clearTimeout(timer);
 	}
 </script>
 
@@ -133,48 +158,60 @@
 		method="POST"
 		action={workspaceAction(returnContext, actions.preview, panel)}
 		class="flex flex-col gap-5"
-		bind:this={formElement}
-		oninput={changed}
-		onchange={changed}
-		use:enhance={({ submitter, controller }) => {
+		oninput={fieldChanged}
+		onchange={fieldChanged}
+		use:enhance={({ submitter, controller, cancel }) => {
 			const issuing =
 				submitter?.getAttribute('formaction')?.includes(`/${actions.publish}`) ?? false;
-			if (!issuing) {
-				previewController?.abort();
+			if (mutationPending || reviewing || blocked || reviewRequired || (issuing && !reviewed)) {
+				cancel();
+				return;
+			}
+			const revision = draftRevision;
+			// enhance has captured the posted credentials. A second publish needs a fresh review.
+			reviewed = null;
+			if (issuing) mutationPending = true;
+			else {
+				reviewing = true;
 				previewController = controller;
 			}
 			const current = ++sequence;
-			pending = true;
 			return async ({ result, update }) => {
 				if (current !== sequence) return;
-				pending = false;
+				if (issuing) mutationPending = false;
+				else reviewing = false;
 				if (result.type === 'redirect') {
 					await update();
 					return;
 				}
 				if (result.type === 'error') {
-					error = 'We couldn’t confirm the response. Reload before publishing.';
+					if (!issuing && revision !== draftRevision) return;
+					error = issuing
+						? 'We couldn’t confirm the response. Reload before publishing.'
+						: 'We couldn’t review these changes. Try again.';
 					reviewRequired = issuing;
 					if (issuing) onReviewRequired();
 					return;
 				}
 				const data = result.data as QuoteActionResult;
-				if (data.quoteValues) values = data.quoteValues;
-				preview = data.preview ?? null;
+				// A genuine conflict still requires reload, even if staff edited during the read.
+				if (revision !== draftRevision && !data.reviewRequired) return;
+				reviewed = revision === draftRevision ? verified(data) : null;
 				error = data.quoteError ?? '';
+				errorChoice = data.quoteValues?.deposit?.depositChoice;
 				fieldErrors = data.fieldErrors ?? {};
 				reviewRequired = data.reviewRequired ?? false;
 				reviewStale = data.notices?.reviewStale ?? false;
 				noChange = data.notices?.noChange ?? false;
-				dirty = !data.preview;
+
 				if (reviewRequired) onReviewRequired();
 			};
 		}}
 	>
 		<input type="hidden" name="editorMode" value={values.mode} />
 		<input type="hidden" name="reviewedCurrency" value={values.reviewedCurrency} />
-		<input type="hidden" name="reviewToken" value={values.reviewToken} />
-		<input type="hidden" name="reviewedFingerprint" value={values.reviewedFingerprint} />
+		<input type="hidden" name="reviewToken" value={reviewed?.reviewToken ?? ''} />
+		<input type="hidden" name="reviewedFingerprint" value={reviewed?.reviewedFingerprint ?? ''} />
 		<input type="hidden" name="expectedDepositRevision" value={values.expectedDepositRevision} />
 		<input type="hidden" name="expectedProposalId" value={values.expectedProposalId} />
 		<input type="hidden" name="expectedPlanRevision" value={values.expectedPlanRevision} />
@@ -184,7 +221,7 @@
 				value={values.expectedVersion}
 			/>{/if}
 		<fieldset
-			disabled={blocked || reviewRequired || pending}
+			disabled={blocked || reviewRequired || mutationPending}
 			class="m-0 flex min-w-0 flex-col gap-5 border-0 p-0"
 		>
 			<QuoteLinesEditor
@@ -192,8 +229,7 @@
 				errors={fieldErrors}
 				guestCount={values.guestCount}
 				{hydrated}
-				{changed}
-				{editing}
+				changed={() => changed('lines')}
 			/>
 			<div class="flex flex-col gap-3 border-t border-(--border-soft) pt-[18px]">
 				<h3 class={panelCaps}>What you’ll serve</h3>
@@ -225,7 +261,7 @@
 					bind:items={values.items}
 					errors={fieldErrors}
 					{hydrated}
-					{changed}
+					changed={() => changed('selections')}
 				/>
 			</div>
 			{#if editsDeposit(mode) && values.deposit}
@@ -235,9 +271,9 @@
 					version={request.financial.version}
 					values={values.deposit}
 					errorField={fieldErrors.deposit
-						? values.deposit.depositChoice === 'fixed'
+						? errorChoice === 'fixed'
 							? 'depositAmount'
-							: values.deposit.depositChoice === 'percentage'
+							: errorChoice === 'percentage'
 								? 'depositPercentage'
 								: 'depositChoice'
 						: undefined}
@@ -262,22 +298,26 @@
 				</div>
 			{/if}
 		</fieldset>
-		{#if preview}<EditorPreviewPanel {preview} {request} />{/if}
-		{#if dirty || pending}<p role="status" class="m-0 text-xs text-(--text-muted)">
-				{pending ? 'Updating…' : copy.pendingPreview}
-			</p>{/if}
-		<!-- Update preview stays first in the DOM so Enter in a field previews instead of publishing. -->
+		{#if reviewed}<EditorPreviewPanel
+				preview={reviewed.preview}
+				{request}
+			/>{:else if !reviewRequired}
+			<p role="status" class="m-0 text-xs text-(--text-muted)">
+				Review the current draft before publishing.
+			</p>
+		{/if}
+		<!-- Enter in a field submits for review before publication. -->
 		<div class="flex flex-wrap gap-2.5">
 			<Button
 				type="submit"
 				variant="secondary"
-				bind:ref={previewButton}
-				disabled={blocked || reviewRequired || pending}
-				class="min-h-12 flex-[1_1_140px]">Update preview</Button
+				disabled={blocked || reviewRequired || mutationPending}
+				aria-disabled={reviewing || undefined}
+				class="min-h-12 flex-[1_1_140px]">{reviewing ? 'Reviewing…' : copy.review}</Button
 			><Button
 				type="submit"
 				formaction={workspaceAction(returnContext, actions.publish, panel)}
-				disabled={blocked || reviewRequired || pending || (hydrated && (!preview || dirty))}
+				disabled={blocked || reviewRequired || mutationPending || !reviewed}
 				class="min-h-12 flex-[1.4_1_150px]">{copy.publish}</Button
 			><Button href={route} variant="ghost" class="min-h-12 flex-[1_1_110px]">Cancel</Button>
 		</div>

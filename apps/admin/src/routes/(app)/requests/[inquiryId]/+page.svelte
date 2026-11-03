@@ -420,7 +420,7 @@
 				mode={editorMode}
 				{route}
 				returnContext={data.returnContext}
-				result={builderResult ?? data.initialQuote}
+				result={builderResult}
 				focusOnOpen={!form}
 				blocked={mutationReviewRequired}
 				bind:pending={mutationPending}

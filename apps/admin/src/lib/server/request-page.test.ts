@@ -103,13 +103,14 @@ it('previews posted final lines without another read or a public price book', as
 	expect(body.lines[0].lineItemId).toBe(current.financial.lines[0].id);
 	expect(body).not.toHaveProperty('composition');
 });
-it('opens an authoritative preview with no-store and USER cookie', async () => {
+it('opens an unreviewed editor with no-store and USER cookie', async () => {
 	const e = event() as unknown as { request: Request; setHeaders: ReturnType<typeof vi.fn> };
 	e.request = new Request('https://admin.test', {
 		headers: { cookie: '__Host-fionas_session=staff' }
 	});
 	const result = await load(e as never);
-	expect(result).toHaveProperty('initialQuote.preview');
+	expect(result).toHaveProperty('editorMode', 'INITIAL_QUOTE');
+	expect(previewInquiryQuote).not.toHaveBeenCalled();
 	expect(e.setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	expect(vi.mocked(getStaffRequest).mock.calls[0][2]).toBe('__Host-fionas_session=staff');
 });
@@ -183,7 +184,7 @@ it('refuses to quote a non-USD document: no opening preview and no issuance', as
 	e.request = new Request('https://admin.test', {
 		headers: { cookie: '__Host-fionas_session=staff' }
 	});
-	expect(await load(e as never)).toHaveProperty('initialQuote', null);
+	expect(await load(e as never)).toHaveProperty('editorMode', null);
 	expect(previewInquiryQuote).not.toHaveBeenCalled();
 	expect(await actions!.issueQuote!(event(reviewed.quoteValues))).toHaveProperty('status', 409);
 	expect(issueInquiryProposal).not.toHaveBeenCalled();

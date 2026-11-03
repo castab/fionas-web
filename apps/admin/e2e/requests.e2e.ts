@@ -1,13 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mayaId, sofiaId } from './request-fixture.mjs';
-import {
-	issueButton,
-	previewThenIssue,
-	session,
-	signIn,
-	stubUrl,
-	waitForPreview
-} from './request-helpers.js';
+import { issueButton, session, signIn, stubUrl, reviewQuote } from './request-helpers.js';
 
 const lenaId = '00000000-0000-0000-0000-000000000001';
 const hannahId = '00000000-0000-0000-0000-000000000008';
@@ -399,21 +392,21 @@ for (const native of [false, true]) {
 			const builder = page.getByTestId('quote-builder');
 			if (native) {
 				// A native preview re-renders at its action URL, which still carries the context.
-				await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+				await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 				await expect(page).toHaveURL(`/requests/${mayaId}?quote&${from(listQuery)}&/previewQuote`);
 				await expect(page.getByTestId('quote-deposit')).toContainText('$83');
 				expect(await destination(back(page))).toBe(`/requests?${listQuery}`);
 				expect(await destination(builder.getByRole('link', { name: 'Cancel' }))).toBe(workspace);
 				await issueButton(page).click();
 			} else {
-				await waitForPreview(page);
+				await reviewQuote(page);
 				expect(await destination(back(page))).toBe(`/requests?${listQuery}`);
 				expect(await destination(builder.getByRole('link', { name: 'Cancel' }))).toBe(workspace);
 				const response = page.waitForResponse(
 					(response) =>
 						response.request().method() === 'POST' && response.url().includes('issueQuote')
 				);
-				await previewThenIssue(page);
+				await issueButton(page).click();
 				expect(await (await response).json()).toMatchObject({
 					type: 'redirect',
 					status: 303,
