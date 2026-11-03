@@ -5,6 +5,7 @@ import {
 	openBuilder,
 	openMaya,
 	previewThenIssue,
+	reviewQuote,
 	route,
 	session,
 	signIn,
@@ -121,6 +122,7 @@ test('issues the previewed quote, lands on a fresh Quote and never resubmits on 
 	page.on('request', (request) => browserUrls.push(request.url()));
 	const before = await session(context);
 	await openBuilder(page);
+	await reviewQuote(page);
 	await expect(page.getByTestId('quote-total')).toContainText('$415');
 	await expect(page.getByTestId('quote-deposit')).toContainText('$83');
 	const response = page.waitForResponse(
@@ -157,9 +159,9 @@ test('issues the previewed quote, lands on a fresh Quote and never resubmits on 
 	expect(after.proposalAttempts).toEqual([
 		{ inquiryId: mayaId, body: keptEstimate({ type: 'PERCENTAGE', percentage: '20' }) }
 	]);
-	// The builder opened with its preview already made; nothing else was previewed.
+	// The single explicit review is the only preview.
 	expect(after.previewAttempts).toHaveLength(1);
-	// Builder load (with its preview), the issue action's authoritative read and the confirming GET.
+	// Builder load, the issue action's authoritative read and the confirming GET.
 	expect(after.requestReads - before.requestReads).toBe(3);
 	expect(browserUrls.some((url) => url.startsWith(stubUrl))).toBe(false);
 	await page.reload();
@@ -182,6 +184,7 @@ test('stale action read does not replace the reviewed version, and conflict requ
 }) => {
 	await openMaya(page);
 	await openBuilder(page);
+	await reviewQuote(page);
 	const newer = requestFixtures()[mayaId];
 	newer.financial.version = 2;
 	await session(context, { request: newer });
@@ -213,6 +216,7 @@ for (const mode of [
 	}) => {
 		await openMaya(page);
 		await openBuilder(page);
+		await reviewQuote(page);
 		await session(context, { mode });
 		await issueButton(page).click();
 		await expect(page.getByRole('alert').first()).toBeVisible();
@@ -308,7 +312,7 @@ for (const native of [false, true]) {
 		test.use({ javaScriptEnabled: !native });
 		test('preserves a keyboard-selected exact custom percentage', async ({ page, context }) => {
 			await openMaya(page);
-			await openBuilder(page, native);
+			await openBuilder(page);
 			const recommended = page.getByRole('radio', { name: 'Recommended 20% of quote' });
 			await recommended.focus();
 			await recommended.press('ArrowDown');
@@ -316,8 +320,9 @@ for (const native of [false, true]) {
 				page.getByRole('radio', { name: 'Custom percentage', exact: true })
 			).toBeChecked();
 			await page.getByLabel('Deposit percentage', { exact: true }).fill('017.500');
-			if (!native) await expect(page.getByTestId('quote-deposit')).toContainText('$72.63');
-			await previewThenIssue(page, native);
+			await reviewQuote(page);
+			await expect(page.getByTestId('quote-deposit')).toContainText('$72.63');
+			await issueButton(page).click();
 			await expect(page.getByTestId('deposit-summary')).toContainText('$72.63');
 			await expect(page.getByTestId('deposit-summary')).toContainText('017.500% of quote');
 			expect((await session(context)).proposalAttempts).toEqual([
@@ -332,23 +337,23 @@ for (const native of [false, true]) {
 			context
 		}) => {
 			await openMaya(page);
-			await openBuilder(page, native);
+			await openBuilder(page);
 			await page.getByRole('radio', { name: 'Fixed amount', exact: true }).check();
 			const input = page.getByLabel('Deposit amount (USD)', { exact: true });
 			await input.fill('0');
-			if (native) await page.getByRole('button', { name: 'Update preview', exact: true }).click();
-			else await input.blur();
+			await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 			await expect(input).toHaveAttribute('aria-invalid', 'true');
 			if (native) await expect(page.getByRole('alert').first()).toContainText('highlighted fields');
 			else await expect(issueButton(page)).toBeDisabled();
 			await input.fill('123.001');
-			if (native) await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+			await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 			await expect(page.getByRole('alert').first()).toContainText('couldn’t be accepted');
 			await expect(input).toHaveValue('123.001');
 			expect((await session(context)).proposalAttempts).toHaveLength(0);
 			await input.fill('123.40');
-			if (!native) await expect(page.getByTestId('quote-deposit')).toContainText('$123.40');
-			await previewThenIssue(page, native);
+			await reviewQuote(page);
+			await expect(page.getByTestId('quote-deposit')).toContainText('$123.40');
+			await issueButton(page).click();
 			await expect(page).toHaveURL(route);
 			await expect(page.getByTestId('deposit-summary')).toContainText('$123.40');
 			await expect(page.getByTestId('deposit-summary')).toContainText('Fixed deposit');
@@ -363,7 +368,8 @@ for (const native of [false, true]) {
 			context
 		}) => {
 			await openMaya(page);
-			await openBuilder(page, native);
+			await openBuilder(page);
+			await reviewQuote(page);
 			const changed = requestFixtures()[mayaId];
 			changed.suggestedDepositTerms = { type: 'PERCENTAGE', percentage: '25' };
 			await session(context, { request: changed });
@@ -372,9 +378,9 @@ for (const native of [false, true]) {
 			await expect(issueButton(page)).toBeDisabled();
 			expect((await session(context)).proposalAttempts).toHaveLength(0);
 			await page.getByRole('link', { name: 'Reload to review' }).click();
-			await openBuilder(page, native);
+			await openBuilder(page);
 			await expect(page.getByRole('radio', { name: 'Recommended 25% of quote' })).toBeChecked();
-			await previewThenIssue(page, native);
+			await previewThenIssue(page);
 			await expect(page.getByTestId('deposit-summary')).toContainText('$103.75');
 		});
 		test('displays and issues a backend fixed suggestion', async ({ page, context }) => {
@@ -382,11 +388,11 @@ for (const native of [false, true]) {
 			changed.suggestedDepositTerms = { type: 'FIXED', amount: '125.00', currency: 'USD' };
 			await session(context, { request: changed });
 			await page.goto(route);
-			await openBuilder(page, native);
+			await openBuilder(page);
 			await expect(
 				page.getByRole('radio', { name: 'Recommended Fixed deposit · $125' })
 			).toBeChecked();
-			await previewThenIssue(page, native);
+			await previewThenIssue(page);
 			await expect(page.getByTestId('deposit-summary')).toContainText('$125');
 			expect((await session(context)).proposalAttempts[0].body.terms).toEqual(
 				changed.suggestedDepositTerms
@@ -394,9 +400,9 @@ for (const native of [false, true]) {
 		});
 		test('commit then 500 requires reload and never replays', async ({ page, context }) => {
 			await openMaya(page);
-			await openBuilder(page, native);
+			await openBuilder(page);
 			await session(context, { mode: 'proposal-ambiguous' });
-			await previewThenIssue(page, native);
+			await previewThenIssue(page);
 			await expect(page.getByRole('alert').first()).toContainText('couldn’t confirm whether');
 			const button = issueButton(page);
 			if (await button.count()) await expect(button).toBeDisabled();
@@ -471,19 +477,18 @@ test.describe('native forms', () => {
 		context
 	}) => {
 		await openMaya(page);
-		await openBuilder(page, true);
+		await openBuilder(page);
 		await page.getByRole('radio', { name: 'Fixed amount', exact: true }).check();
 		await page.getByLabel('Deposit amount (USD)', { exact: true }).fill('0');
 		const newer = requestFixtures()[mayaId];
 		newer.financial.version = 2;
 		await session(context, { request: newer });
-		await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+		await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 		await expect(page.getByRole('alert').first()).toContainText('Reload to review');
 		await expect(issueButton(page)).toBeDisabled();
 		const state = await session(context);
 		expect(state.proposalAttempts).toHaveLength(0);
-		// Only the opening preview ran; the invalid deposit was never previewed.
-		expect(state.previewAttempts).toHaveLength(1);
+		expect(state.previewAttempts).toHaveLength(0);
 		await page.getByRole('link', { name: 'Reload to review' }).click();
 		await expect(page.getByTestId('build-quote')).toBeVisible();
 	});
@@ -492,8 +497,8 @@ test.describe('native forms', () => {
 		context
 	}) => {
 		await openMaya(page);
-		await openBuilder(page, true);
-		await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+		await openBuilder(page);
+		await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 		await expect(page.getByTestId('quote-deposit')).toContainText('$83');
 		const response = page.waitForResponse(
 			(response) => response.request().method() === 'POST' && response.url().includes('issueQuote')
@@ -511,8 +516,8 @@ test.describe('native forms', () => {
 		context
 	}) => {
 		await openMaya(page);
-		await openBuilder(page, true);
-		// The panel opens already previewed; this edit is not part of that preview.
+		await openBuilder(page);
+		await reviewQuote(page);
 		await expect(page.getByTestId('quote-deposit')).toContainText('$83');
 		await page.getByRole('radio', { name: 'Custom percentage', exact: true }).check();
 		await page.getByLabel('Deposit percentage', { exact: true }).fill('25');
@@ -529,8 +534,8 @@ test.describe('native forms', () => {
 		context
 	}) => {
 		await openMaya(page);
-		await openBuilder(page, true);
-		await page.getByRole('button', { name: 'Update preview', exact: true }).click();
+		await openBuilder(page);
+		await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 		await expect(page.getByTestId('quote-deposit')).toBeVisible();
 		const request = requestFixtures()[mayaId];
 		request.financial.version = 2;

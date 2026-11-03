@@ -11,8 +11,7 @@
 		errors = {},
 		guestCount = '',
 		hydrated,
-		changed,
-		editing
+		changed
 	}: {
 		lines: LineDraft[];
 		/** Seeds the quantity of a new per-guest service. */
@@ -20,10 +19,8 @@
 		/** Field errors keyed `line-<position>`, from local or server validation. */
 		errors?: Record<string, string>;
 		hydrated: boolean;
-		/** An edit that should refresh the debounced preview. */
+		/** Invalidate the last review after a local edit. */
 		changed: () => void;
-		/** An edit in progress: the review is stale, but no preview runs yet. */
-		editing: () => void;
 	} = $props();
 
 	const uid = $props.id();
@@ -120,8 +117,7 @@
 		lines.push(row);
 		openId = row.key!;
 		choosing = false;
-		// A blank line isn't part of the commitment yet; the preview follows its first edit.
-		editing();
+		changed();
 		void focus(`[data-line="${CSS.escape(row.key!)}"] input:not([type="hidden"])`);
 	}
 	function move(i: number, d: number) {

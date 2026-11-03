@@ -58,24 +58,20 @@ export async function openMaya(page: Page) {
 export const issueButton = (page: Page) =>
 	page.getByRole('button', { name: 'Issue quote', exact: true });
 
-/** Open the Formal quote panel; with JavaScript, wait for its first preview. */
-export async function openBuilder(page: Page, native = false) {
+export async function openBuilder(page: Page) {
 	await page.getByTestId('build-quote').click();
 	await expect(page).toHaveURL(`${route}?quote`);
 	await expect(page.getByTestId('quote-builder')).toBeVisible();
-	if (!native) await waitForPreview(page);
+	await expect(issueButton(page)).toBeDisabled();
 }
 
-/** The preview is current: its deposit is shown and nothing is waiting to be previewed. */
-export async function waitForPreview(page: Page) {
+export async function reviewQuote(page: Page) {
+	await page.getByRole('button', { name: 'Review quote', exact: true }).click();
 	await expect(page.getByTestId('quote-deposit')).toBeVisible();
 	await expect(issueButton(page)).toBeEnabled();
 }
 
-/** Native forms preview explicitly; enhanced ones have already previewed the current edits. */
-export async function previewThenIssue(page: Page, native = false) {
-	if (native) await page.getByRole('button', { name: 'Update preview', exact: true }).click();
-	else await waitForPreview(page);
-	await expect(issueButton(page)).toBeEnabled();
+export async function previewThenIssue(page: Page) {
+	await reviewQuote(page);
 	await issueButton(page).click();
 }

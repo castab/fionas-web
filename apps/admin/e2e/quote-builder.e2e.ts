@@ -3,7 +3,7 @@ import {
 	signIn,
 	openMaya,
 	openBuilder,
-	waitForPreview,
+	reviewQuote,
 	issueButton,
 	session,
 	route,
@@ -34,13 +34,10 @@ test('override, reorder, remove, bespoke service and separate credit retain revi
 	await rows.nth(0).getByRole('textbox', { name: 'Amount', exact: true }).fill('101.00');
 	await rows.nth(0).getByText('Tax & note').click();
 	await rows.nth(0).getByLabel('Why this line').fill('Negotiated base');
-	await waitForPreview(page);
 	await editLine(1);
 	await rows.nth(1).getByRole('button', { name: 'Move up' }).click();
-	await waitForPreview(page);
 	await editLine(2);
 	await rows.nth(2).getByRole('button', { name: 'Remove line' }).click();
-	await waitForPreview(page);
 	await addLine('Service');
 	const bespoke = rows.nth(2);
 	await bespoke.getByLabel('What it’s for').fill('Bespoke churros');
@@ -48,12 +45,11 @@ test('override, reorder, remove, bespoke service and separate credit retain revi
 	await bespoke.getByRole('textbox', { name: 'Amount', exact: true }).fill('111.00');
 	await bespoke.getByText('Tax & note').click();
 	await bespoke.getByLabel('Why this line').fill('Customer request');
-	await waitForPreview(page);
 	await addLine('Credit');
 	await rows.nth(3).getByLabel('Credit name').fill('Credit');
 	await rows.nth(3).getByLabel('Credit amount').fill('11.00');
 	await page.getByLabel('Approved service description').fill('Churro catering for this party');
-	await waitForPreview(page);
+	await reviewQuote(page);
 	await page
 		.getByTestId('quote-builder')
 		.screenshot({ path: testInfo.outputPath('quote-builder.png') });
@@ -85,11 +81,11 @@ test('override, reorder, remove, bespoke service and separate credit retain revi
 test.describe('native editor', () => {
 	test.use({ javaScriptEnabled: false });
 	test('native forms edit complete lines and publish only after preview', async ({ page }) => {
-		await openBuilder(page, true);
+		await openBuilder(page);
 		const blank = page.getByTestId('quote-line-editor').last();
 		await blank.getByLabel('New service or adjustment').fill('Bespoke catering');
 		await blank.getByLabel('Unit price', { exact: true }).fill('101.00');
-		await previewThenIssue(page, true);
+		await previewThenIssue(page);
 		await expect(page.getByTestId('financial-document')).toContainText('Bespoke catering');
 	});
 });
@@ -98,13 +94,14 @@ test('edited inputs with an old fingerprint require a fresh preview and explicit
 	context
 }) => {
 	await openBuilder(page);
+	await reviewQuote(page);
 	await page
 		.locator('[name=unitPrice]')
 		.first()
 		.evaluate((el: HTMLInputElement) => (el.value = '101.00'));
 	await issueButton(page).click();
+	await expect(page.getByText('The quote changed since you reviewed it')).toBeVisible();
 	expect((await session(context)).proposalAttempts).toHaveLength(0);
-	await waitForPreview(page);
 	await issueButton(page).click();
 	await expect(page).toHaveURL(route);
 });
@@ -114,10 +111,106 @@ test('issues complete reviewed lines without an optional service plan', async ({
 }) => {
 	await openBuilder(page);
 	await page.getByLabel('Approved service description').fill('');
-	await waitForPreview(page);
+	await reviewQuote(page);
 	await issueButton(page).click();
 	await expect(page).toHaveURL(route);
 	await expect(page.getByTestId('request-summary')).toContainText('Quote issued');
 	expect((await session(context)).proposalAttempts[0].body).not.toHaveProperty('servicePlan');
 	await expect(page.getByTestId('service-plan')).toHaveCount(0);
+});
+
+test('slow typing stays local and an obsolete review preserves the current edit and caret', async ({
+	page,
+	context
+}) => {
+	await openBuilder(page);
+	const previewPosts: string[] = [];
+	page.on('request', (request) => {
+		if (request.method() === 'POST' && request.url().includes('/previewQuote'))
+			previewPosts.push(request.url());
+	});
+	const line = page.getByTestId('quote-line-editor').first();
+	await line.getByRole('button', { name: /^Edit line 1,/ }).click();
+	const amount = line.getByRole('textbox', { name: 'Amount', exact: true });
+	const description = page.getByLabel('Approved service description');
+	for (const [field, initial, insert] of [
+		[amount, '1.00', '23'],
+		[description, 'AB', 'cd']
+	] as const) {
+		await field.fill(initial);
+		await field.evaluate((el: HTMLInputElement | HTMLTextAreaElement) =>
+			el.setSelectionRange(1, 1)
+		);
+		for (const [i, char] of [...insert].entries()) {
+			await field.pressSequentially(char, { delay: 400 });
+			await expect(field).toBeEnabled();
+			await expect(field).toBeFocused();
+			await expect(field).toHaveJSProperty('selectionStart', i + 2);
+			await expect(field).toHaveJSProperty('selectionEnd', i + 2);
+		}
+		await expect(field).toHaveValue(initial.slice(0, 1) + insert + initial.slice(1));
+	}
+	expect(previewPosts).toHaveLength(0);
+	expect((await session(context)).previewAttempts).toHaveLength(0);
+	const gate = Promise.withResolvers<void>();
+	await page.route(
+		'**/*/previewQuote',
+		async (intercepted) => {
+			const response = await intercepted.fetch();
+			await gate.promise;
+			await intercepted.fulfill({ response });
+		},
+		{ times: 1 }
+	);
+	const review = page.getByRole('button', { name: 'Review quote', exact: true });
+	await review.click();
+	try {
+		const reviewing = page.getByRole('button', { name: 'Reviewing…' });
+		await expect(reviewing).toBeDisabled();
+		await expect(reviewing).toBeFocused();
+		await description.focus();
+		await description.press('Home');
+		await description.pressSequentially('Fresh ');
+	} finally {
+		gate.resolve();
+	}
+	await expect(review).toBeEnabled();
+	await expect(description).toHaveValue('Fresh AcdB');
+	await expect(description).toBeFocused();
+	await expect(description).toHaveJSProperty('selectionStart', 6);
+	await expect(description).toHaveJSProperty('selectionEnd', 6);
+	await expect(page.getByTestId('quote-preview')).toHaveCount(0);
+	await expect(issueButton(page)).toBeDisabled();
+	await reviewQuote(page);
+	await description.fill('Final service plan');
+	await expect(issueButton(page)).toBeDisabled();
+	await expect(page.getByTestId('quote-preview')).toHaveCount(0);
+	await reviewQuote(page);
+	expect(previewPosts).toHaveLength(3);
+	const before = await session(context);
+	expect(before.previewAttempts).toHaveLength(3);
+	expect(before.proposalAttempts).toHaveLength(0);
+	await issueButton(page).click();
+	await expect(page).toHaveURL(route);
+	const after = await session(context);
+	expect(after.proposalAttempts).toHaveLength(1);
+	expect(after.proposalAttempts[0].body.servicePlan.description).toBe('Final service plan');
+});
+
+test('an unavailable review preserves the draft for an explicit retry', async ({
+	page,
+	context
+}) => {
+	await openBuilder(page);
+	const description = page.getByLabel('Approved service description');
+	await description.fill('Service with extra toppings');
+	await session(context, { mode: 'preview-unavailable' });
+	await page.getByRole('button', { name: 'Review quote', exact: true }).click();
+	await expect(page.getByRole('alert').first()).toContainText('Try again');
+	await expect(description).toHaveValue('Service with extra toppings');
+	await expect(description).toBeEnabled();
+	await expect(issueButton(page)).toBeDisabled();
+	await session(context, {});
+	await reviewQuote(page);
+	expect((await session(context)).proposalAttempts).toHaveLength(0);
 });

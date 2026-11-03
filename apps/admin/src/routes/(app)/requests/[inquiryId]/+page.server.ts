@@ -9,13 +9,11 @@ import { applySetCookies } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
 import {
 	getStaffRequest,
-	previewInquiryQuote,
 	recordPayment,
 	markInquiryServed,
 	closeInquiry,
 	declineInquiry
 } from '$lib/server/staff-request.js';
-import { reviewFingerprint } from '$lib/server/quote-review.js';
 import { editorAction, loadHistory } from '$lib/server/editor-actions.js';
 import {
 	canRecordDeposit,
@@ -37,12 +35,6 @@ import {
 	readDeclineForm,
 	type DeclineFormValues
 } from '$lib/decline.js';
-import {
-	buildCommand,
-	editorValues,
-	isQuotePreview,
-	type QuoteActionResult
-} from '$lib/quote-builder.js';
 import { editorActions, openEditorMode } from '$lib/financial-editor.js';
 import {
 	canMarkServed,
@@ -101,8 +93,7 @@ export const load: PageServerLoad = async ({
 			paymentOpen,
 			declineOpen,
 			returnContext,
-			today,
-			initialQuote: null
+			today
 		};
 	}
 	applySetCookies(cookies, result.setCookies);
@@ -115,42 +106,6 @@ export const load: PageServerLoad = async ({
 	// At most one editor opens, and only the one this lifecycle makes eligible: a stale or mismatched
 	// flag opens nothing and exposes no action.
 	const editorMode = openEditorMode(data, permissions, editorFlags);
-	let initialQuote: QuoteActionResult | null = null;
-	// Only a first Quote opens already previewed. A revision or amendment starts from the current,
-	// unchanged state, which the backend rightly refuses as "no material change".
-	if (editorMode === 'INITIAL_QUOTE' && request.method === 'GET') {
-		const values = editorValues(data, 'INITIAL_QUOTE');
-		const command = buildCommand(values);
-		const terms = data.suggestedDepositTerms;
-		const opening = await previewInquiryQuote(
-			config,
-			params.inquiryId,
-			{ expectedDocumentVersion: data.financial.version, ...command, terms },
-			cookie
-		);
-		if (
-			opening.ok &&
-			isQuotePreview(opening.data, {
-				inquiryId: params.inquiryId,
-				documentId: data.financial.id
-			})
-		) {
-			applySetCookies(cookies, opening.setCookies);
-			initialQuote = {
-				preview: { mode: 'INITIAL_QUOTE', quote: opening.data },
-				quoteValues: {
-					...values,
-					reviewToken: opening.data.reviewToken,
-					reviewedFingerprint: reviewFingerprint({
-						mode: 'INITIAL_QUOTE',
-						expectedDocumentVersion: data.financial.version,
-						command,
-						terms
-					})
-				}
-			};
-		}
-	}
 	// Optional detail: loaded only when `?history` is open, and its failure never hides the booking.
 	const history = historyOpen ? await loadHistory({ cookies, request, url }, data) : null;
 	return {
@@ -165,8 +120,7 @@ export const load: PageServerLoad = async ({
 		paymentOpen,
 		declineOpen,
 		returnContext,
-		today,
-		initialQuote
+		today
 	};
 };
 export const actions: Actions = {

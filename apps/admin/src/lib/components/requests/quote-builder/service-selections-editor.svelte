@@ -20,7 +20,7 @@
 		/** Field errors keyed `selection-<position>`, from local or server validation. */
 		errors?: Record<string, string>;
 		hydrated: boolean;
-		/** An edit that should refresh the debounced preview. */
+		/** Invalidate the last review after a local edit. */
 		changed: () => void;
 	} = $props();
 	const uid = $props.id();

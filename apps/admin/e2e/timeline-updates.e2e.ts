@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
-import { signIn, route, stubUrl, session, waitForPreview } from './request-helpers.js';
+import { signIn, route, stubUrl, session, reviewQuote } from './request-helpers.js';
 import { mayaId } from './request-fixture.mjs';
 import {
 	conversationFixture,
@@ -220,7 +220,7 @@ test('financial editor and its reviewed token survive live financial history', a
 	await page.goto(`${route}?quote`);
 	await expect(page.getByTestId('live-status')).toHaveText('Live');
 	await page.getByLabel('Approved service description').fill('Unfinished negotiated plan');
-	await waitForPreview(page);
+	await reviewQuote(page);
 	const token = await page.locator('input[name="reviewToken"]').inputValue();
 	await conversation(context, { timeline: milestoneFixture(), notify: true });
 	await expect(page.getByText('Request details changed', { exact: false })).toBeVisible();

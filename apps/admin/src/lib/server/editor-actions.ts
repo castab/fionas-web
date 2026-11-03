@@ -145,9 +145,9 @@ export async function editorAction(
 	// A form is for exactly the action it was posted to; modes never mix.
 	if (!parsed || parsed.mode !== mode) return editorFailure(mode, 422);
 	const values: QuoteFormValues = parsed;
-	// A native selection edit (add, remove, reorder) only returns the complete draft; it may leave a
-	// blank row to fill in, so Update preview is the explicit next step. Any review is cleared.
-	if (form.has('selectionAction')) {
+	// A native row edit (add, remove, reorder) only returns the complete draft; it may leave a
+	// blank row to fill in, so review is the explicit next step. Any review is cleared.
+	if (form.has('selectionAction') || form.has('rowAction')) {
 		if (publish) return editorFailure(mode, 422);
 		return { quoteValues: { ...values, reviewToken: '', reviewedFingerprint: '' } };
 	}

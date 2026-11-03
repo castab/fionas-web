@@ -21,9 +21,8 @@ async function noOverflow(page: Page) {
 		)
 	).toBeLessThanOrEqual(0);
 }
-/** Native forms preview explicitly; enhanced ones preview the edit on their own. */
-async function review(page: Page, native: boolean, publish: string) {
-	if (native) await button(page, 'Update preview').click();
+async function review(page: Page, publish: string) {
+	await button(page, publish === AMEND ? 'Review amendment' : 'Review changes').click();
 	await expect(page.getByTestId('quote-preview')).toBeVisible();
 	await expect(button(page, publish)).toBeEnabled();
 }
@@ -84,7 +83,7 @@ for (const native of [false, true]) {
 			await expect(page.getByRole('radio', { name: 'Fixed amount' })).toBeChecked();
 			await expect(page.getByLabel('Deposit amount (USD)')).toHaveValue('300.00');
 			await addCharge(page, native, 'Extra hour', '50.00');
-			await review(page, native, REVISE);
+			await review(page, REVISE);
 			await expect(compare(page, 'compare-current-total')).toContainText('$415');
 			await expect(compare(page, 'quote-total')).toContainText('$465');
 			await expect(compare(page, 'compare-difference')).toContainText('+$50');
@@ -129,7 +128,7 @@ for (const native of [false, true]) {
 			await open(page, context, 'quoted', '?quote-revision');
 			await page.getByRole('radio', { name: 'Custom percentage' }).check();
 			await page.getByLabel('Deposit percentage').fill('35');
-			await review(page, native, REVISE);
+			await review(page, REVISE);
 			await expect(page.getByTestId('no-financial-change')).toBeVisible();
 			await expect(compare(page, 'compare-difference')).toContainText('No change');
 			await expect(compare(page, 'quote-deposit')).toContainText('$145.25');
@@ -153,7 +152,7 @@ for (const native of [false, true]) {
 			await open(page, context, 'quoted', '?quote-revision');
 			await page.getByLabel('Approved service description').fill('Chocolate service, larger party');
 			await page.getByLabel('Guests', { exact: true }).fill('60');
-			await review(page, native, REVISE);
+			await review(page, REVISE);
 			await expect(page.getByTestId('no-financial-change')).toBeVisible();
 			await expect(page.getByTestId('preview-service-plan')).toContainText('will change');
 			await expect(page.getByTestId('preview-service-plan')).toContainText('Chocolate service');
@@ -178,11 +177,11 @@ for (const native of [false, true]) {
 			context
 		}) => {
 			await open(page, context, 'quoted', '?quote-revision');
-			if (native) await button(page, 'Update preview').click();
-			else
+			if (!native)
 				await page
 					.getByLabel('Approved service description')
 					.fill('Churro catering for an evening reception ');
+			await button(page, 'Review changes').click();
 			await expect(page.getByTestId('no-material-change')).toContainText('Nothing has changed');
 			expect((await session(context)).requests[mayaId].proposalHistory).toHaveLength(1);
 			expect(
@@ -196,11 +195,11 @@ for (const native of [false, true]) {
 		}) => {
 			await open(page, context, 'quoted', '?quote-revision');
 			await page.getByLabel('Approved service description').fill('');
-			if (native) await button(page, 'Update preview').click();
+			await button(page, 'Review changes').click();
 			await expect(page.getByRole('alert').first()).toContainText('Remove the service plan');
 			expect((await session(context)).revisionAttempts).toHaveLength(0);
 			await page.getByLabel('Remove the service plan').check();
-			await review(page, native, REVISE);
+			await review(page, REVISE);
 			await expect(page.getByTestId('preview-plan-cleared')).toBeVisible();
 			await expect(page.getByTestId('preview-removed-notes')).toContainText('Negotiated');
 			await button(page, REVISE).click();
@@ -229,7 +228,7 @@ for (const native of [false, true]) {
 			await expect(page.getByRole('radio', { name: 'Fixed amount' })).toHaveCount(0);
 			await expect(page.getByLabel('Deposit percentage')).toHaveCount(0);
 			await addCharge(page, native, 'Late-night extension', '250.00');
-			await review(page, native, AMEND);
+			await review(page, AMEND);
 			await expect(compare(page, 'compare-current-total')).toContainText('$415');
 			await expect(compare(page, 'quote-total')).toContainText('$665');
 			await expect(compare(page, 'compare-difference')).toContainText('+$250');
@@ -293,7 +292,7 @@ for (const native of [false, true]) {
 					await rows.nth(n).getByRole('textbox', { name: 'Price each' }).fill('0.00');
 				}
 			}
-			await review(page, native, AMEND);
+			await review(page, AMEND);
 			await expect(page.getByTestId('invoice-settlement')).toContainText('Overpaid');
 			await expect(page.getByTestId('invoice-settlement')).toContainText('separate, explicit step');
 			await expect(compare(page, 'compare-balance')).toContainText('-$');
@@ -310,7 +309,7 @@ for (const native of [false, true]) {
 		}) => {
 			await open(page, context, 'booked', '?invoice-revision');
 			await page.getByLabel('Approved service description').fill('Chocolate topping, not vanilla');
-			await review(page, native, AMEND);
+			await review(page, AMEND);
 			await expect(page.getByTestId('no-financial-change')).toContainText(
 				'service plan is amended'
 			);
@@ -351,7 +350,6 @@ for (const native of [false, true]) {
 					.getByRole('button', { name: /Remove/ })
 					.click();
 				await expect(page.getByTestId('dropped-notes')).toContainText('Negotiated');
-				await button(page, 'Update preview').click();
 			} else {
 				await rows
 					.first()
@@ -360,6 +358,7 @@ for (const native of [false, true]) {
 				await rows.first().getByRole('button', { name: 'Remove line' }).click();
 				await expect(page.getByTestId('dropped-notes')).toContainText('Negotiated');
 			}
+			await review(page, AMEND);
 			await expect(page.getByTestId('preview-removed-notes')).toContainText('Negotiated');
 			await expect(button(page, AMEND)).toBeEnabled();
 			await button(page, AMEND).click();
@@ -375,7 +374,7 @@ for (const native of [false, true]) {
 		}) => {
 			await open(page, context, 'booked', '?invoice-revision');
 			await addCharge(page, native, 'Extra hour', '40.00');
-			await review(page, native, AMEND);
+			await review(page, AMEND);
 			await session(context, { mode: 'quote-review-stale' });
 			await button(page, AMEND).click();
 			await expect(page.getByText('The booking changed since you reviewed it')).toBeVisible();
@@ -385,7 +384,7 @@ for (const native of [false, true]) {
 				)
 			).toHaveLength(1);
 			expect((await session(context)).requests[mayaId].financial.version).toBe(3);
-			await review(page, native, AMEND);
+			await review(page, AMEND);
 			await button(page, AMEND).click();
 			await expect(page).toHaveURL(route);
 			await expect(page.getByTestId('financial-version')).toContainText('Invoice v4');
@@ -397,7 +396,7 @@ for (const native of [false, true]) {
 		}) => {
 			await open(page, context, 'booked', '?invoice-revision');
 			await addCharge(page, native, 'Extra hour', '40.00');
-			await review(page, native, AMEND);
+			await review(page, AMEND);
 			await session(context, { mode: 'revision-ambiguous' });
 			await button(page, AMEND).click();
 			await expect(page.getByRole('alert').first()).toContainText('couldn’t confirm');
@@ -430,6 +429,7 @@ test.describe('returning to the Requests list', () => {
 		await page.getByTestId('revise-quote').click();
 		await expect(page).toHaveURL(`${route}?quote-revision&from=${from}`);
 		await page.getByLabel('Approved service description').fill('Different plan');
+		await review(page, REVISE);
 		await expect(button(page, REVISE)).toBeEnabled();
 		await button(page, REVISE).click();
 		await expect(page).toHaveURL(`${route}?from=${from}`);
@@ -536,6 +536,7 @@ test.describe('what the workspace shows', () => {
 		await expect(page.getByLabel('Remove the service plan')).toHaveCount(0);
 		// Staff can explicitly create a new commitment.
 		await page.getByLabel('Approved service description').fill('A brand new commitment');
+		await review(page, AMEND);
 		await expect(button(page, AMEND)).toBeEnabled();
 		expect((await session(context)).revisionAttempts.at(-1)?.body.servicePlanAction).toBe(
 			'REPLACE'
@@ -589,7 +590,7 @@ test.describe('what the workspace shows', () => {
 		await expect(page.getByTestId('amend-invoice')).toBeVisible();
 		await page.getByTestId('amend-invoice').click();
 		await addCharge(page, false, 'Cleanup fee', '25.00');
-		await review(page, false, AMEND);
+		await review(page, AMEND);
 		await button(page, AMEND).click();
 		// Amending after service leaves the event served: closure stays a separate, explicit step.
 		await expect(page).toHaveURL(route);
@@ -613,7 +614,7 @@ test.describe('what the workspace shows', () => {
 			'A very long additional charge description to wrap',
 			'12345678.00'
 		);
-		await review(page, false, AMEND);
+		await review(page, AMEND);
 		await noOverflow(page);
 		await page
 			.getByTestId('quote-builder')

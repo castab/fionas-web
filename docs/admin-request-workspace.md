@@ -39,9 +39,9 @@ closes it.
 
 Staff USER sessions flow through backend.ts with the host-only __Host-fionas_session cookie and trusted Origin. Issue quote requires commerce.financial-document.create, commerce.deposit-requirement.manage and fionas.financial-terms.manage. Only staff USER sessions author staff terms; the public site holds no commerce credentials at all. The admin works without a public price book.
 
-The inline editor opens with a preview of complete existing financial lines under their immutable ids. Staff can override descriptions, quantity, unit price and whole-line tax; remove/reorder existing lines; add bespoke services or distinct signed charges/discounts/credits with stable draft keys. Negative adjustments are separate lines. Optional servicePlan descriptions, guest counts, free-form items and identity-bound lineNotes preserve the approved service and negotiation reasons. In the browser each line is a summary row (title, origin tag, price) that opens into one editor at a time (`quote-lines-editor.svelte`): quantity or flat pricing, discounts and credits typed as a positive amount off and submitted as a negative `unitPrice`, and a collapsible Tax & note. Lines are added by kind (Service, Charge, Discount, Credit). Collapsed editors stay in the form, so every line is always submitted; without JavaScript every line is open and a trailing blank row adds one. There is no catalog dependency. requestedService displays the customer's recorded human-readable labels; linesAuthoredBy, issuedBy and approvedBy represent backend authorship.
+The inline editor opens with the complete existing financial lines under their immutable ids. Staff can override descriptions, quantity, unit price and whole-line tax; remove/reorder existing lines; add bespoke services or distinct signed charges/discounts/credits with stable draft keys. Negative adjustments are separate lines. Optional servicePlan descriptions, guest counts, free-form items and identity-bound lineNotes preserve the approved service and negotiation reasons. In the browser each line is a summary row (title, origin tag, price) that opens into one editor at a time (`quote-lines-editor.svelte`): quantity or flat pricing, discounts and credits typed as a positive amount off and submitted as a negative `unitPrice`, and a collapsible Tax & note. Lines are added by kind (Service, Charge, Discount, Credit). Collapsed editors stay in the form, so every line is always submitted; without JavaScript every line is open and a trailing blank row adds one. There is no catalog dependency. requestedService displays the customer's recorded human-readable labels; linesAuthoredBy, issuedBy and approvedBy represent backend authorship.
 
-Preview posts expectedDocumentVersion, lines, optional servicePlan and terms without rereading the request. It is write-free and repeatable. The browser acknowledges edits but never calculates Quote totals or deposit. Native forms expose blank rows plus remove/reorder buttons and explicit Update preview; enhanced forms preview edits after a short delay. Exact input validation rejects unsupported precision and nonsettleable rate extensions without rounding.
+Preview posts expectedDocumentVersion, lines, optional servicePlan and terms without rereading the request. It is write-free and repeatable. The browser acknowledges edits but never calculates Quote totals or deposit. Native forms expose blank rows plus remove/reorder buttons and an explicit review button. With JavaScript, edits stay local. Review submits a snapshot and leaves inputs editable. A later edit discards the preview and its publication credentials. Exact input validation rejects unsupported precision and nonsettleable rate extensions without rounding.
 
 **USD only.** Fiona's Ice Cream operates exclusively in US dollars (`$lib/currency.ts`). Commerce is currency-generic by design; this console is not, and it never converts or offers a currency choice. Flat prices and line tax must be whole cents; a per-unit rate may carry up to 12 fractional digits when rate × quantity settles exactly to cents; amounts may be signed for discounts and credits; nothing is rounded. Validation always applies USD rules, never a currency posted by the browser: the page's echoed `reviewedCurrency` must be `USD` or the form is refused before any preview, and every line is sent as USD. A request whose financial document isn't USD is not quote-eligible, so it gets no opening preview and issuance is refused, and a preview answered in another currency is rejected.
 
@@ -97,8 +97,7 @@ initial quote is seeded from the Estimate, the customer's picks and the suggeste
 amendment is seeded from the current financial lines and the _effective_ service approval (description, guests,
 ordered selections, line notes), and a Quote revision keeps the negotiated deposit terms rather than
 resetting to the suggested percentage. A cleared or never-approved plan seeds empty and is never
-resurrected from the original picks. A revision opens unpreviewed (previewing the unchanged state would only
-answer `NO_MATERIAL_CHANGE`), unlike the first quote, which still opens previewed.
+resurrected from the original picks. Every mode opens unreviewed. Reviewing an unchanged revision returns `NO_MATERIAL_CHANGE`.
 
 **Service plan actions.** The backend takes `RETAIN`, `REPLACE` or `CLEAR` and never infers one from field
 presence. The browser does not choose one either: the server derives it from the posted draft against the
@@ -383,14 +382,14 @@ with a label and an optional category picked from the draft or typed; a live hin
 to a category, creates one, or files under Other selections. Typed categories match existing ones
 regardless of case, and a new category is placed before Other selections, which stays last. Enter
 never submits the quote form. A new selection is keyless; chips carry the same hidden
-`selectionIdentity`/label/group/key/source fields, edits feed the debounced preview, and order follows
+`selectionIdentity`/label/group/key/source fields, edits invalidate the current review, and order follows
 the draft (original picks first, additions after). Renaming or regrouping is a remove plus add, which
 drops provenance as above. Native: every row posts
 `selectionIdentity` (the overall order) plus exactly one `selectionLabel:`, `selectionGroup:`,
 `selectionKey:` and `selectionSource:` field per unique ID. Selection buttons post `selectionAction`
 (`add`, `remove:<id>`, `up:<id>`, `down:<id>`), separate from financial `rowAction`; the server
 returns the complete draft (lines, notes, deposit, description, guests, selections) with the review
-cleared, and Update preview is the explicit next step. Malformed envelopes are refused with 422. With
+cleared, and review is the explicit next step. Malformed envelopes are refused with 422. With
 no service description, the builder says no serving plan or selections will accompany the Quote.
 
 **Review integrity.** The local SHA-256 fingerprint covers the canonical command, including every
