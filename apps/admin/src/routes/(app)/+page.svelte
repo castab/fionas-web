@@ -14,7 +14,7 @@
 
 <svelte:head><title>Dashboard · Admin · {site.name}</title></svelte:head>
 
-<div class="flex max-w-[1240px] flex-col gap-6 pb-8">
+<div class="mx-auto flex max-w-[1536px] flex-col gap-6 pb-8">
 	<div class="flex flex-col gap-1">
 		<h1
 			class="m-0 font-sans text-[1.75rem] leading-[1.2] font-bold tracking-(--track-heading) text-(--text-heading)"
@@ -37,9 +37,14 @@
 			>
 				waiting on you
 			</h2>
-			<RequestGroup title="Needs a reply" requests={dashboard.replyGroup} />
-			<RequestGroup title="Needs a quote" requests={dashboard.quoteGroup} />
-			<RequestGroup title="Needs resolution" requests={dashboard.resolutionGroup} />
+			<!-- Wide screens lay the three groups side by side as a board. -->
+			<div
+				class="flex flex-col gap-6 min-[1440px]:grid min-[1440px]:grid-cols-3 min-[1440px]:gap-5"
+			>
+				<RequestGroup title="Needs a reply" requests={dashboard.replyGroup} />
+				<RequestGroup title="Needs a quote" requests={dashboard.quoteGroup} />
+				<RequestGroup title="Needs resolution" requests={dashboard.resolutionGroup} />
+			</div>
 		</div>
 	{:else}
 		<Card class="flex flex-col items-start gap-4" role="alert">
