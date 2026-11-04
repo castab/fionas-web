@@ -19,11 +19,28 @@ implying a step that never happens. ZIP remains the coarse inquiry location. No 
 inferred from messages.
 
 The Serving plan renders backend-ordered financial lines, quantities, unit prices, line totals,
-subtotal, tax, total and stage/version; only an Invoice shows its reconciliation balance. Once an
-approved plan exists it appears inside the Serving plan ("What you'll serve") and replaces the
-customer's original picks on the page. Exact decimal strings go directly to Intl formatting; no
+subtotal, tax, total and stage/version; the Invoice balance is shown once, in Right now. Once an
+approved plan exists it appears inside the Serving plan ("What you'll serve", its selections folded
+under a disclosure) and the customer's original picks fold away beneath it. Exact decimal strings go directly to Intl formatting; no
 repricing or financial arithmetic occurs. Missing reconciliation or inconsistent document ownership
 is unavailable rather than an assumed zero balance.
+
+**Layout: Activity first.** Below the header and progress strip, the page is a grid in a size
+container. Wide containers (`@min-[880px]`) put **Activity** (the Conversation card: the booking's
+timeline plus the reply composer) in the main column, with a 340px rail holding **Right now**, then
+the **Event** card, "What they asked for" and the **Serving plan**. Narrow containers stack them as
+Right now → Activity → Event and plan; that is also the DOM and reading order. Open panels (Decline,
+Record payment, the quote editor, `?history`) render in the main column above Activity. The rail is
+not sticky.
+
+Activity is the single history whenever the optional timeline read succeeds (`timelineLoaded` in
+`+page.svelte`). Its bands already show every publication, amendment, payment, refund, served,
+closed and declined fact, so the cards that repeated them are not rendered: Payment history, the
+Quote publications list and the Decline decision card, and the Event card's "Marked served" row. If
+the timeline is unavailable, forbidden or malformed, all of them render as before (above Activity),
+so a failed optional read never hides booking history. Service plan approvals never appear in
+Activity (a service-only amendment has no band), so they live in the Serving plan card's **Plan
+approvals** disclosure at every stage, next to the **Financial versions** link that opens `?history`.
 
 **Right now** words the current stage for staff. Its headline and description come from
 `requestSummary`/`requestSummaryDescription` with the business-timezone date the load supplies
@@ -137,12 +154,15 @@ amendment replaced it. `service-plan.ts` validates each approval (positive revis
 references, content unless `cleared`) and the joins between `servicePlanHistory`, `proposalHistory` and the
 three plans. Missing histories fail the request closed rather than reading as empty.
 
-**Revision history.** The Revision history card composes `proposalHistory` (Quote publications, with what
-changed against the previous one, and whether it is current or the accepted Quote) and `servicePlanHistory`
-(approvals, including clearings, each plan viewable but never editable). They stay separate lists because
-financial versions, deposit revisions and service revisions do not advance together. **Show versions**
-(`?history`) additionally reads `GET /financial-documents/{id}/history` and `…/deposit-requirement/history`; a
-failed or malformed read shows "unavailable" for that section only, and the booking above it stays usable.
+**Revision history.** `proposalHistory` (Quote publications, with what changed against the previous one,
+and whether it is current or the accepted Quote) and `servicePlanHistory` (approvals, including clearings,
+each plan viewable but never editable) stay separate lists because financial versions, deposit revisions and
+service revisions do not advance together. Activity's quote bands carry each publication's status and
+changes (joined by proposal ID, display only); the publications list itself renders only when Activity
+could not load. Approvals render in the Serving plan's **Plan approvals** disclosure (`plan-approvals.svelte`).
+**Financial versions** (`?history`) opens the Revision history card in the main column and additionally reads
+`GET /financial-documents/{id}/history` and `…/deposit-requirement/history`; a failed or malformed read shows
+"unavailable" for that section only, and the rest of the booking stays usable.
 
 **Payments and fulfillment** are unchanged. Deposit recording uses the current proposal's ID, so a stale ID
 from before a revision can never be recorded; payment controls use the latest Invoice version and the
@@ -186,7 +206,8 @@ backend refusals and ambiguous mutation timeout/network/5xx outcomes disable pay
 offer **Reload to review**. A 500 can follow commit; neither action ever retries. A pre-mutation read
 failure uses different copy because no payment was attempted. Backend messages are never displayed.
 
-Payment history uses only `staffRequest.payments` from the same coherent read, with no second
+Payment history (rendered only when Activity is unavailable; see Layout) uses only
+`staffRequest.payments` from the same coherent read, with no second
 payment-history GET. It shows original received amount, humanized method and Pacific receipt time,
 plus backend `totalRefunded`/`netReceived` when refunded. Unknown transport methods render safely.
 Original allocations are selected by document ID, including historical Quote versions; other
@@ -272,7 +293,8 @@ REQUESTED. The page shows a rust **Declined** badge; the progress strip keeps th
 with Requested done and the rest struck through as skipped (none current), since DECLINED is a
 terminal alternative, not a step after Closed. Right now reads **Request declined** with the decline
 time and no pending action, and labels the figure "Declined estimate" (no balance or amount owed). A
-**Decline decision** card shows the time (Pacific), the internal reason, "You" or "Staff" plus the
+**Decline decision** card (only when Activity is unavailable; otherwise Activity's declined band
+carries the time, actor and reason) shows the time (Pacific), the internal reason, "You" or "Staff" plus the
 principal id as audit detail (no names are looked up), and the reviewed Estimate version. Customer
 details, requested service, notes, the Estimate and any payment history stay readable; no Quote,
 decline, payment or fulfillment action is offered. The dashboard drops declined inquiries because
@@ -356,7 +378,7 @@ for what rendering needs, because the inquiry contract sets no length or count l
 **Original intent and the approved commitment are independent.** "What they asked for" renders
 `inquiry.requestedService.items` exactly as recorded and stays visible at every stage and for every
 financial document version (Estimate, Quote, Invoice, declined), even where the approved plan or
-priced lines no longer match it; once a plan exists the card says so. The serving plan renders only the
+priced lines no longer match it; once a plan exists the card says so and starts folded. The serving plan renders only the
 backend's approved `servicePlan.items`, including an accepted Quote's plan after promotion to
 Invoice; it is never rebuilt from Invoice lines. Neither reads a catalog or the public menu.
 
@@ -401,4 +423,4 @@ GET; financial lines, totals, deposits and permissions keep their existing autho
 
 ## Integrated Conversation
 
-The Conversation card follows financial and revision history at every stage, including CLOSED and DECLINED. It provides chronological email and historical commerce bands, backend-owned Needs reply, observed-watermark acknowledgement and plain-text staff replies. Optional failures never hide the booking. Native forms and enhanced refresh preserve the same authority and return context. See [admin-conversation.md](admin-conversation.md) for permissions, exact-key UNKNOWN recovery, availability states, deployment prerequisites and active-workspace notifications.
+The Conversation card, headed **Activity**, is the page's main column and its booking history at every stage, including CLOSED and DECLINED. It provides chronological email and historical commerce bands, backend-owned Needs reply, observed-watermark acknowledgement and plain-text staff replies. Optional failures never hide the booking. Native forms and enhanced refresh preserve the same authority and return context. See [admin-conversation.md](admin-conversation.md) for permissions, exact-key UNKNOWN recovery, availability states, deployment prerequisites and active-workspace notifications.

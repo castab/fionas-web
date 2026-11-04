@@ -1,7 +1,9 @@
 # Request conversation
 
-The request workspace shows Conversation at every lifecycle stage, after financial and revision
-history. Closed and declined bookings retain correspondence access; financial eligibility is unchanged.
+The request workspace shows Conversation, headed **Activity**, at every lifecycle stage as its main
+column and single booking history: when the timeline loads, the workspace drops the cards that repeated
+its bands (payments, quote publications, the decline decision); see
+[admin-request-workspace.md](admin-request-workspace.md#integrated-conversation). Closed and declined bookings retain correspondence access; financial eligibility is unchanged.
 The implementation follows fionas-commerce PR #32 at `9f2bc0244e8e310660a2dbc3de45c56fc3828a8b`
 (still open when integrated), its route DTOs, generated OpenAPI and conversation tests. Deploy that
 contract or its merged equivalent before enabling the feature. No provider credentials belong here.
@@ -144,7 +146,7 @@ frontend adds no automatic inquiry, Quote or Invoice emails and no provider conf
 
 ## Refresh and notifications
 
-Refresh conversation is a native GET form. With JavaScript it fetches only the admin-origin
+Refresh (the Activity header's button) is a native GET form. With JavaScript it fetches only the admin-origin
 `/requests/{id}/conversation` no-store endpoint; no full-page invalidation resets other forms. Reads do
 not overlap, and failed refreshes keep the previously displayed view with explicit stale-view copy.
 Keyed message components keep disclosure choices and the composer retains its original intent.
@@ -200,7 +202,7 @@ One per-card controller connects only with inquiry, financial-document and commu
 permissions; send/acknowledge permissions are not required. It closes on destruction, hidden pages
 and offline transitions, resuming on visible/online transitions unless the browser reported CLOSED
 (terminal). Native EventSource owns retries. Two minutes without successful synchronization pauses
-the source; manual Refresh conversation or a visible/online transition can resume that budget.
+the source; manual Refresh or a visible/online transition can resume that budget.
 Terminal subscriptions require a fresh page lifecycle after the underlying issue is resolved.
 There is no polling or global connection manager.
 
@@ -221,7 +223,8 @@ are untouched. Live updates never send, reconcile or acknowledge. Keyed native d
 open state. The initial timeline supplies the financial and lifecycle history baseline. If it was
 unavailable, the first validated refresh establishes the baseline without raising a warning.
 Subsequent changes to authoritative non-communication history mark the rest of the workspace
-potentially stale with **Request details changed — reload to review**. This is an explicit full reload;
+potentially stale with a **Request details changed … Reload to review** notice across the top of the
+card (Right now and the Serving plan sit beside Activity and keep their loaded values). This is an explicit full reload;
 staff must preserve unfinished work first. No automatic page invalidation replaces financial reviews,
 editors or mutation tokens. Timeline history alone cannot detect changes that commerce does not
 represent there (for example a service-only amendment); existing expected-version protections remain.

@@ -1,19 +1,24 @@
 <script lang="ts">
 	import CategorizedSelections from './categorized-selections.svelte';
-	import { Card, focusRing } from '@fionas/ui';
+	import { Card, cn, focusRing } from '@fionas/ui';
 	import type { InquiryResponse } from '$lib/request-contract.js';
 	import { eventDateLabel, eventTypeLabel, guestCountLabel } from '$lib/presentation.js';
 	import { receivedTimeLabel } from '$lib/payments.js';
 	let {
 		inquiry,
-		approvedPlan = false
+		approvedPlan = false,
+		hideServed = false
 	}: {
 		inquiry: InquiryResponse;
-		/** The picks always stay; with an approved plan they may differ from it. */
+		/** The picks always stay; with an approved plan they may differ from it, so they fold away. */
 		approvedPlan?: boolean;
+		/** Activity already shows when the event was served. */
+		hideServed?: boolean;
 	} = $props();
 	const served = $derived(
-		inquiry.lifecycle.served && Number.isFinite(Date.parse(inquiry.lifecycle.served.occurredAt))
+		!hideServed &&
+			inquiry.lifecycle.served &&
+			Number.isFinite(Date.parse(inquiry.lifecycle.served.occurredAt))
 			? inquiry.lifecycle.served.occurredAt
 			: null
 	);
@@ -24,7 +29,7 @@
 	const value = 'm-0 mt-0.5 text-[13.5px] font-semibold';
 </script>
 
-<Card class="flex flex-col gap-3 p-[18px] sm:p-5" data-testid="event-card">
+<Card class="flex flex-col gap-3 p-[18px]" data-testid="event-card">
 	<h2 class={caps}>Event</h2>
 	<dl class="m-0 grid grid-cols-2 gap-x-4 gap-y-3">
 		<div>
@@ -65,29 +70,49 @@
 			<dd class="m-0 mt-0.5 text-[13.5px] text-(--text-muted)">Not on file</dd>
 		</div>
 	</dl>
-	<div class="border-t border-(--border-soft) pt-3">
-		<a href={`mailto:${inquiry.email}`} class={`rounded-sm text-[13px] wrap-anywhere ${focusRing}`}
-			>{inquiry.email}</a
-		>
-	</div>
 </Card>
 
-<Card class="flex flex-col gap-3 p-[18px] sm:p-5" data-testid="original-request">
-	<div class="flex flex-col gap-1">
-		<h2 class={caps}>What they asked for</h2>
-		<p class="m-0 text-[11.5px] text-(--text-muted)">
-			Recorded from the booking form, exactly as {inquiry.name} picked.{approvedPlan
-				? ' The approved plan can differ from this; it stays here for reference.'
-				: ''}
-		</p>
-	</div>
-	<CategorizedSelections items={inquiry.requestedService.items} />
-	<div class="flex flex-col gap-1.5 border-t border-(--border-soft) pt-3">
-		<h3 class={micro}>Their notes</h3>
-		<p
-			class="m-0 rounded-input bg-cream-200 px-3.5 py-3 text-[13.5px] leading-[1.6] wrap-anywhere whitespace-pre-line"
+<!-- The customer's own picks stay on the page at every stage. Before a plan is approved they are
+     the brief, so they start open; afterwards they are reference, folded under the plan. -->
+<Card class="p-0" data-testid="original-request">
+	<details class="group" open={!approvedPlan}>
+		<summary
+			class={cn(
+				'flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-card px-[18px] py-3.5 [&::-webkit-details-marker]:hidden',
+				focusRing,
+				'focus-visible:-outline-offset-3'
+			)}
 		>
-			{inquiry.message || 'No additional message.'}
-		</p>
-	</div>
+			<h2 class={caps}>What they asked for</h2>
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.75"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+				class="flex-none -rotate-90 text-(--text-muted) transition-transform duration-(--dur-fast) ease-(--ease-out) group-open:rotate-0"
+				><path d="m6 9 6 6 6-6"></path></svg
+			>
+		</summary>
+		<div class="flex flex-col gap-3 px-[18px] pb-[18px]">
+			<p class="m-0 text-[11.5px] text-(--text-muted)">
+				Recorded from the booking form, exactly as {inquiry.name} picked.{approvedPlan
+					? ' The approved plan can differ from this; it stays here for reference.'
+					: ''}
+			</p>
+			<CategorizedSelections items={inquiry.requestedService.items} />
+			<div class="flex flex-col gap-1.5 border-t border-(--border-soft) pt-3">
+				<h3 class={micro}>Their notes</h3>
+				<p
+					class="m-0 rounded-input bg-cream-200 px-3.5 py-3 text-[13.5px] leading-[1.6] wrap-anywhere whitespace-pre-line"
+				>
+					{inquiry.message || 'No additional message.'}
+				</p>
+			</div>
+		</div>
+	</details>
 </Card>

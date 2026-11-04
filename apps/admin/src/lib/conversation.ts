@@ -7,6 +7,7 @@ import type {
 	TimelineItem
 } from './conversation-contract.js';
 import { isFinancialDocumentHistory, isDepositRequirementHistory } from './revision-history.js';
+import { BUSINESS_TIME_ZONE } from './presentation.js';
 
 const object = (v: unknown): v is Record<string, unknown> =>
 	!!v && typeof v === 'object' && !Array.isArray(v);
@@ -272,6 +273,40 @@ export function splitQuotedTrail(text: string): { body: string; quoted: string |
 	return start === null || blankLine(body)
 		? { body: text, quoted: null }
 		: { body, quoted: lines.slice(start).join('\n').trim() };
+}
+const dayFormat = new Intl.DateTimeFormat('en-US', {
+	weekday: 'long',
+	month: 'short',
+	day: 'numeric',
+	year: 'numeric',
+	timeZone: BUSINESS_TIME_ZONE
+});
+const timeFormat = new Intl.DateTimeFormat('en-US', {
+	hour: 'numeric',
+	minute: '2-digit',
+	timeZone: BUSINESS_TIME_ZONE
+});
+/** The Pacific calendar day an item belongs to, e.g. "Tuesday, Nov 3, 2026". */
+export function timelineDayLabel(instant: string): string {
+	return dayFormat.format(new Date(instant));
+}
+/** The Pacific wall-clock time shown on a band, e.g. "2:50 PM". */
+export function timelineTimeLabel(instant: string): string {
+	return timeFormat.format(new Date(instant));
+}
+/**
+ * Day separators for the Activity list, presentation only: backend order is kept, and a heading
+ * is inserted wherever the Pacific day differs from the previous item's (so an out-of-order day
+ * simply gets its own heading again rather than being re-sorted).
+ */
+export function timelineDayBreaks(items: readonly { occurredAt: string }[]): (string | null)[] {
+	let previous: string | null = null;
+	return items.map((item) => {
+		const day = timelineDayLabel(item.occurredAt);
+		const label = day === previous ? null : day;
+		previous = day;
+		return label;
+	});
 }
 export function actorLabel(actor: TimelineActor, userId: string): string {
 	return actor.principalKind === 'USER'

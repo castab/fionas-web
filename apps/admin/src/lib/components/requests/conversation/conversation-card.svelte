@@ -13,7 +13,13 @@
 		StaffTimeline
 	} from '$lib/conversation-contract.js';
 	import type { InquiryResponse } from '$lib/request-contract.js';
-	import { availabilityCopy, isStaffTimeline, replyExpectation } from '$lib/conversation.js';
+	import type { PublicationEntry } from '$lib/revision-history.js';
+	import {
+		availabilityCopy,
+		isStaffTimeline,
+		replyExpectation,
+		timelineDayBreaks
+	} from '$lib/conversation.js';
 	import { receivedTimeLabel } from '$lib/payments.js';
 	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 	import ConversationMessage from './conversation-message.svelte';
@@ -28,6 +34,7 @@
 		forbidden = false,
 		blocked = false,
 		userId,
+		publications = [],
 		permissions,
 		route,
 		endpoint,
@@ -42,6 +49,8 @@
 		forbidden?: boolean;
 		blocked?: boolean;
 		userId: string;
+		/** The current request's Quote publications, matched to quote bands for status and changes. */
+		publications?: PublicationEntry[];
 		permissions: string[];
 		route: string;
 		endpoint: string;
@@ -92,12 +101,8 @@
 	);
 	const acknowledgeAction = $derived(workspaceAction(returnContext, 'acknowledgeConversation'));
 	const messages = $derived(timeline?.items.filter((i) => i.kind === 'MESSAGE') ?? []);
-	const events = $derived((timeline?.items.length ?? 0) - messages.length);
-	const counts = $derived(
-		timeline?.items.length
-			? `${messages.length} email${messages.length === 1 ? '' : 's'} · ${events} booking event${events === 1 ? '' : 's'}`
-			: ''
-	);
+	const dayBreaks = $derived(timelineDayBreaks(timeline?.items ?? []));
+	const publicationById = $derived(new Map(publications.map((p) => [p.proposal.id, p])));
 	const noticed = $derived(messages.find((m) => m.messageId === newMessage));
 	const fromQuery = $derived(new URLSearchParams(route.split('?')[1]).get('from') ?? '');
 	// The default ring is olive and would vanish on the toast's olive ground.
@@ -223,31 +228,31 @@
 >
 	<div class="flex flex-col gap-1 px-[18px] pt-4 pb-3.5">
 		<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-			<h2 class={`m-0 text-(--text-heading) ${capsXs}`}>Conversation</h2>
+			<h2 class={`m-0 text-(--text-heading) ${capsXs}`}>Activity</h2>
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-				{#if liveState}<span class="text-[11px] text-(--text-muted)" data-testid="live-status"
-						>{refreshing ? 'Refreshing' : liveState}</span
+				{#if liveState}<span
+						class="inline-flex items-center gap-1.5 text-[11px] text-(--text-muted)"
+						data-testid="live-status"
+						><span
+							aria-hidden="true"
+							class={[
+								'size-1.5 rounded-full',
+								liveState === 'Live' && !refreshing ? 'bg-moss-600' : 'bg-(--text-muted)'
+							]}
+						></span>{refreshing ? 'Refreshing' : liveState}</span
 					>{/if}
-				{#if counts}<span class="text-[11px] text-(--text-muted)">{counts}</span>{/if}
 				<form method="GET" action={route + '#conversation'} onsubmit={refresh}>
 					{#if returnContext}<input type="hidden" name="from" value={fromQuery} />{/if}
-					<Button type="submit" variant="secondary" size="sm">Refresh conversation</Button>
+					<Button type="submit" variant="ghost" size="sm">Refresh</Button>
 				</form>
 			</div>
 		</div>
-		{#if detailsChanged}<p class="m-0 text-xs text-(--text-muted)">
-				Request details changed — <button
-					type="button"
-					class="cursor-pointer underline"
-					onclick={() => window.location.reload()}>reload to review</button
-				>. Save unfinished work before reloading.
+		{#if timeline?.conversation.subject}<p
+				class="m-0 text-xs wrap-anywhere text-(--text-muted)"
+				data-testid="conversation-subject"
+			>
+				Email thread: {timeline.conversation.subject}
 			</p>{/if}
-		<p class="m-0 mt-1 text-[15px] leading-[1.35] font-semibold wrap-anywhere">
-			{timeline?.conversation.subject ?? 'Booking correspondence'}
-		</p>
-		<p class="m-0 text-xs wrap-anywhere text-(--text-muted)">
-			with {inquiry.name} · {inquiry.email}
-		</p>
 		{#if availability !== 'READY' || !messages.length}<p
 				class="m-0 mt-1 text-[12.5px] leading-[1.55] text-(--text-muted)"
 			>
@@ -261,6 +266,18 @@
 				Communication attention is unavailable.
 			</p>{/if}
 	</div>
+	{#if detailsChanged}<p
+			role="status"
+			class="m-0 border-t border-olive-700/25 bg-olive-700/8 px-[18px] py-2.5 text-[12.5px] leading-[1.5] text-(--text-body)"
+			data-testid="details-changed"
+		>
+			Request details changed since this page loaded, so Right now and the Serving plan may be out
+			of date. <button
+				type="button"
+				class="cursor-pointer font-semibold underline"
+				onclick={() => window.location.reload()}>Reload to review</button
+			>. Save unfinished work before reloading.
+		</p>{/if}
 	<div
 		bind:this={statusElement}
 		tabindex="-1"
@@ -326,12 +343,27 @@
 		</div>
 	{/if}
 	{#if timeline?.items.length}
+		<!-- Backend order, unchanged. A day heading opens each run of items on one Pacific day. -->
 		<ol class="m-0 list-none p-0" aria-label="Conversation and booking history">
-			{#each timeline.items as item (item.id)}<li class="min-w-0 border-t border-(--border-soft)">
+			{#each timeline.items as item, index (item.id)}<li
+					class="min-w-0 border-t border-(--border-soft)"
+				>
+					{#if dayBreaks[index]}<p
+							class={`m-0 bg-(--surface-card) px-[18px] pt-3 pb-1.5 text-(--text-muted) ${capsXs}`}
+							data-testid="activity-day"
+						>
+							{dayBreaks[index]}
+						</p>{/if}
 					{#if item.kind === 'MESSAGE'}<ConversationMessage
 							message={item}
 							newest={item.messageId === timeline.conversation.latestMessageId}
-						/>{:else}<ConversationMilestone {item} {userId} />{/if}
+						/>{:else}<ConversationMilestone
+							{item}
+							{userId}
+							publication={item.kind === 'QUOTE_PUBLISHED'
+								? publicationById.get(item.proposal.id)
+								: undefined}
+						/>{/if}
 				</li>{/each}
 		</ol>
 	{/if}

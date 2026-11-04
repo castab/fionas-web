@@ -1,11 +1,23 @@
 <script lang="ts">
 	import CategorizedSelections from './categorized-selections.svelte';
-	import { Card } from '@fionas/ui';
+	import PlanApprovals from './plan-approvals.svelte';
+	import { Button, Card, focusRing } from '@fionas/ui';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
 	import { approvalSource, serviceCommitment } from '$lib/service-plan.js';
 	import { formatMoney, submittedDateLabel } from '$lib/presentation.js';
 	import { financialStageLabel } from '$lib/request-workspace.js';
-	let { request }: { request: CurrentStaffRequest } = $props();
+	import { approvalEntries } from '$lib/revision-history.js';
+	let {
+		request,
+		userId,
+		historyHref = null
+	}: {
+		request: CurrentStaffRequest;
+		userId: string;
+		/** Opens the financial versions view (`?history`); null when there is nothing behind it. */
+		historyHref?: string | null;
+	} = $props();
+	const approvals = $derived(approvalEntries(request));
 	const financial = $derived(request.financial);
 	const proposal = $derived(request.proposal ?? null);
 	const lifecycleStage = $derived(request.inquiry.lifecycle.stage);
@@ -48,21 +60,18 @@
 		'm-0 font-sans text-[9.5px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-muted) uppercase';
 </script>
 
+<!-- A container: in the rail the pricing column folds under each line's name. -->
 <Card
 	id="financial-document"
-	class="flex flex-col gap-3.5 p-[18px] sm:p-5"
+	class="@container flex flex-col gap-3.5 p-[18px]"
 	data-testid="financial-document"
 >
 	<div class="flex flex-wrap items-start justify-between gap-2.5">
 		<div class="flex flex-col gap-1">
 			<h2 class={caps}>Serving plan</h2>
-			<p class="m-0 text-[11.5px] text-(--text-muted)">
-				{lifecycleStage === 'DECLINED'
-					? 'The Estimate on file when this request was declined. It was never quoted or invoiced.'
-					: served
-						? 'What you scooped and what you charged.'
-						: 'What you’ll scoop and what you’re charging.'}
-			</p>
+			{#if lifecycleStage === 'DECLINED'}<p class="m-0 text-[11.5px] text-(--text-muted)">
+					The Estimate on file when this request was declined. It was never quoted or invoiced.
+				</p>{/if}
 		</div>
 		<span
 			class={`rounded-full border border-olive-300 px-2.5 py-1 whitespace-nowrap ${micro}`}
@@ -77,7 +86,12 @@
 			</p>
 			<p class="m-0 text-[13px] leading-[1.6] whitespace-pre-wrap">{plan.description}</p>
 			{#if plan.items.length}
-				<CategorizedSelections items={plan.items} inset />
+				<details class="text-[12.5px]" data-testid="service-plan-selections">
+					<summary class={`min-h-11 cursor-pointer rounded-sm py-2.5 font-semibold ${focusRing}`}
+						>Selections ({plan.items.length})</summary
+					>
+					<CategorizedSelections items={plan.items} inset />
+				</details>
 			{/if}
 			<p class="m-0 text-[11px] text-(--text-muted)" data-testid="service-plan-provenance">
 				Approved with {approvalSource(plan, request)} v{plan.documentVersion} · plan revision {plan.revision}
@@ -131,10 +145,11 @@
 								>{/if}
 						</span>
 					{/if}
-					<!-- Narrow screens keep the total on the right and show pricing under the name. -->
-					<span class="text-[11.5px] text-(--text-muted) sm:hidden">{pricing}</span>
+					<!-- Narrow cards keep the total on the right and show pricing under the name. -->
+					<span class="text-[11.5px] text-(--text-muted) @min-[480px]:hidden">{pricing}</span>
 				</span>
-				<span class="hidden text-xs whitespace-nowrap text-(--text-muted) sm:inline">{pricing}</span
+				<span class="hidden text-xs whitespace-nowrap text-(--text-muted) @min-[480px]:inline"
+					>{pricing}</span
 				>
 				<span
 					class="min-w-20 text-right text-[13.5px] font-bold wrap-anywhere text-(--text-heading)"
@@ -166,13 +181,26 @@
 				{formatMoney(financial.total, financial.currency)}
 			</dd>
 		</div>
-		{#if financial.stage === 'INVOICE'}
-			<div class="flex justify-between gap-4 font-semibold">
-				<dt>Current balance</dt>
-				<dd class="m-0 text-right wrap-anywhere">
-					{formatMoney(financial.reconciliation.balance, financial.reconciliation.currency)}
-				</dd>
-			</div>
-		{/if}
 	</dl>
+	{#if approvals.length || historyHref}
+		<div class="flex flex-col gap-1 border-t border-(--border-soft) pt-2">
+			{#if approvals.length}
+				<details class="text-[12.5px]">
+					<summary class={`min-h-11 cursor-pointer rounded-sm py-2.5 font-semibold ${focusRing}`}
+						>Plan approvals ({approvals.length})</summary
+					>
+					<PlanApprovals {approvals} {userId} />
+				</details>
+			{/if}
+			{#if historyHref}
+				<Button
+					href={historyHref + '#revision-history'}
+					variant="ghost"
+					size="sm"
+					class="self-start"
+					data-testid="financial-history-link">Financial versions</Button
+				>
+			{/if}
+		</div>
+	{/if}
 </Card>

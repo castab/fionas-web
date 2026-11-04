@@ -1,11 +1,20 @@
 <script lang="ts">
 	import type { TimelineItem } from '$lib/conversation-contract.js';
-	import { actorLabel } from '$lib/conversation.js';
+	import { actorLabel, timelineTimeLabel } from '$lib/conversation.js';
 	import { receivedTimeLabel, paymentMethodLabel } from '$lib/payments.js';
 	import { formatMoney } from '$lib/presentation.js';
+	import type { PublicationEntry } from '$lib/revision-history.js';
 	import { cn, focusRing } from '@fionas/ui';
-	let { item, userId }: { item: Exclude<TimelineItem, { kind: 'MESSAGE' }>; userId: string } =
-		$props();
+	let {
+		item,
+		userId,
+		publication
+	}: {
+		item: Exclude<TimelineItem, { kind: 'MESSAGE' }>;
+		userId: string;
+		/** The current request's record of this Quote publication: its status and what changed. */
+		publication?: PublicationEntry;
+	} = $props();
 	const label = $derived.by(() => {
 		switch (item.kind) {
 			case 'QUOTE_PUBLISHED':
@@ -52,18 +61,36 @@
 	const expandable = $derived(
 		'financial' in item || item.kind === 'PAYMENT_RECORDED' || item.kind === 'REFUND_RECORDED'
 	);
-	const bandText =
-		'min-w-0 flex-1 font-sans text-[10.5px] leading-[1.45] font-semibold tracking-[.06em] text-(--text-muted) uppercase';
 	const micro =
 		'm-0 font-sans text-[9.5px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-muted) uppercase';
 </script>
 
+<!-- What happened on the left; how much and when on the right. The day is the list's heading. -->
 {#snippet heading()}
-	<span aria-hidden="true" class={cn('size-1.5 flex-none rounded-full', dot)}></span>
-	<span class={bandText}
-		><span>{label}</span>{#if amount}{` — ${amount}`}{/if} ·
-		<time datetime={item.occurredAt}>{receivedTimeLabel(item.occurredAt)} Pacific</time
-		>{#if 'actor' in item}{` · ${actorLabel(item.actor, userId)}`}{/if}</span
+	<span aria-hidden="true" class={cn('size-2 flex-none self-center rounded-full', dot)}></span>
+	<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+		<span class="text-[13px] leading-[1.45] font-semibold text-(--text-body)">{label}</span>
+		{#if publication}<span
+				class={`rounded-full border border-olive-300 px-1.5 py-px whitespace-nowrap ${micro}`}
+				>{publication.status}</span
+			>{/if}
+		{#if 'actor' in item}<span class="text-[11.5px] text-(--text-muted)"
+				>{actorLabel(item.actor, userId)}</span
+			>{/if}
+		{#if publication?.changes.length}<span
+				class="basis-full text-[11.5px] text-(--text-muted)"
+				data-testid="publication-changes">Changed: {publication.changes.join(', ')}</span
+			>{/if}
+	</span>
+	{#if amount}<span
+			class="flex-none text-[13px] leading-[1.45] font-bold whitespace-nowrap text-(--text-heading) tabular-nums"
+			>{amount}</span
+		>{/if}
+	<time
+		datetime={item.occurredAt}
+		title={`${receivedTimeLabel(item.occurredAt)} Pacific`}
+		class="w-[4.75rem] flex-none text-right text-[11.5px] leading-[1.45] whitespace-nowrap text-(--text-muted) tabular-nums"
+		>{timelineTimeLabel(item.occurredAt)}</time
 	>
 {/snippet}
 
@@ -92,7 +119,7 @@
 				><path d="m6 9 6 6 6-6"></path></svg
 			>
 		</summary>
-		<div class="flex flex-col gap-3 pt-1 pr-[18px] pb-4 pl-[34px] text-[13px] wrap-anywhere">
+		<div class="flex flex-col gap-3 pt-1 pr-[18px] pb-4 pl-9 text-[13px] wrap-anywhere">
 			{#if 'financial' in item}
 				<dl class="m-0 flex flex-col">
 					{#each item.financial.lines as line (line.id)}<div
@@ -195,15 +222,17 @@
 	</details>
 {:else}
 	<div class="flex min-w-0 flex-col gap-1.5 bg-cream-300/50 px-[18px] py-3">
-		<div class="flex items-center gap-2.5">{@render heading()}</div>
+		<div class="flex items-center gap-2.5">
+			{@render heading()}<span aria-hidden="true" class="w-3.5 flex-none"></span>
+		</div>
 		{#if item.kind === 'DECLINED'}<p
-				class="m-0 pl-4 text-xs leading-[1.6] wrap-anywhere text-(--text-muted) italic"
+				class="m-0 pl-[18px] text-xs leading-[1.6] wrap-anywhere text-(--text-muted) italic"
 			>
 				<strong class="font-semibold not-italic">Internal reason:</strong>
 				{item.reason}
 			</p>
 		{:else if item.kind === 'COMMUNICATION_ACKNOWLEDGED'}<p
-				class="m-0 pl-4 text-xs leading-[1.6] text-(--text-muted) italic"
+				class="m-0 pl-[18px] text-xs leading-[1.6] text-(--text-muted) italic"
 			>
 				Email delivery and provider conversation state are unchanged.
 			</p>{/if}

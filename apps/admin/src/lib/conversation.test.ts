@@ -7,7 +7,10 @@ import {
 	replyBody,
 	replyError,
 	replyExpectation,
-	splitQuotedTrail
+	splitQuotedTrail,
+	timelineDayBreaks,
+	timelineDayLabel,
+	timelineTimeLabel
 } from './conversation.js';
 import type { ConversationMessage, DeliveryState, SendState } from './conversation-contract.js';
 import { conversationFixture, milestoneFixture } from '../../e2e/conversation-fixture.mjs';
@@ -124,6 +127,28 @@ describe('conversation boundary', () => {
 		expect(actorLabel({ principalKind: 'USER', principalId: 'other' }, 'me')).toBe('Staff');
 		expect(actorLabel({ principalKind: 'SERVICE', principalId: 'service' }, 'me')).toBe('System');
 		expect(replyError('PRIVATE backend secret')).not.toContain('PRIVATE');
+	});
+	it('labels Activity days and times in Pacific time without reordering items', () => {
+		// 06:30Z is still the previous evening in Los Angeles.
+		expect(timelineDayLabel('2026-11-04T06:30:00Z')).toBe('Tuesday, Nov 3, 2026');
+		expect(timelineTimeLabel('2026-11-03T22:50:00Z')).toBe('2:50 PM');
+		const items = [
+			{ occurredAt: '2026-11-03T19:54:00Z' },
+			{ occurredAt: '2026-11-03T22:50:00Z' },
+			{ occurredAt: '2026-11-04T06:30:00Z' },
+			{ occurredAt: '2026-11-04T18:00:00Z' },
+			// Backend order wins: an earlier day after a later one gets its own heading again.
+			{ occurredAt: '2026-11-03T23:00:00Z' }
+		];
+		const before = structuredClone(items);
+		expect(timelineDayBreaks(items)).toEqual([
+			'Tuesday, Nov 3, 2026',
+			null,
+			null,
+			'Wednesday, Nov 4, 2026',
+			'Tuesday, Nov 3, 2026'
+		]);
+		expect(items).toEqual(before);
 	});
 });
 

@@ -118,7 +118,9 @@ for (const native of [false, true])
 			await expect(page.locator('[aria-current="step"]')).toHaveCount(0);
 			// History stays: customer, request, notes and the canonical Estimate.
 			await expect(page.getByTestId('event-card')).toContainText('Saturday, July 25');
-			await expect(page.getByTestId('event-card')).toContainText('maya.torres@example.com');
+			await expect(page.getByRole('main').locator('header')).toContainText(
+				'maya.torres@example.com'
+			);
 			await expect(page.getByTestId('original-request')).toContainText('Waffle cones');
 			await expect(page.getByTestId('original-request')).toContainText('loves strawberry');
 			await expect(page.getByTestId('financial-version')).toHaveText('Estimate v1');
