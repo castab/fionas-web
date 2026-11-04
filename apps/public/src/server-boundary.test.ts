@@ -40,7 +40,7 @@ const appSources = () =>
 	sources(join(appRoot, 'src')).filter((path) => !/\.test\.ts$|[\\/]testing[\\/]/.test(path));
 
 const secrets =
-	/\$env\/(static|dynamic)\/private|\$lib\/server|NATS_(URL|USER|PASSWORD|CREDS_FILE)|FIONAS_(PRICES_FILE|REPLAY_SECRET)|PRESENTATION_SERVICE_(BASE_URL|ACCOUNT_ID|GALLERY_NAME|TRACKING_TOKEN)|@nats-io|process\.env/;
+	/\$env\/(static|dynamic)\/private|\$lib\/server|NATS_(URL|USER|PASSWORD|CREDS_FILE)|FIONAS_(PRICES_FILE|REPLAY_SECRET)|PRESENTATION_SERVICE_(BASE_URL|ACCOUNT_ID|GALLERY_NAME|TRACKING_TOKEN)|COMMERCE_API_URL|STRIPE_(SECRET_KEY|WEBHOOK_SECRET)|FIONAS_PAYMENT_ACCESS_KEY|@nats-io|process\.env/;
 
 describe('server-only event publishing', () => {
 	it('finds client-reachable sources to check', () => {
@@ -67,6 +67,24 @@ describe('server-only event publishing', () => {
 			.filter((path) => /env\.PRESENTATION_SERVICE_/.test(readFileSync(path, 'utf8')))
 			.map(rel);
 		expect(readers).toEqual(['src/lib/server/presentation-service/transport.server.ts']);
+	});
+
+	it('reads the commerce payments origin only in the payment transport', () => {
+		const readers = appSources()
+			.filter((path) => /env\.COMMERCE_/.test(readFileSync(path, 'utf8')))
+			.map(rel);
+		expect(readers).toEqual(['src/lib/server/payments/transport.server.ts']);
+	});
+
+	it('keeps the payment BFF apart from inquiry submission and NATS', () => {
+		const paymentModules = appSources().filter((path) => rel(path).includes('payments/'));
+		expect(paymentModules.length).toBeGreaterThan(0);
+		const offenders = paymentModules
+			.filter((path) =>
+				/nats|event-bus|inquiry-submission|inquiry-event/.test(readFileSync(path, 'utf8'))
+			)
+			.map(rel);
+		expect(offenders).toEqual([]);
 	});
 
 	it('opens NATS connections only in the connection module', () => {

@@ -10,7 +10,8 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"test:e2e": "playwright install chromium && playwright test",
+		"test:e2e": "playwright install chromium && playwright test -c playwright.payments.config.ts && playwright test",
+		"test:e2e:payments": "playwright install chromium && playwright test -c playwright.payments.config.ts",
 		"test:unit": "vitest"
 	},
 	"dependencies": {

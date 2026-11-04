@@ -29,7 +29,8 @@ is unavailable rather than an assumed zero balance.
 container. Wide containers (`@min-[880px]`) put **Activity** (the Conversation card: the booking's
 timeline plus the reply composer) in the main column, with a 340px rail holding **Right now**, then
 the **Event** card, "What they asked for" and the **Serving plan**. Narrow containers stack them as
-Right now → Activity → Event and plan; that is also the DOM and reading order. Open panels (Decline,
+Right now → Customer payments → Activity → Event and plan; that is also the DOM and reading order
+(Customer payments sits under Right now in the rail, and renders only with payment-access permission). Open panels (Decline,
 Record payment, the quote editor, `?history`) render in the main column above Activity. The rail is
 not sticky.
 
@@ -219,6 +220,35 @@ Transport types include the complete payment, allocations, refunds, refund alloc
 reconciliation. Runtime checks cover the receipt/allocation fields actually rendered, alongside
 the existing canonical proposal/deposit checks. Missing/malformed consumed fields fail closed.
 
+## Live staff financial state
+
+**Live staff financial state.** After an Activity read whose non-communication history
+(payments, publications, amendments, lifecycle bands) differs from the previous read, the page
+re-reads the authoritative projection once through `GET /requests/{inquiryId}/staff-request` (the
+same `GET /staff/requests/{id}` and coherence validator as the load) and replaces Right now, the
+Event card, the Serving plan and Customer payments' stage for this page load. Nothing is
+invalidated: the Conversation card, its composer draft, recovery state and disclosures stay
+mounted. Reads are serialized by sequence, so a late answer never overwrites a newer one. While a
+review panel is open (`?quote`, `?quote-revision`, `?invoice-revision`, `?payment`, `?decline`) or
+a form result is shown, the reviewed snapshot is kept and Right now says **Request details changed
+while this panel was open … Reload to review**; a failed or incoherent re-read shows the same
+notice with "couldn't be loaded". Server actions still re-read and check every reviewed version,
+so a stale panel can never publish or record against moved terms.
+
+## Customer payments
+
+Depends on fionas-commerce PR #36 (merged). A compact **Customer payments** card below Right now
+creates, copies, rotates and revokes the customer's stable `/pay/{publicId}` link and shows Stripe
+attempt diagnostics with a confirmed **Check with Stripe** action. It needs
+`fionas.payment-access.manage`, `fionas.inquiries.read` and `commerce.financial-document.read`;
+without them (the first is never granted automatically) the card and its reads are skipped and
+manual payments, editors, Activity and fulfillment are unaffected. QUOTED/BOOKED/SERVED can issue
+and rotate; CLOSED can copy and revoke only; REQUESTED/DECLINED show nothing. Load data holds link
+status only; the URL is read on a deliberate copy and never rendered into the page. Enhanced
+results stay in the card (no workspace invalidation), mutations are never retried, and attempts
+are diagnostics, not ledger history: Activity stays the single payment history. Live Activity
+refreshes also refresh displayed attempts. See [customer-payments.md](customer-payments.md).
+
 ## Explicit fulfillment and closeout
 
 BOOKED + INVOICE with `fionas.inquiries.manage` exposes **Mark event served**. Serving is an
@@ -322,7 +352,7 @@ that left the original filter no longer appears in it.
 
 Requests is current (`aria-current="location"`) on detail routes and links to its index. Dashboard
 is no longer current there; the Back link and sign-out remain available. The inbox, staff notes,
-reopening declined requests, quote revisions, quote expiry and messages, the phone/in-person New quote screen, communications, refunds/allocation management, electronic payment flows,
+reopening declined requests, quote revisions, quote expiry and messages, the phone/in-person New quote screen, communications, refunds/allocation management, payment-link emails,
 backdating and payment notes are outside this slice.
 
 The original request retains its recorded human-readable selection labels; an issued

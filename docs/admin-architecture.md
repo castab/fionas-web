@@ -122,8 +122,9 @@ Because the cookie is `Secure`, SvelteKit sets it with `Secure` too; browsers ac
 Both are read per request with `$env/dynamic/private`. See `apps/admin/.env.example`. The admin app
 acts only as the signed-in staff member (a USER session) and never sends a service bearer token;
 calling the backend as a service on a user's behalf (caller + actor delegation) would be designed
-separately. (The public site no longer calls the backend at all: it publishes inquiry events to NATS,
-see `docs/public-inquiry-submission.md`.)
+separately. (The public site publishes inquiry events to NATS, see `docs/public-inquiry-submission.md`;
+its only commerce access is the separate customer payment BFF, which forwards a customer bearer and
+never a staff session, see `docs/customer-payments.md`. The two apps share no credentials or cookies.)
 
 The API must list every admin origin as trusted: `http://localhost:5174`,
 `https://admin-dev.fionasicecream.com`, `https://admin.fionasicecream.com`. Otherwise login returns 403
@@ -181,3 +182,15 @@ release. Retryable 200 placeholders differ from terminal 204s; only real timelin
 an authoritative conversation read. No page-level invalidation or browser commerce connection exists.
 See [Live timeline updates](admin-conversation.md#live-timeline-updates) for classification, lifecycle,
 composer safety, backend enablement and the deployment proxy verification checklist.
+
+## Customer payment links
+
+`$lib/server/customer-payments.ts` reads and manages `/staff/requests/{inquiryId}/payment-access`
+(plus `/rotate`, `/revoke`) and `/payment-attempts` (plus `/{attemptId}/reconcile`) through
+`request()` with the staff member's own cookie and trusted Origin; POSTs are bodyless and sent once.
+It runs only with `fionas.payment-access.manage`, `fionas.inquiries.read` and
+`commerce.financial-document.read` (the first is granted to no role automatically; never substitute
+a service identity). Load data carries link status and the nonsecret publicId only; the usable URL
+appears only in the deliberate `reveal` result of the `?/customerPayments` action. The read-only
+`GET /requests/{inquiryId}/customer-payments` endpoint refreshes the card after Activity updates.
+See [customer-payments.md](customer-payments.md#staff-link-management).
