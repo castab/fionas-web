@@ -186,12 +186,11 @@ export function requestSummaryDescription(data: CurrentStaffRequest, today: stri
 		const countdown = countdownLabel(daysUntil(inquiry.eventDate, today));
 		return `Submitted ${submittedDateLabel(inquiry.createdAt)} · ${
 			countdown ? `event is ${countdown}` : 'the event date has passed'
-		}. Review the current Estimate below before issuing a quote.`;
+		}. Review the Estimate in the Serving plan before issuing a quote.`;
 	}
 	if (stage === 'QUOTED')
 		return `${proposal ? `Quote v${proposal.documentVersion} issued ${submittedDateLabel(proposal.issuedAt)}. ` : ''}The full approved deposit is required to hold the date and book this event.`;
-	if (stage === 'CLOSED')
-		return 'Service and payment are complete. Review the financial and payment history below.';
+	if (stage === 'CLOSED') return 'Service and payment are complete. Nothing else is pending.';
 	if (stage === 'DECLINED')
 		return 'No booking action is pending. The request and its original Estimate stay on file.';
 	const balance = financial.reconciliation.balance;
@@ -218,7 +217,7 @@ export function requestSummaryDescription(data: CurrentStaffRequest, today: stri
 		? `${event} · ${formatMoney(balance, financial.currency)} can be recorded any time, before or after the event.`
 		: sign === 'zero'
 			? `${event} · The Invoice is paid in full.`
-			: `${event} · The Invoice balance is below zero. Review the payment history below.`;
+			: `${event} · The Invoice balance is below zero. Review the recorded payments and refunds.`;
 }
 export function financialStageLabel(stage: string): string {
 	return (

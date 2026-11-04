@@ -13,13 +13,15 @@ import { mayaId } from './request-fixture.mjs';
 /** Each category heading with its chips, in the order a reader meets them. */
 async function groups(scope: Locator) {
 	const result: [string, string[]][] = [];
-	for (const list of await scope.getByRole('list').all()) {
+	for (const list of await scope.getByRole('list', { includeHidden: true }).all()) {
 		const name = await list.getAttribute('aria-labelledby');
 		if (!name) continue;
 		const heading = (await scope.locator(`[id="${name}"]`).textContent())?.trim() ?? '';
 		result.push([
 			heading,
-			(await list.getByRole('listitem').allTextContents()).map((t) => t.trim())
+			(await list.getByRole('listitem', { includeHidden: true }).allTextContents()).map((t) =>
+				t.trim()
+			)
 		]);
 	}
 	return result;
@@ -28,7 +30,7 @@ async function groups(scope: Locator) {
 async function editorGroups(page: Page) {
 	const result: [string, string[]][] = [];
 	const scope = editor(page);
-	for (const list of await scope.getByRole('list').all()) {
+	for (const list of await scope.getByRole('list', { includeHidden: true }).all()) {
 		const name = await list.getAttribute('aria-labelledby');
 		const heading = (await scope.locator(`[id="${name}"]`).textContent())?.trim() ?? '';
 		const labels = await list

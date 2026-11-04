@@ -328,13 +328,20 @@ for (const native of [false, true]) {
 			await expect(page.getByTestId('accepted-plan')).toContainText(
 				'Churro catering for an evening'
 			);
+			// Approvals live with the plan (Activity never shows a service-only change); without a
+			// timeline, the publications stay listed in Revision history.
+			const card = page.getByTestId('financial-document');
+			await card.getByText('Plan approvals (2)', { exact: true }).click();
+			await expect(card.getByTestId('history-approvals').getByRole('listitem')).toHaveCount(2);
+			await expect(card.getByTestId('history-approvals')).toContainText(
+				'Accepted with the deposit'
+			);
 			const history = page.getByTestId('revision-history');
-			await expect(history.getByTestId('history-approvals').getByRole('listitem')).toHaveCount(2);
 			await expect(history.getByTestId('history-publications').getByRole('listitem')).toHaveCount(
 				1
 			);
-			await expect(history).toContainText('Accepted with the deposit');
 			await expect(history).not.toContainText('Republish');
+			await expect(card).not.toContainText('Republish');
 		});
 
 		test('removing a noted line replaces the plan without its note, visibly', async ({
@@ -511,7 +518,7 @@ test.describe('permissions', () => {
 		await session(context, { request: revisionFixture('invoice-service-amendment') });
 		await page.goto(route);
 		await expect(page.getByTestId('amend-invoice')).toHaveCount(0);
-		await expect(page.getByTestId('revision-history')).toContainText('Service plan updated');
+		await expect(page.getByTestId('history-approvals')).toContainText('Service plan updated');
 		await page.goto(`${route}?invoice-revision`);
 		await expect(page.getByTestId('quote-builder')).toHaveCount(0);
 	});
@@ -529,7 +536,7 @@ test.describe('what the workspace shows', () => {
 		await expect(page.getByTestId('service-plan')).toHaveCount(0);
 		await expect(page.getByTestId('service-plan-cleared')).toContainText('Service plan removed');
 		await expect(page.getByTestId('accepted-plan')).toContainText('revision 1');
-		await expect(page.getByTestId('revision-history')).toContainText('Service plan removed');
+		await expect(page.getByTestId('history-approvals')).toContainText('Service plan removed');
 		await page.goto(`${route}?invoice-revision`);
 		await expect(page.getByTestId('plan-state')).toContainText('was removed');
 		await expect(page.getByLabel('Approved service description')).toHaveValue('');

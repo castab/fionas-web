@@ -1,10 +1,9 @@
 <script lang="ts">
-	import CategorizedSelections from './categorized-selections.svelte';
 	import { Button, Card } from '@fionas/ui';
 	import { depositTermsLabel } from '$lib/deposit.js';
 	import { receivedTimeLabel } from '$lib/payments.js';
 	import { formatMoney } from '$lib/presentation.js';
-	import { approvalEntries, publicationEntries } from '$lib/revision-history.js';
+	import { publicationEntries } from '$lib/revision-history.js';
 	import { financialStageLabel } from '$lib/request-workspace.js';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
 	import type {
@@ -26,6 +25,7 @@
 		open,
 		openHref,
 		closeHref,
+		showPublications = true,
 		userId
 	}: {
 		request: CurrentStaffRequest;
@@ -34,10 +34,11 @@
 		open: boolean;
 		openHref: string;
 		closeHref: string;
+		/** Quote publications, shown only when Activity (the optional timeline) could not load. */
+		showPublications?: boolean;
 		userId: string;
 	} = $props();
 	const publications = $derived(publicationEntries(request));
-	const approvals = $derived(approvalEntries(request));
 	const caps =
 		'm-0 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-heading) uppercase';
 	const micro =
@@ -54,14 +55,17 @@
 	data-testid="revision-history"
 >
 	<div class="flex flex-col gap-1">
-		<h2 id="revision-history-title" class={caps}>Revision history</h2>
+		<h2 id="revision-history-title" class={caps}>
+			{showPublications ? 'Revision history' : 'Financial versions'}
+		</h2>
 		<p class="m-0 text-[11.5px] text-(--text-muted)">
-			Read only. Quote publications, service plan approvals and financial versions are separate
-			histories: one can advance without the others.
+			{showPublications
+				? 'Read only. Activity is unavailable, so the quote publications behind this booking are listed here.'
+				: 'Read only. Every immutable financial version and deposit revision behind this booking.'}
 		</p>
 	</div>
 
-	{#if publications.length}
+	{#if showPublications && publications.length}
 		<section class="flex flex-col gap-2" aria-labelledby="history-publications">
 			<h3 id="history-publications" class={micro}>Quote publications</h3>
 			<ol class="m-0 flex list-none flex-col gap-2 p-0" data-testid="history-publications">
@@ -85,50 +89,6 @@
 						{#if entry.changes.length}<p class="m-0 text-[11.5px]">
 								Changed: {entry.changes.join(', ')}
 							</p>{/if}
-					</li>
-				{/each}
-			</ol>
-		</section>
-	{/if}
-
-	{#if approvals.length}
-		<section class="flex flex-col gap-2" aria-labelledby="history-approvals">
-			<h3 id="history-approvals" class={micro}>Service plan approvals</h3>
-			<ol class="m-0 flex list-none flex-col gap-2 p-0" data-testid="history-approvals">
-				{#each approvals as entry (entry.plan.revision)}
-					<li class="flex flex-col gap-1 rounded-input bg-cream-200 px-3 py-2.5 text-[13px]">
-						<div class="flex flex-wrap items-center gap-2">
-							<span class="font-semibold">{entry.label}</span>
-							<span class="text-(--text-muted)">Revision {entry.plan.revision}</span>
-							{#if entry.current}<span class={pill}>Current</span>{/if}
-							{#if entry.accepted}<span class={pill}>Accepted with the deposit</span>{/if}
-						</div>
-						<p class="m-0 text-[11.5px] text-(--text-muted)">
-							<time datetime={entry.plan.approvedAt}
-								>{receivedTimeLabel(entry.plan.approvedAt)}</time
-							>
-							· {who(entry.plan.approvedBy)}
-							· Reviewed v{entry.plan.reviewedDocumentVersion}, recorded on {entry.source} v{entry
-								.plan.documentVersion}
-						</p>
-						{#if !entry.plan.cleared}
-							<details class="text-[12.5px]">
-								<summary class="min-h-11 cursor-pointer py-2 font-semibold">View this plan</summary>
-								<div class="flex flex-col gap-2 pb-1">
-									<p class="m-0 leading-[1.6] wrap-anywhere whitespace-pre-wrap">
-										{entry.plan.description}{entry.plan.guestCount
-											? ` · ${entry.plan.guestCount} guest${entry.plan.guestCount === 1 ? '' : 's'}`
-											: ''}
-									</p>
-									<CategorizedSelections items={entry.plan.items} headingLevel={4} inset />
-									{#if entry.plan.lineNotes.length}<p class="m-0 text-[11.5px] text-(--text-muted)">
-											{entry.plan.lineNotes.length} line note{entry.plan.lineNotes.length === 1
-												? ''
-												: 's'}
-										</p>{/if}
-								</div>
-							</details>
-						{/if}
 					</li>
 				{/each}
 			</ol>
@@ -200,7 +160,7 @@
 				class="m-0 text-[13px] text-(--text-muted)"
 				data-testid="history-unavailable"
 			>
-				Financial history is unavailable right now. The booking above is unaffected.
+				Financial history is unavailable right now. The rest of the booking is unaffected.
 				<Button href={openHref} data-sveltekit-reload variant="ghost" size="sm">Try again</Button>
 			</p>
 		{:else}

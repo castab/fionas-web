@@ -45,7 +45,7 @@ test('conversation journey preserves Requests context, historical snapshot, stat
 	await page.reload();
 	await expect(card.getByText('Accepted by email provider', { exact: true })).toBeVisible();
 	await conversation(context, { inbound: 'Thank you! Can we add a table?' });
-	await page.getByRole('button', { name: 'Refresh conversation' }).click();
+	await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await expect(card.getByText('Needs reply', { exact: true })).toBeVisible();
 	await expect(card.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
 	await page.screenshot({
@@ -122,7 +122,7 @@ test('refresh preserves open disclosures and draft; stale send needs explicit re
 	await page.getByText('Quote v2 published', { exact: true }).click();
 	await page.getByLabel('Message', { exact: true }).fill('Garden setup confirmed.');
 	await conversation(context, { inbound: 'We changed the location.' });
-	await page.getByRole('button', { name: 'Refresh conversation' }).click();
+	await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await expect(page.getByText('Historical total', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Garden setup confirmed.');
 	await page.getByRole('button', { name: 'Send reply', exact: true }).click();
@@ -242,7 +242,7 @@ test('null text, long addresses, escaped markup and permission gaps', async ({ p
 	await conversation(context, {
 		inbound: '<script>alert("hello")</script>\nhttps://example.com/' + 'x'.repeat(200)
 	});
-	await page.getByRole('button', { name: 'Refresh conversation' }).click();
+	await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await expect(
 		page
 			.getByTestId('conversation')
@@ -268,7 +268,7 @@ test('malformed optional timeline does not hide financial controls', async ({ pa
 	await expect(page.getByTestId('build-quote')).toBeVisible();
 	await expect(page.getByText('Email is temporarily unavailable.', { exact: false })).toBeVisible();
 	await conversation(context, { mode: 'accepted' });
-	await page.getByRole('button', { name: 'Refresh conversation' }).click();
+	await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await expect(page.getByText('Customer email', { exact: true })).toBeVisible();
 	await expect(page.getByText('New customer email · Maya Torres', { exact: true })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Prepare reply', exact: true }).click();
@@ -293,7 +293,7 @@ test.describe('native conversation', () => {
 		await page.getByRole('button', { name: 'Reconcile original reply' }).click();
 		await expect(page.getByText('Accepted by email provider', { exact: true })).toBeVisible();
 		await conversation(context, { inbound: 'A new native message' });
-		await page.getByRole('button', { name: 'Refresh conversation' }).click();
+		await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 		await page.getByRole('button', { name: 'Mark as read', exact: true }).click();
 		await expect(
 			page.getByTestId('conversation').getByText('Needs reply', { exact: true })
@@ -310,7 +310,7 @@ for (const stage of ['unquoted', 'quoted', 'booked', 'served', 'closed', 'declin
 		await session(context, { request: revisionFixture(stage) });
 		await conversation(context, {});
 		await page.goto(route);
-		await expect(page.getByRole('heading', { name: 'Conversation', exact: true })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Send reply', exact: true })).toBeEnabled();
 		if (stage === 'closed' || stage === 'declined') {
 			await expect(page.getByTestId('build-quote')).toHaveCount(0);
@@ -320,6 +320,33 @@ for (const stage of ['unquoted', 'quoted', 'booked', 'served', 'closed', 'declin
 		}
 	});
 }
+
+test('Activity is the history: duplicate records leave the page, and return when it cannot load', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	await session(context, { request: revisionFixture('closed') });
+	await conversation(context, {});
+	await page.goto(route);
+	const card = page.getByTestId('conversation');
+	await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
+	await expect(card.getByTestId('activity-day').first()).toBeVisible();
+	await expect(page.getByTestId('payment-history')).toHaveCount(0);
+	await expect(page.getByTestId('history-publications')).toHaveCount(0);
+	await expect(page.getByTestId('event-card')).not.toContainText('Marked served');
+	// Right now leads on a phone; on a wide screen it sits in the rail beside Activity.
+	const summary = (await page.getByTestId('request-summary').boundingBox())!;
+	const activity = (await card.boundingBox())!;
+	if ((page.viewportSize()?.width ?? 0) >= 1200) expect(summary.x).toBeGreaterThan(activity.x);
+	else expect(summary.y).toBeLessThan(activity.y);
+	// Without the optional timeline, nothing it would have shown disappears from the booking.
+	await conversation(context, { mode: 'timeline-error' });
+	await page.reload();
+	await expect(page.getByTestId('payment-history')).toBeVisible();
+	await expect(page.getByTestId('history-publications')).toBeVisible();
+	await expect(page.getByTestId('event-card')).toContainText('Marked served');
+});
 
 test('conversation milestone bands expose historical allocations and internal provenance', async ({
 	page,

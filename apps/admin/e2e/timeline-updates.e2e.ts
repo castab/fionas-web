@@ -131,7 +131,7 @@ for (const updates of ['disabled', '401', '403', '404']) {
 		await expect(page.getByTestId('live-status')).toHaveText('Updates paused');
 		expect((await conversation(context)).subscriptions).toBe(1);
 		await conversation(context, { inbound: 'Manual fallback' });
-		await page.getByRole('button', { name: 'Refresh conversation' }).click();
+		await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 		await expect(page.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
 		expect((await conversation(context)).subscriptions).toBe(1);
 	});
@@ -158,7 +158,7 @@ test('a hint during a delayed timeline read schedules another authoritative read
 	const before = (await conversation(context)).timelineReads;
 	await conversation(context, { holdTimeline: true, notify: true });
 	await expect.poll(async () => (await conversation(context)).timelineReads).toBe(before + 1);
-	await page.getByRole('button', { name: 'Refresh conversation' }).click();
+	await page.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await conversation(context, { inbound: 'Arrived during the read', notify: true });
 	await conversation(context, { holdTimeline: false, releaseTimeline: true });
 	await expect(page.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
@@ -255,7 +255,7 @@ test('first recovered history establishes the workspace baseline', async ({ page
 	history.items.push(milestone.find((i) => i.kind === 'INVOICE_AMENDED'));
 	await conversation(context, { timeline: history, notify: true });
 	await expect(warning).toBeVisible();
-	await card.getByRole('button', { name: 'Refresh conversation' }).click();
+	await card.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await expect(card.getByText('Conversation refreshed.', { exact: true })).toBeVisible();
 	await expect(warning).toBeVisible();
 	await page.reload();
