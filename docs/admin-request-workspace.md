@@ -27,7 +27,7 @@ is unavailable rather than an assumed zero balance.
 
 **Layout: Activity first.** Below the header and progress strip, the page is a grid in a size
 container. Wide containers (`@min-[880px]`) put **Activity** (the Conversation card: the booking's
-timeline plus the reply composer) in the main column, with a 320px rail holding **Right now**, then
+timeline plus the reply composer) in the main column, with a 340px rail holding **Right now**, then
 the **Event** card, "What they asked for" and the **Serving plan**. Narrow containers stack them as
 Right now → Activity → Event and plan; that is also the DOM and reading order. Open panels (Decline,
 Record payment, the quote editor, `?history`) render in the main column above Activity. The rail is

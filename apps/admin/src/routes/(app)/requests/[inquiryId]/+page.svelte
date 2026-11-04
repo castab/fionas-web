@@ -205,7 +205,7 @@
 		     Right now → Activity → Event/Serving plan; wide containers move the first and last into a
 		     right-hand rail beside Activity. -->
 		<div
-			class="grid min-w-0 grid-cols-1 gap-[18px] [grid-template-areas:'now'_'main'_'facts'] @min-[880px]:grid-cols-[minmax(0,1fr)_320px] @min-[880px]:grid-rows-[auto_1fr] @min-[880px]:[grid-template-areas:'main_now'_'main_facts']"
+			class="grid min-w-0 grid-cols-1 gap-[18px] [grid-template-areas:'now'_'main'_'facts'] @min-[880px]:grid-cols-[minmax(0,1fr)_340px] @min-[880px]:grid-rows-[auto_1fr] @min-[880px]:[grid-template-areas:'main_now'_'main_facts']"
 			data-testid="workspace-grid"
 		>
 			<Card
@@ -300,7 +300,7 @@
 								href={showBuilder ? '#quote-builder' : panelHref(editorPanels[availableMode])}
 								variant={availableMode === 'INVOICE_AMENDMENT' ? 'secondary' : 'primary'}
 								disabled={mutationPending || mutationReviewRequired}
-								class="min-h-12 flex-[1.4_1_150px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+								class="min-h-12 flex-[1.4_1_150px] px-4 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
 								data-testid={availableMode === 'INITIAL_QUOTE'
 									? 'build-quote'
 									: availableMode === 'QUOTE_REVISION'
@@ -313,7 +313,7 @@
 								href={showDecline ? '#decline-request' : panelHref('decline')}
 								variant="secondary"
 								disabled={mutationPending || mutationReviewRequired}
-								class="min-h-12 flex-[1_1_96px] border-rust-600 text-rust-600 not-disabled:hover:bg-rust-600/10 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+								class="min-h-12 flex-[1_1_96px] border-rust-600 px-4 text-rust-600 not-disabled:hover:bg-rust-600/10 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
 								data-testid="decline-request">Decline</Button
 							>
 						{/if}
