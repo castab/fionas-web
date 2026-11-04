@@ -51,7 +51,8 @@ export default defineConfig({
 		// Booking off: the landing page and the gated /book.
 		...Object.entries(devices_).map(([name, device]) => ({
 			name: `${name}-chromium`,
-			testIgnore: [bookingTests, offlineTests],
+			// Customer payments run separately (playwright.payments.config.ts), without NATS.
+			testIgnore: [bookingTests, offlineTests, '**/payments/**'],
 			use: { ...device, baseURL: gatedUrl }
 		})),
 		// Booking on: the form and the live CTAs.

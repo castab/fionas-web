@@ -8,7 +8,7 @@ npm-workspaces monorepo:
 ```
 fionas-web/
 ├── apps/
-│   ├── public/          # marketing site (SvelteKit): landing page and the /book request form
+│   ├── public/          # marketing site (SvelteKit): landing page, /book request form, /pay customer payments
 │   └── admin/           # staff console (SvelteKit): dashboard, requests, quotes, payments
 ├── packages/
 │   ├── ui/              # @fionas/ui — Svelte 5 components (Button, Badge, Card, Wordmark, toast…)
@@ -42,6 +42,16 @@ npm run nats:up      # local NATS + JetStream for /book (needs Docker)
 ## Booking form & events
 
 The public app owns the menu, form and rules in code. Server pricing reads only private monetary values from FIONAS_PRICES_FILE (a path) or FIONAS_PRICES_YML (the inline YAML, which takes precedence), and FIONAS_REPLAY_SECRET protects immutable retries. Every accepted /book request is published as a versioned **InquirySubmitted** event to NATS JetStream; the public site never calls a backend API. Other applications (fionas-commerce among them) consume the event. Missing or invalid prices or replay secret make /book show an unavailable page. While NATS is unconfigured, unreachable or reconnecting, /book shows that same unavailable card, so customers never fill in a form that can't be sent. The server logs NATS connection changes as `[nats] …`. See [public submission and deployment setup](docs/public-inquiry-submission.md) for required keys, price rotation, synthetic local setup, replica coordination and NATS permissions.
+
+## Customer payments
+
+Customers pay deposits and Invoice balances through Stripe-hosted Checkout from one stable link,
+`/pay/{publicId}#<bearer>`, which staff create and copy from the request workspace. This is the
+public site's only commerce access: a narrow same-origin BFF that forwards just the customer bearer
+(set `COMMERCE_API_URL` in `apps/public/.env`; unset means online payments show as unavailable,
+and the marketing site and `/book` are unaffected). The page never decides that money was received.
+See [docs/customer-payments.md](docs/customer-payments.md) for the URL and bearer lifecycle,
+idempotency, recovery, staff permissions, deployment and test-mode acceptance.
 
 ## Events & local NATS
 
@@ -97,21 +107,22 @@ so they need no running backend.
 
 ## Scripts (run from the repo root)
 
-| Script                       | What it does                                                                     |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| `npm run check`              | `tsc` / `svelte-check` in every app and package                                  |
-| `npm run lint`               | Prettier check + ESLint                                                          |
-| `npm run format`             | Prettier write                                                                   |
-| `npm run test:unit -- --run` | Vitest once (bare `test:unit` starts watch mode)                                 |
-| `npm run test:e2e`           | Playwright against a production build of each app (public needs Docker for NATS) |
-| `npm run build`              | Build every app                                                                  |
-| `npm run nats:up` / `down`   | Start / stop the local NATS + JetStream (see "Events & local NATS")              |
-| `npm run nats:setup`         | Create or verify the `FIONAS_INQUIRIES` stream                                   |
-| `npm run nats:tail`          | Print inquiry events as they are published                                       |
-| `npm run nats:purge`         | Delete every event in `FIONAS_INQUIRIES` after two confirmations                 |
-| `npm run asyncapi:validate`  | Validate `asyncapi.yaml` and its examples                                        |
+| Script                       | What it does                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| `npm run check`              | `tsc` / `svelte-check` in every app and package                               |
+| `npm run lint`               | Prettier check + ESLint                                                       |
+| `npm run format`             | Prettier write                                                                |
+| `npm run test:unit -- --run` | Vitest once (bare `test:unit` starts watch mode)                              |
+| `npm run test:e2e`           | Playwright against a production build of each app (public booking needs NATS) |
+| `npm run build`              | Build every app                                                               |
+| `npm run nats:up` / `down`   | Start / stop the local NATS + JetStream (see "Events & local NATS")           |
+| `npm run nats:setup`         | Create or verify the `FIONAS_INQUIRIES` stream                                |
+| `npm run nats:tail`          | Print inquiry events as they are published                                    |
+| `npm run nats:purge`         | Delete every event in `FIONAS_INQUIRIES` after two confirmations              |
+| `npm run asyncapi:validate`  | Validate `asyncapi.yaml` and its examples                                     |
 
-The public e2e tests start the compose NATS themselves. To use an already running server
+The public payment e2e suite (`playwright.payments.config.ts`) runs first and needs neither Docker
+nor NATS. The other public e2e tests start the compose NATS themselves. To use an already running server
 instead of Docker, set `E2E_NATS_URL`; its stream must be set up and its users must match
 `infra/nats/nats-server.conf`.
 

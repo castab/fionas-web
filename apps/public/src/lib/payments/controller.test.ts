@@ -1,0 +1,559 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createPaymentController, type ControllerDeps, type PageState } from './controller.js';
+import { paymentStore } from './checkout.js';
+import {
+	bookedSummary,
+	openCheckout,
+	otherToken,
+	publicId,
+	quotedSummary,
+	token
+} from './testing/fixtures.js';
+
+function memoryStorage(): Storage {
+	const map = new Map<string, string>();
+	return {
+		getItem: (key) => map.get(key) ?? null,
+		setItem: (key, value) => void map.set(key, String(value)),
+		removeItem: (key) => void map.delete(key),
+		clear: () => map.clear(),
+		key: (index) => [...map.keys()][index] ?? null,
+		get length() {
+			return map.size;
+		}
+	};
+}
+
+type Reply = { status: number; body?: unknown; delayMs?: number } | 'network';
+type Call = { url: string; method: string; headers: Record<string, string>; body?: string };
+
+function harness(
+	options: {
+		hash?: string;
+		search?: string;
+		storage?: Storage | null;
+		summary?: Reply[];
+		checkout?: Reply[];
+		uuids?: string[];
+	} = {}
+) {
+	const storage = options.storage === undefined ? memoryStorage() : options.storage;
+	const summaries = [...(options.summary ?? [])];
+	const checkouts = [...(options.checkout ?? [])];
+	const calls: Call[] = [];
+	const states: PageState[] = [];
+	const navigated: string[] = [];
+	const uuids = [...(options.uuids ?? ['key-1', 'key-2', 'key-3'])];
+	let cleared = 0;
+	let visible = true;
+	let visibilityListener: (() => void) | null = null;
+	const respond = (reply: Reply | undefined) => {
+		if (!reply || reply === 'network') return Promise.reject(new TypeError('Failed to fetch'));
+		const response = new Response(reply.body === undefined ? null : JSON.stringify(reply.body), {
+			status: reply.status,
+			headers: { 'content-type': 'application/json' }
+		});
+		return reply.delayMs
+			? new Promise<Response>((resolve) => setTimeout(() => resolve(response), reply.delayMs))
+			: Promise.resolve(response);
+	};
+	const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+		const url = String(input);
+		calls.push({
+			url,
+			method: init?.method ?? 'GET',
+			headers: Object.fromEntries(new Headers(init?.headers).entries()),
+			body: init?.body as string | undefined
+		});
+		expect(init?.credentials).toBe('omit');
+		return url.endsWith('/checkout-sessions')
+			? respond(checkouts.length > 1 ? checkouts.shift() : checkouts[0])
+			: respond(summaries.length > 1 ? summaries.shift() : summaries[0]);
+	}) as unknown as typeof globalThis.fetch;
+	const store = paymentStore(publicId, storage);
+	const deps: ControllerDeps = {
+		publicId,
+		store,
+		hash: options.hash ?? '',
+		search: options.search ?? '',
+		clearUrl: () => void cleared++,
+		fetch,
+		navigate: (url) => void navigated.push(url),
+		uuid: () => uuids.shift() ?? 'key-x',
+		visible: () => visible,
+		onVisible(listener) {
+			visibilityListener = listener;
+			return () => (visibilityListener = null);
+		},
+		onState: (state) => void states.push(state),
+		pollDelays: [1, 1, 1],
+		retryDelays: [1, 1]
+	};
+	const controller = createPaymentController(deps);
+	return {
+		controller,
+		store,
+		storage,
+		calls,
+		navigated,
+		get state() {
+			return controller.state;
+		},
+		get cleared() {
+			return cleared;
+		},
+		checkoutCalls: () => calls.filter((c) => c.url.endsWith('/checkout-sessions')),
+		summaryCalls: () => calls.filter((c) => !c.url.endsWith('/checkout-sessions')),
+		setVisible(value: boolean) {
+			visible = value;
+			visibilityListener?.();
+		},
+		replySummary(...replies: Reply[]) {
+			summaries.splice(0, summaries.length, ...replies);
+		},
+		replyCheckout(...replies: Reply[]) {
+			checkouts.splice(0, checkouts.length, ...replies);
+		}
+	};
+}
+
+const ok = (body: unknown) => ({ status: 200, body });
+
+describe('bearer capture', () => {
+	it('captures a fragment bearer into tab storage, cleans the URL and loads the summary', async () => {
+		const h = harness({ hash: `#${token}`, summary: [ok(quotedSummary())] });
+		await h.controller.start();
+		expect(h.cleared).toBe(1);
+		expect(h.store.token()).toBe(token);
+		expect(h.storage!.getItem(`fionas.pay.${publicId}.token`)).toBe(token);
+		const [read] = h.calls;
+		expect(read.url).toBe(`/api/payments/${publicId}`);
+		expect(read.url).not.toContain(token);
+		expect(read.headers['x-fionas-payment-token']).toBe(token);
+		expect(h.state.phase).toBe('ready');
+		expect(h.state.view?.kind).toBe('deposit-due');
+	});
+
+	it('restores the bearer from this tab after a Stripe redirect', async () => {
+		const storage = memoryStorage();
+		paymentStore(publicId, storage).saveToken(token);
+		const h = harness({ storage, search: '?checkout=returned', summary: [ok(quotedSummary())] });
+		await h.controller.start();
+		expect(h.cleared).toBe(1);
+		expect(h.calls[0].headers['x-fionas-payment-token']).toBe(token);
+	});
+
+	it('replaces an older bearer when a newer link is opened', async () => {
+		const storage = memoryStorage();
+		paymentStore(publicId, storage).saveToken(otherToken);
+		const h = harness({ storage, hash: `#${token}`, summary: [ok(quotedSummary())] });
+		await h.controller.start();
+		expect(h.store.token()).toBe(token);
+	});
+
+	it('asks for the original link when there is no bearer', async () => {
+		const h = harness();
+		await h.controller.start();
+		expect(h.state.phase).toBe('link-required');
+		expect(h.calls).toHaveLength(0);
+	});
+
+	it('refuses a malformed fragment without sending it anywhere', async () => {
+		const h = harness({ hash: '#too-short' });
+		await h.controller.start();
+		expect(h.state.phase).toBe('link-incomplete');
+		expect(h.cleared).toBe(1);
+		expect(h.calls).toHaveLength(0);
+	});
+
+	it('forgets a revoked or rotated bearer', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [{ status: 404, body: { code: 'not_found' } }]
+		});
+		await h.controller.start();
+		expect(h.state.phase).toBe('link-unavailable');
+		expect(h.store.token()).toBeNull();
+	});
+
+	it('works for this page only when sessionStorage is unavailable', async () => {
+		const h = harness({ hash: `#${token}`, storage: null, summary: [ok(quotedSummary())] });
+		await h.controller.start();
+		expect(h.state.persistent).toBe(false);
+		expect(h.state.phase).toBe('ready');
+	});
+
+	it('distinguishes disabled payments from an unreachable backend', async () => {
+		const disabled = harness({
+			hash: `#${token}`,
+			summary: [{ status: 503, body: { code: 'stripe_disabled' } }]
+		});
+		await disabled.controller.start();
+		expect(disabled.state.phase).toBe('payments-disabled');
+		const down = harness({ hash: `#${token}`, summary: ['network'] });
+		await down.controller.start();
+		expect(down.state.phase).toBe('unreachable');
+	});
+});
+
+describe('starting checkout', () => {
+	it('persists one key and the exact reviewed deposit body before sending, then redirects', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		const [post] = h.checkoutCalls();
+		expect(post.method).toBe('POST');
+		expect(post.headers['idempotency-key']).toBe('key-1');
+		expect(post.body).toBe('{"expectedDocumentVersion":3,"expectedBusinessRevision":4}');
+		expect(h.navigated).toEqual([openCheckout.url]);
+		expect(h.state.busy).toBe('redirecting');
+		expect(h.store.checkout()).toMatchObject({ key: 'key-1', phase: 'redirected' });
+		// The hosted URL is a short-lived credential: never persisted.
+		expect(JSON.stringify(h.store.checkout())).not.toContain('checkout.stripe.com');
+	});
+
+	it('never sends an amount for a deposit', async () => {
+		const h = harness({ hash: `#${token}`, summary: [ok(quotedSummary())] });
+		await h.controller.start();
+		await h.controller.pay({ partialCents: 1000n });
+		expect(h.checkoutCalls()).toHaveLength(0);
+	});
+
+	it('pays a full or partial Invoice amount in integer cents', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(bookedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: 10000n });
+		expect(h.checkoutCalls()[0].body).toBe(
+			'{"expectedDocumentVersion":6,"expectedBusinessRevision":8,"amountMinor":10000}'
+		);
+		const full = harness({
+			hash: `#${token}`,
+			summary: [ok(bookedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await full.controller.start();
+		await full.controller.pay({ partialCents: null });
+		expect(full.checkoutCalls()[0].body).toBe(
+			'{"expectedDocumentVersion":6,"expectedBusinessRevision":8}'
+		);
+	});
+
+	it('refuses amounts outside the balance or Stripe limits locally', async () => {
+		const h = harness({ hash: `#${token}`, summary: [ok(bookedSummary())] });
+		await h.controller.start();
+		await h.controller.pay({ partialCents: 49n });
+		await h.controller.pay({ partialCents: 96001n });
+		expect(h.checkoutCalls()).toHaveLength(0);
+	});
+
+	it('sends one command for duplicate clicks', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		await Promise.all([
+			h.controller.pay({ partialCents: null }),
+			h.controller.pay({ partialCents: null }),
+			h.controller.pay({ partialCents: null })
+		]);
+		expect(h.checkoutCalls()).toHaveLength(1);
+	});
+
+	it('retries an ambiguous result with the same key and bytes, then holds it', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: ['network', { status: 502, body: { code: 'internal_failure' } }, 'network']
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		const posts = h.checkoutCalls();
+		expect(posts).toHaveLength(3);
+		expect(new Set(posts.map((p) => p.headers['idempotency-key']))).toEqual(new Set(['key-1']));
+		expect(new Set(posts.map((p) => p.body)).size).toBe(1);
+		expect(h.state.notice).toBe('ambiguous');
+		expect(h.state.pending).toMatchObject({ ambiguous: true, amountCents: 24000n });
+		// A new Pay is refused while the outcome is unknown; Try again resends the same command.
+		h.replyCheckout(ok(openCheckout));
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(3);
+		await h.controller.retry();
+		expect(h.checkoutCalls().at(-1)?.headers['idempotency-key']).toBe('key-1');
+		expect(h.navigated).toEqual([openCheckout.url]);
+	});
+
+	it('keeps an unknown outcome across a reload of the tab', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: ['network']
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		const reloaded = harness({ storage: h.storage, summary: [ok(quotedSummary())] });
+		await reloaded.controller.start();
+		expect(reloaded.state.pending?.ambiguous).toBe(true);
+		expect(reloaded.state.notice).toBe('ambiguous');
+	});
+
+	it('requires review after PAYMENT_TERMS_CHANGED and uses a new key next time', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [{ status: 409, body: { code: 'conflict', message: 'PAYMENT_TERMS_CHANGED' } }]
+		});
+		await h.controller.start();
+		h.replySummary(
+			ok(
+				quotedSummary({
+					requiredAmount: '300.00',
+					document: { ...quotedSummary().document, version: 4, businessRevision: 5 }
+				})
+			)
+		);
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.notice).toBe('terms-changed');
+		expect(h.store.checkout()).toBeNull();
+		expect(h.state.view).toMatchObject({ kind: 'deposit-due', terms: { amountCents: 30000n } });
+		h.replyCheckout(ok(openCheckout));
+		await h.controller.pay({ partialCents: null });
+		const last = h.checkoutCalls().at(-1)!;
+		expect(last.headers['idempotency-key']).toBe('key-2');
+		expect(last.body).toBe('{"expectedDocumentVersion":4,"expectedBusinessRevision":5}');
+	});
+
+	it('blocks CHECKOUT_KEY_REUSED until the customer deliberately starts over', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [{ status: 409, body: { code: 'conflict', message: 'CHECKOUT_KEY_REUSED' } }]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.notice).toBe('key-reused');
+		expect(h.state.pending?.blocked).toBe(true);
+		await h.controller.retry();
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(1);
+		await h.controller.startOver();
+		expect(h.store.checkout()).toBeNull();
+		expect(h.state.pending).toBeNull();
+	});
+
+	it('fails closed on unknown conflict codes', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [{ status: 409, body: { code: 'brand_new_code' } }]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.notice).toBe('refused');
+		expect(h.navigated).toEqual([]);
+	});
+
+	it('does not follow a response that is not a Stripe Checkout URL', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok({ ...openCheckout, url: 'https://evil.example/pay' })]
+		});
+		await h.controller.start();
+		h.replySummary(ok(quotedSummary({ paymentInProgress: true, canPay: false })));
+		await h.controller.pay({ partialCents: null });
+		expect(h.navigated).toEqual([]);
+		expect(h.state.notice).toBe('checkout-open');
+	});
+});
+
+describe('returning from Stripe', () => {
+	async function redirected(summary: Record<string, unknown>, search: string) {
+		const first = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await first.controller.start();
+		await first.controller.pay({ partialCents: null });
+		const back = harness({ storage: first.storage, search, summary: [ok(summary)] });
+		await back.controller.start();
+		return back;
+	}
+
+	it('confirms a deposit only from an authoritative BOOKED summary', async () => {
+		const pending = await redirected(
+			quotedSummary({ paymentInProgress: true, canPay: false }),
+			'?checkout=returned'
+		);
+		expect(pending.state.notice).toBe('confirming');
+		expect(pending.state.view?.kind).toBe('in-progress');
+		const booked = await redirected(bookedSummary(), '?checkout=returned');
+		expect(booked.state.notice).toBe('deposit-confirmed');
+		expect(booked.store.checkout()).toBeNull();
+	});
+
+	it('never claims success from the return parameter alone', async () => {
+		const back = await redirected(quotedSummary(), '?checkout=returned');
+		expect(back.state.notice).toBe('checkout-not-completed');
+		expect(back.state.view?.kind).toBe('deposit-due');
+	});
+
+	it('keeps a cancelled but still-open Checkout and resumes it with the same key', async () => {
+		const back = await redirected(
+			quotedSummary({ paymentInProgress: true, canPay: false, checkoutRecoveryAvailable: true }),
+			'?checkout=cancelled'
+		);
+		expect(back.state.notice).toBe('checkout-cancelled-open');
+		expect(back.store.checkout()?.key).toBe('key-1');
+		back.replyCheckout(ok(openCheckout));
+		await back.controller.recover({ partialCents: null });
+		expect(back.checkoutCalls()[0].headers['idempotency-key']).toBe('key-1');
+		expect(back.navigated).toEqual([openCheckout.url]);
+	});
+
+	it('polls with bounded backoff while a payment is confirming', async () => {
+		const back = await redirected(
+			quotedSummary({ paymentInProgress: true, canPay: false }),
+			'?checkout=returned'
+		);
+		back.replySummary(ok(quotedSummary({ paymentInProgress: true, canPay: false })));
+		await vi.waitFor(() => expect(back.state.polling).toBe('exhausted'));
+		expect(back.summaryCalls()).toHaveLength(4); // the initial read plus three bounded polls
+		back.replySummary(ok(bookedSummary()));
+		await back.controller.refresh();
+		expect(back.state.notice).toBe('deposit-confirmed');
+		expect(back.state.polling).toBe('idle');
+	});
+
+	it('pauses polling while the page is hidden', async () => {
+		const back = await redirected(
+			quotedSummary({ paymentInProgress: true, canPay: false }),
+			'?checkout=returned'
+		);
+		back.setVisible(false);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		const hiddenReads = back.summaryCalls().length;
+		expect(hiddenReads).toBeLessThanOrEqual(2);
+		back.replySummary(ok(bookedSummary()));
+		back.setVisible(true);
+		await vi.waitFor(() => expect(back.state.notice).toBe('deposit-confirmed'));
+	});
+
+	it('confirms an Invoice payment with the authoritative remaining balance', async () => {
+		const first = harness({
+			hash: `#${token}`,
+			summary: [ok(bookedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await first.controller.start();
+		await first.controller.pay({ partialCents: 10000n });
+		const back = harness({
+			storage: first.storage,
+			search: '?checkout=returned',
+			summary: [
+				ok(bookedSummary({ paidAmount: '340.00', balance: '860.00', requiredAmount: '860.00' }))
+			]
+		});
+		await back.controller.start();
+		expect(back.state.notice).toBe('payment-received');
+		expect(back.state.view).toMatchObject({ kind: 'balance-due', terms: { amountCents: 86000n } });
+	});
+});
+
+describe('recovery without the original browser', () => {
+	const inProgress = quotedSummary({
+		paymentInProgress: true,
+		canPay: false,
+		unavailableReason: 'PAYMENT_IN_PROGRESS',
+		checkoutRecoveryAvailable: true
+	});
+
+	it('sends one deliberate fresh-key command and never loops on recovery conflicts', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(inProgress)],
+			checkout: [{ status: 409, body: { code: 'checkout_in_progress' } }]
+		});
+		await h.controller.start();
+		expect(h.state.view).toMatchObject({ kind: 'in-progress', recovery: { purpose: 'DEPOSIT' } });
+		await h.controller.pay({ partialCents: null }); // the ordinary Pay is not available
+		expect(h.checkoutCalls()).toHaveLength(0);
+		await h.controller.recover({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(1);
+		expect(h.state.notice).toBe('checkout-open');
+		expect(h.store.checkout()).toBeNull();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(h.checkoutCalls()).toHaveLength(1);
+	});
+
+	it('authorizes a replacement only when commerce confirms the old Session expired', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(inProgress)],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		await h.controller.recover({ partialCents: null });
+		expect(h.checkoutCalls()[0].body).toBe(
+			'{"expectedDocumentVersion":3,"expectedBusinessRevision":4}'
+		);
+		expect(h.navigated).toEqual([openCheckout.url]);
+	});
+
+	it.each([
+		['payment_processing', 'processing'],
+		['payment_state_changed', 'state-changed'],
+		['checkout_recovery_conflict', 'recovery-conflict'],
+		['checkout_reconciliation_required', 'reconciliation-required']
+	])('maps %s without authorizing anything', async (code, notice) => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(inProgress)],
+			checkout: [{ status: 409, body: { code } }]
+		});
+		await h.controller.start();
+		await h.controller.recover({ partialCents: null });
+		expect(h.state.notice).toBe(notice);
+		expect(h.navigated).toEqual([]);
+		expect(h.store.checkout()).toBeNull();
+	});
+
+	it('never reports an in-flight recovery as an unknown outcome when a poll lands mid-send', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(inProgress)],
+			checkout: [{ status: 200, body: openCheckout, delayMs: 30 }]
+		});
+		await h.controller.start();
+		const notices: unknown[] = [];
+		const recovery = h.controller.recover({ partialCents: null });
+		await vi.waitFor(() => expect(h.summaryCalls().length).toBeGreaterThan(1));
+		notices.push(h.state.notice, h.state.pending?.ambiguous);
+		await recovery;
+		expect(notices).toEqual([null, false]);
+		expect(h.navigated).toEqual([openCheckout.url]);
+	});
+
+	it('treats a historical EXPIRED replay as terminal, not as a new authorization', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok({ ...openCheckout, url: undefined, state: 'EXPIRED', outcome: 'PENDING' })]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.notice).toBe('checkout-expired');
+		expect(h.store.checkout()).toBeNull();
+		expect(h.navigated).toEqual([]);
+	});
+});

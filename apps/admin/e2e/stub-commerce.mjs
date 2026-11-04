@@ -3,6 +3,7 @@
 // host-only session cookie.
 import { createServer } from 'node:http';
 import { conversationRoute } from './conversation-stub.mjs';
+import { paymentAccessRoute } from './payment-access-stub.mjs';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
 import {
@@ -396,6 +397,8 @@ createServer(async (req, res) => {
 	}
 
 	if (await conversationRoute(req, res, currentSession, pathname, send, readJson, trustedOrigin))
+		return;
+	if (await paymentAccessRoute(req, res, currentSession, pathname, send, readJson, trustedOrigin))
 		return;
 	const requestMatch = /^\/staff\/requests\/([^/]+)$/.exec(pathname);
 	if (req.method === 'GET' && requestMatch) {

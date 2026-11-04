@@ -12,6 +12,8 @@
 	import RevisionHistory from '$lib/components/requests/revision-history.svelte';
 	import FulfillmentControls from '$lib/components/requests/fulfillment-controls.svelte';
 	import DeclineControls from '$lib/components/requests/decline-controls.svelte';
+	import CustomerPayments from '$lib/components/requests/customer-payments.svelte';
+	import type { CustomerPaymentsResult } from '$lib/customer-payments.js';
 	import { canRecordDeposit, canRecordInvoicePayment, receivedTimeLabel } from '$lib/payments.js';
 	import { isDecimal } from '$lib/payment-history.js';
 	import { depositTermsLabel } from '$lib/deposit.js';
@@ -124,6 +126,12 @@
 	// Activity is the booking's history when the optional timeline read succeeded. Without it, the
 	// records it would show (payments, publications, the decline decision) render on their own.
 	const timelineLoaded = $derived(!!data.conversation?.timeline);
+	// Bumped after each authoritative Activity refresh, so Customer payments can refresh its own
+	// diagnostics without invalidating the workspace (drafts, editors and disclosures stay put).
+	let activityRefreshes = $state(0);
+	const customerPaymentsResult = $derived(
+		form && 'customerPayments' in form ? (form.customerPayments as CustomerPaymentsResult) : null
+	);
 	const publications = $derived(request ? publicationEntries(request) : []);
 	const caps =
 		'm-0 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-heading) uppercase';
@@ -208,155 +216,173 @@
 			class="grid min-w-0 grid-cols-1 gap-[18px] [grid-template-areas:'now'_'main'_'facts'] @min-[880px]:grid-cols-[minmax(0,1fr)_340px] @min-[880px]:grid-rows-[auto_1fr] @min-[880px]:[grid-template-areas:'main_now'_'main_facts']"
 			data-testid="workspace-grid"
 		>
-			<Card
-				variant="flat"
-				class={[
-					'flex min-w-0 flex-col gap-3.5 self-start border-2 p-[18px] [grid-area:now]',
-					stage === 'REQUESTED' || stage === 'QUOTED'
-						? 'border-olive-700'
-						: stage === 'DECLINED'
-							? 'border-(--border-strong)'
-							: 'border-moss-600'
-				]}
-				data-testid="request-summary"
-			>
-				<div class="flex flex-col gap-1.5">
-					<p class={caps}>Right now</p>
-					<h2
-						aria-live="polite"
-						aria-atomic="true"
-						class="m-0 text-lg leading-[1.35] font-bold text-(--text-body)"
-					>
-						{requestSummary(request, data.today)}
-					</h2>
-					<p class="m-0 text-[12.5px] leading-[1.6] text-(--text-muted)">
-						{#if milestone}{milestone.label}
-							<time datetime={milestone.at}>{receivedTimeLabel(milestone.at)}</time>.{/if}
-						{requestSummaryDescription(request, data.today)}
-					</p>
-				</div>
-				<div class="flex flex-wrap gap-3 border-t border-(--border-soft) pt-3">
-					{#if financial.stage === 'INVOICE'}
-						<div class="flex min-w-0 flex-1 flex-col gap-0.5">
-							<span class={micro}>Total</span>
-							<span class="text-[17px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
-								>{formatMoney(financial.total, financial.currency)}</span
-							>
-						</div>
-						{#if isDecimal(financial.reconciliation.netApplied)}
+			<div class="flex min-w-0 flex-col gap-[18px] self-start [grid-area:now]">
+				<Card
+					variant="flat"
+					class={[
+						'flex min-w-0 flex-col gap-3.5 border-2 p-[18px]',
+						stage === 'REQUESTED' || stage === 'QUOTED'
+							? 'border-olive-700'
+							: stage === 'DECLINED'
+								? 'border-(--border-strong)'
+								: 'border-moss-600'
+					]}
+					data-testid="request-summary"
+				>
+					<div class="flex flex-col gap-1.5">
+						<p class={caps}>Right now</p>
+						<h2
+							aria-live="polite"
+							aria-atomic="true"
+							class="m-0 text-lg leading-[1.35] font-bold text-(--text-body)"
+						>
+							{requestSummary(request, data.today)}
+						</h2>
+						<p class="m-0 text-[12.5px] leading-[1.6] text-(--text-muted)">
+							{#if milestone}{milestone.label}
+								<time datetime={milestone.at}>{receivedTimeLabel(milestone.at)}</time>.{/if}
+							{requestSummaryDescription(request, data.today)}
+						</p>
+					</div>
+					<div class="flex flex-wrap gap-3 border-t border-(--border-soft) pt-3">
+						{#if financial.stage === 'INVOICE'}
 							<div class="flex min-w-0 flex-1 flex-col gap-0.5">
-								<span class={micro}>Paid</span>
-								<span class="text-[17px] leading-[1.25] font-bold wrap-anywhere text-moss-600"
-									>{formatMoney(financial.reconciliation.netApplied, financial.currency)}</span
+								<span class={micro}>Total</span>
+								<span
+									class="text-[17px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
+									>{formatMoney(financial.total, financial.currency)}</span
 								>
 							</div>
-						{/if}
-						<div class="flex min-w-0 flex-1 flex-col gap-0.5" data-testid="request-balance">
-							<span class={micro}>Balance</span>
-							<span class="text-[22px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
-								>{formatMoney(financial.reconciliation.balance, financial.currency)}</span
-							>
-						</div>
-					{:else}
-						<div class="flex min-w-0 flex-1 flex-col gap-0.5">
-							<span class={micro}
-								>{stage === 'DECLINED'
-									? 'Declined estimate'
-									: financial.stage === 'ESTIMATE'
-										? 'Estimate total'
-										: 'Quote total'}</span
-							>
-							<span class="text-[22px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
-								>{formatMoney(financial.total, financial.currency)}</span
-							>
-						</div>
-						{#if deposit.state === 'ACTIVE' && stage === 'QUOTED'}
-							<div class="flex min-w-0 flex-1 flex-col gap-0.5" data-testid="deposit-summary">
-								<span class={micro}>Deposit to hold the date</span>
+							{#if isDecimal(financial.reconciliation.netApplied)}
+								<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+									<span class={micro}>Paid</span>
+									<span class="text-[17px] leading-[1.25] font-bold wrap-anywhere text-moss-600"
+										>{formatMoney(financial.reconciliation.netApplied, financial.currency)}</span
+									>
+								</div>
+							{/if}
+							<div class="flex min-w-0 flex-1 flex-col gap-0.5" data-testid="request-balance">
+								<span class={micro}>Balance</span>
 								<span
 									class="text-[22px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
-									>{formatMoney(
-										deposit.requiredAmount.amount,
-										deposit.requiredAmount.currency
-									)}</span
-								>
-								<span class="text-[11.5px] text-(--text-muted)"
-									>{deposit.terms.type === 'PERCENTAGE'
-										? depositTermsLabel(deposit.terms)
-										: 'Fixed deposit'} · {deposit.satisfied
-										? 'deposit requirement met'
-										: 'awaiting deposit'}</span
+									>{formatMoney(financial.reconciliation.balance, financial.currency)}</span
 								>
 							</div>
+						{:else}
+							<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+								<span class={micro}
+									>{stage === 'DECLINED'
+										? 'Declined estimate'
+										: financial.stage === 'ESTIMATE'
+											? 'Estimate total'
+											: 'Quote total'}</span
+								>
+								<span
+									class="text-[22px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
+									>{formatMoney(financial.total, financial.currency)}</span
+								>
+							</div>
+							{#if deposit.state === 'ACTIVE' && stage === 'QUOTED'}
+								<div class="flex min-w-0 flex-1 flex-col gap-0.5" data-testid="deposit-summary">
+									<span class={micro}>Deposit to hold the date</span>
+									<span
+										class="text-[22px] leading-[1.25] font-bold wrap-anywhere text-(--text-heading)"
+										>{formatMoney(
+											deposit.requiredAmount.amount,
+											deposit.requiredAmount.currency
+										)}</span
+									>
+									<span class="text-[11.5px] text-(--text-muted)"
+										>{deposit.terms.type === 'PERCENTAGE'
+											? depositTermsLabel(deposit.terms)
+											: 'Fixed deposit'} · {deposit.satisfied
+											? 'deposit requirement met'
+											: 'awaiting deposit'}</span
+									>
+								</div>
+							{/if}
 						{/if}
+					</div>
+					{#if availableMode || canDecline}
+						<!-- Separate permissions: either action can appear without the other. -->
+						<div class="flex flex-wrap gap-2.5">
+							{#if availableMode}
+								<!-- Once the panel is open, this brings it into view instead of reloading it. -->
+								<Button
+									href={showBuilder ? '#quote-builder' : panelHref(editorPanels[availableMode])}
+									variant={availableMode === 'INVOICE_AMENDMENT' ? 'secondary' : 'primary'}
+									disabled={mutationPending || mutationReviewRequired}
+									class="min-h-12 flex-[1.4_1_150px] px-4 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+									data-testid={availableMode === 'INITIAL_QUOTE'
+										? 'build-quote'
+										: availableMode === 'QUOTE_REVISION'
+											? 'revise-quote'
+											: 'amend-invoice'}>{editorCopy[availableMode].open}</Button
+								>
+							{/if}
+							{#if canDecline}
+								<Button
+									href={showDecline ? '#decline-request' : panelHref('decline')}
+									variant="secondary"
+									disabled={mutationPending || mutationReviewRequired}
+									class="min-h-12 flex-[1_1_96px] border-rust-600 px-4 text-rust-600 not-disabled:hover:bg-rust-600/10 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+									data-testid="decline-request">Decline</Button
+								>
+							{/if}
+						</div>
 					{/if}
-				</div>
-				{#if availableMode || canDecline}
-					<!-- Separate permissions: either action can appear without the other. -->
-					<div class="flex flex-wrap gap-2.5">
-						{#if availableMode}
-							<!-- Once the panel is open, this brings it into view instead of reloading it. -->
-							<Button
-								href={showBuilder ? '#quote-builder' : panelHref(editorPanels[availableMode])}
-								variant={availableMode === 'INVOICE_AMENDMENT' ? 'secondary' : 'primary'}
-								disabled={mutationPending || mutationReviewRequired}
-								class="min-h-12 flex-[1.4_1_150px] px-4 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-								data-testid={availableMode === 'INITIAL_QUOTE'
-									? 'build-quote'
-									: availableMode === 'QUOTE_REVISION'
-										? 'revise-quote'
-										: 'amend-invoice'}>{editorCopy[availableMode].open}</Button
+					{#if quoteResult?.reviewRequired && !showBuilder}
+						<div role="alert" class="flex flex-col items-start gap-3">
+							<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>
+							<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
+								>Reload to review</Button
 							>
-						{/if}
-						{#if canDecline}
-							<Button
-								href={showDecline ? '#decline-request' : panelHref('decline')}
-								variant="secondary"
-								disabled={mutationPending || mutationReviewRequired}
-								class="min-h-12 flex-[1_1_96px] border-rust-600 px-4 text-rust-600 not-disabled:hover:bg-rust-600/10 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-								data-testid="decline-request">Decline</Button
-							>
-						{/if}
-					</div>
-				{/if}
-				{#if quoteResult?.reviewRequired && !showBuilder}
-					<div role="alert" class="flex flex-col items-start gap-3">
-						<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>
-						<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
-							>Reload to review</Button
+						</div>
+					{/if}
+					{#if canPay || !!form?.fulfillmentError || canMarkServed(request, data.user.permissions) || canCloseInquiry(request, data.user.permissions)}<div
+							class="flex flex-wrap gap-2.5"
 						>
-					</div>
+							<FulfillmentControls
+								{request}
+								permissions={data.user.permissions}
+								{route}
+								returnContext={data.returnContext}
+								error={form?.fulfillmentError}
+								reviewRequired={mutationReviewRequired}
+								bind:pending={mutationPending}
+								onReviewRequired={() => {
+									clientReviewRequired = true;
+								}}
+							/>
+							{#if canPay}
+								<!-- Once the panel is open, this brings it into view instead of reloading it. -->
+								<Button
+									href={showPayment ? '#record-payment' : panelHref('payment')}
+									variant={canMarkServed(request, data.user.permissions) ? 'secondary' : 'primary'}
+									disabled={mutationPending || mutationReviewRequired}
+									class="min-h-12 flex-[1_1_140px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+									data-testid="open-payment"
+									>{canRecordDeposit(request, data.user.permissions)
+										? 'Record deposit'
+										: 'Record payment'}</Button
+								>
+							{/if}
+						</div>{/if}
+				</Card>
+				{#if data.customerPayments}
+					<!-- Beside Right now: the stable customer link and provider diagnostics. Activity stays
+				     the payment history; this card never repeats it. -->
+					<CustomerPayments
+						stage={request.inquiry.lifecycle.stage}
+						view={data.customerPayments}
+						result={customerPaymentsResult}
+						endpoint={workspacePath + '/customer-payments'}
+						{route}
+						returnContext={data.returnContext}
+						refreshSignal={activityRefreshes}
+					/>
 				{/if}
-				{#if canPay || !!form?.fulfillmentError || canMarkServed(request, data.user.permissions) || canCloseInquiry(request, data.user.permissions)}<div
-						class="flex flex-wrap gap-2.5"
-					>
-						<FulfillmentControls
-							{request}
-							permissions={data.user.permissions}
-							{route}
-							returnContext={data.returnContext}
-							error={form?.fulfillmentError}
-							reviewRequired={mutationReviewRequired}
-							bind:pending={mutationPending}
-							onReviewRequired={() => {
-								clientReviewRequired = true;
-							}}
-						/>
-						{#if canPay}
-							<!-- Once the panel is open, this brings it into view instead of reloading it. -->
-							<Button
-								href={showPayment ? '#record-payment' : panelHref('payment')}
-								variant={canMarkServed(request, data.user.permissions) ? 'secondary' : 'primary'}
-								disabled={mutationPending || mutationReviewRequired}
-								class="min-h-12 flex-[1_1_140px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-								data-testid="open-payment"
-								>{canRecordDeposit(request, data.user.permissions)
-									? 'Record deposit'
-									: 'Record payment'}</Button
-							>
-						{/if}
-					</div>{/if}
-			</Card>
+			</div>
 			<div class="flex min-w-0 flex-col gap-[18px] [grid-area:main]">
 				{#if showDecline}
 					<DeclineControls
@@ -477,6 +503,7 @@
 						endpoint={workspacePath + '/conversation'}
 						returnContext={data.returnContext}
 						result={form as ConversationActionResult | null}
+						onrefreshed={() => activityRefreshes++}
 					/>
 				{/key}
 			</div>

@@ -39,7 +39,8 @@
 		route,
 		endpoint,
 		returnContext,
-		result
+		result,
+		onrefreshed
 	}: {
 		inquiry: InquiryResponse;
 		timeline: StaffTimeline | null;
@@ -56,6 +57,8 @@
 		endpoint: string;
 		returnContext: RequestListQuery | null;
 		result: ConversationActionResult | null;
+		/** After each applied authoritative timeline read (live hint or manual refresh). */
+		onrefreshed?: () => void;
 	} = $props();
 	let timeline = $state(untrack(() => initialTimeline));
 	let refreshing = $state(false);
@@ -174,6 +177,7 @@
 					historyBaseline ??= history;
 					if (history !== historyBaseline) detailsChanged = true;
 					timeline = next;
+					onrefreshed?.();
 				},
 				busy(value) {
 					refreshing = value;

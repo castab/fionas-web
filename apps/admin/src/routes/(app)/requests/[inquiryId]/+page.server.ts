@@ -15,6 +15,7 @@ import {
 	declineInquiry
 } from '$lib/server/staff-request.js';
 import { editorAction, loadHistory } from '$lib/server/editor-actions.js';
+import { customerPaymentsAction, loadCustomerPayments } from '$lib/server/customer-payments.js';
 import {
 	canRecordDeposit,
 	canRecordInvoicePayment,
@@ -90,6 +91,7 @@ export const load: PageServerLoad = async ({
 			editorMode: null,
 			historyOpen,
 			history: null,
+			customerPayments: null,
 			paymentOpen,
 			declineOpen,
 			returnContext,
@@ -108,6 +110,14 @@ export const load: PageServerLoad = async ({
 	const editorMode = openEditorMode(data, permissions, editorFlags);
 	// Optional detail: loaded only when `?history` is open, and its failure never hides the booking.
 	const history = historyOpen ? await loadHistory({ cookies, request, url }, data) : null;
+	// Link status and attempt diagnostics only (never the usable URL); null without the permissions.
+	const customerPayments = await loadCustomerPayments(
+		config,
+		params.inquiryId,
+		cookie,
+		data.inquiry.lifecycle.stage,
+		permissions
+	);
 	return {
 		inquiryId: params.inquiryId,
 		staffRequest: data,
@@ -117,6 +127,7 @@ export const load: PageServerLoad = async ({
 		editorMode,
 		historyOpen,
 		history,
+		customerPayments,
 		paymentOpen,
 		declineOpen,
 		returnContext,
@@ -126,6 +137,7 @@ export const load: PageServerLoad = async ({
 export const actions: Actions = {
 	acknowledgeConversation,
 	sendConversationReply,
+	customerPayments: customerPaymentsAction,
 	markServed: fulfillmentAction('markServed'),
 	closeInquiry: fulfillmentAction('closeInquiry'),
 	recordDeposit: paymentAction(true),
