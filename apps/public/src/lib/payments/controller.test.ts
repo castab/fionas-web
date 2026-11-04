@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPaymentController, type ControllerDeps, type PageState } from './controller.js';
+import {
+	createPaymentController,
+	MAX_SUMMARY_AGE_MS,
+	type ControllerDeps,
+	type PageState
+} from './controller.js';
+import { noticeCopy, STATUS_UNKNOWN_MESSAGE } from './copy.js';
 import { paymentStore } from './checkout.js';
+import { readPaymentSummary } from './contract.js';
+
+const readSummary = (value: unknown) => readPaymentSummary(value);
 import {
 	bookedSummary,
 	openCheckout,
@@ -46,6 +55,7 @@ function harness(
 	const uuids = [...(options.uuids ?? ['key-1', 'key-2', 'key-3'])];
 	let cleared = 0;
 	let visible = true;
+	let clock = 1_000_000;
 	let visibilityListener: (() => void) | null = null;
 	const respond = (reply: Reply | undefined) => {
 		if (!reply || reply === 'network') return Promise.reject(new TypeError('Failed to fetch'));
@@ -87,7 +97,8 @@ function harness(
 		},
 		onState: (state) => void states.push(state),
 		pollDelays: [1, 1, 1],
-		retryDelays: [1, 1]
+		retryDelays: [1, 1],
+		now: () => clock
 	};
 	const controller = createPaymentController(deps);
 	return {
@@ -104,6 +115,9 @@ function harness(
 		},
 		checkoutCalls: () => calls.filter((c) => c.url.endsWith('/checkout-sessions')),
 		summaryCalls: () => calls.filter((c) => !c.url.endsWith('/checkout-sessions')),
+		advance(ms: number) {
+			clock += ms;
+		},
 		setVisible(value: boolean) {
 			visible = value;
 			visibilityListener?.();
@@ -555,5 +569,244 @@ describe('recovery without the original browser', () => {
 		expect(h.state.notice).toBe('checkout-expired');
 		expect(h.store.checkout()).toBeNull();
 		expect(h.navigated).toEqual([]);
+	});
+});
+
+describe('payment status certainty', () => {
+	it('does not treat disabled payments as uncertain before any checkout', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [{ status: 503, body: { code: 'stripe_disabled' } }]
+		});
+		await h.controller.start();
+		expect(h.state.phase).toBe('payments-disabled');
+		expect(h.state.paymentUncertain).toBe(false);
+	});
+
+	it('keeps an ambiguous command, and its uncertainty, when payments become disabled', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: ['network', { status: 503, body: { code: 'stripe_disabled' } }]
+		});
+		await h.controller.start();
+		h.replySummary({ status: 503, body: { code: 'stripe_disabled' } });
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.phase).toBe('payments-disabled');
+		expect(h.store.checkout()?.key).toBe('key-1');
+		expect(h.state.paymentUncertain).toBe(true);
+	});
+
+	it('discards a brand-new command refused at once because payments are disabled', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [{ status: 503, body: { code: 'stripe_disabled' } }]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.phase).toBe('payments-disabled');
+		expect(h.store.checkout()).toBeNull();
+		expect(h.state.paymentUncertain).toBe(false);
+	});
+
+	async function afterRedirect(search: string, summary: Reply) {
+		const first = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await first.controller.start();
+		await first.controller.pay({ partialCents: null });
+		const back = harness({ storage: first.storage, search, summary: [summary] });
+		await back.controller.start();
+		return back;
+	}
+
+	it('is uncertain when the backend is unavailable after returning from Stripe', async () => {
+		for (const search of ['?checkout=returned', '?checkout=cancelled']) {
+			const down = await afterRedirect(search, 'network');
+			expect(down.state.phase).toBe('unreachable');
+			expect(down.state.paymentUncertain).toBe(true);
+			const disabled = await afterRedirect(search, {
+				status: 503,
+				body: { code: 'stripe_disabled' }
+			});
+			expect(disabled.state.phase).toBe('payments-disabled');
+			expect(disabled.state.paymentUncertain).toBe(true);
+			expect(disabled.store.checkout()?.phase).toBe('redirected');
+		}
+	});
+
+	it('is uncertain for a command persisted by an earlier page load', async () => {
+		const first = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: ['network']
+		});
+		await first.controller.start();
+		await first.controller.pay({ partialCents: null });
+		const later = harness({ storage: first.storage, summary: ['network'] });
+		await later.controller.start();
+		expect(later.state.phase).toBe('unreachable');
+		expect(later.state.paymentUncertain).toBe(true);
+	});
+
+	it('keeps the uncertainty when a revoked link drops a pending checkout', async () => {
+		const back = await afterRedirect('?checkout=returned', {
+			status: 404,
+			body: { code: 'not_found' }
+		});
+		expect(back.state.phase).toBe('link-unavailable');
+		expect(back.state.paymentUncertain).toBe(true);
+	});
+
+	it('settles uncertainty only from an authoritative summary', async () => {
+		const back = await afterRedirect('?checkout=cancelled', ok(quotedSummary()));
+		expect(back.state.notice).toBe('checkout-not-completed');
+		expect(back.state.paymentUncertain).toBe(false);
+	});
+
+	it('never words an unknown outcome as success or as nothing charged', () => {
+		const summary = readSummary(quotedSummary());
+		for (const kind of [
+			'refresh-failed',
+			'ambiguous',
+			'checkout-not-completed',
+			'checkout-cancelled-open',
+			'confirming',
+			'checkout-open',
+			'processing'
+		] as const) {
+			const copy = noticeCopy(kind, summary, true);
+			const text = `${copy.title} ${copy.body}`;
+			expect(text).not.toMatch(
+				/(haven't|have not|not) been charged|weren't charged|won't be charged|no payment was taken|payment received|deposit received|booking is confirmed/i
+			);
+		}
+		expect(noticeCopy('refresh-failed', summary, true).body).toContain(STATUS_UNKNOWN_MESSAGE);
+	});
+});
+
+describe('summary freshness', () => {
+	it('blocks a new payment against a summary kept after a failed refresh', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		expect(h.state.summaryFresh).toBe(true);
+		h.replySummary('network');
+		await h.controller.refresh();
+		expect(h.state.summary).not.toBeNull(); // still shown
+		expect(h.state.view?.kind).toBe('deposit-due');
+		expect(h.state.summaryFresh).toBe(false);
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(0);
+		h.replySummary(ok(quotedSummary()));
+		await h.controller.refresh();
+		expect(h.state.summaryFresh).toBe(true);
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(1);
+	});
+
+	it('re-reads an old summary before paying and proceeds when the terms are unchanged', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		h.advance(MAX_SUMMARY_AGE_MS + 1);
+		await h.controller.pay({ partialCents: null });
+		expect(h.summaryCalls()).toHaveLength(2);
+		expect(h.checkoutCalls()).toHaveLength(1);
+	});
+
+	it('stops for review when an old summary turns out to have changed', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		h.advance(MAX_SUMMARY_AGE_MS + 1);
+		h.replySummary(
+			ok(
+				quotedSummary({
+					requiredAmount: '300.00',
+					document: { ...quotedSummary().document, version: 4, businessRevision: 5 }
+				})
+			)
+		);
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(0);
+		expect(h.state.notice).toBe('terms-changed');
+		expect(h.state.view).toMatchObject({ terms: { amountCents: 30000n } });
+	});
+
+	it('refuses when the pre-payment re-read fails', async () => {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		h.advance(MAX_SUMMARY_AGE_MS + 1);
+		h.replySummary('network');
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(0);
+		expect(h.state.summaryFresh).toBe(false);
+	});
+
+	it("gates fresh-key recovery but always allows resending this tab's own command", async () => {
+		const inProgress = quotedSummary({
+			paymentInProgress: true,
+			canPay: false,
+			unavailableReason: 'PAYMENT_IN_PROGRESS',
+			checkoutRecoveryAvailable: true
+		});
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(inProgress)],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		h.replySummary('network');
+		await h.controller.refresh();
+		await h.controller.recover({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(0);
+
+		const first = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await first.controller.start();
+		await first.controller.pay({ partialCents: null });
+		const back = harness({
+			storage: first.storage,
+			search: '?checkout=cancelled',
+			summary: [ok(inProgress)],
+			checkout: [ok(openCheckout)]
+		});
+		await back.controller.start();
+		back.replySummary('network');
+		await back.controller.refresh();
+		await back.controller.recover({ partialCents: null });
+		expect(back.checkoutCalls()[0].headers['idempotency-key']).toBe('key-1');
+	});
+
+	it('allows the same-key retry of an ambiguous command without a fresh summary', async () => {
+		const h = harness({ hash: `#${token}`, summary: [ok(quotedSummary())], checkout: ['network'] });
+		await h.controller.start();
+		h.replySummary('network');
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.summaryFresh).toBe(false);
+		h.replyCheckout(ok(openCheckout));
+		await h.controller.retry();
+		expect(h.checkoutCalls().at(-1)?.headers['idempotency-key']).toBe('key-1');
+		expect(h.navigated).toEqual([openCheckout.url]);
 	});
 });

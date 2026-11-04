@@ -39,14 +39,53 @@
 		lifecycleTone,
 		progressSteps,
 		requestErrorMessage,
-		requestSummary
+		requestSummary,
+		isCurrentStaffRequest
 	} from '$lib/request-workspace.js';
+	import type { CurrentStaffRequest, StaffRequestResponse } from '$lib/request-contract.js';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let mutationPending = $state(false);
 	let clientReviewRequired = $state(false);
-	const request = $derived(data.staffRequest);
+	// Live financial state: after Activity reports changed history, the authoritative projection is
+	// re-read and replaces the loaded one for this page load (`base` ties it to that load). An open
+	// panel or a returned form keeps its reviewed snapshot instead; the page then says it is stale.
+	let live = $state.raw<{ base: unknown; request: CurrentStaffRequest } | null>(null);
+	let liveStale = $state(false);
+	const request = $derived(
+		live && live.base === data.staffRequest ? live.request : data.staffRequest
+	);
+	const reviewSnapshotOpen = $derived(
+		!!data.editorMode || data.paymentOpen || data.declineOpen || !!form
+	);
+	let liveSequence = 0;
+	async function refreshLiveRequest() {
+		const sequence = ++liveSequence;
+		const base = data.staffRequest;
+		try {
+			const response = await fetch(workspacePath + '/staff-request', {
+				cache: 'no-store',
+				signal: AbortSignal.timeout(15000)
+			});
+			// Validated below by the same coherence check the page load uses.
+			const body: { request?: StaffRequestResponse | null } = await response.json();
+			if (sequence !== liveSequence || base !== data.staffRequest) return;
+			const next = body.request ?? null;
+			if (!response.ok || !isCurrentStaffRequest(next, data.inquiryId))
+				throw new Error('Unavailable request');
+			live = { base, request: next };
+			liveStale = false;
+		} catch {
+			if (sequence === liveSequence) liveStale = true;
+		}
+	}
+	function activityRefreshed({ historyChanged }: { historyChanged: boolean }) {
+		activityRefreshes++;
+		if (!historyChanged) return;
+		if (reviewSnapshotOpen) liveStale = true;
+		else void refreshLiveRequest();
+	}
 	const quoteResult = $derived(
 		form && ('quoteValues' in form || 'quoteError' in form) ? (form as QuoteActionResult) : null
 	);
@@ -229,6 +268,25 @@
 					]}
 					data-testid="request-summary"
 				>
+					{#if liveStale}
+						<!-- Kept from the card's earlier notice: only when the live re-read was impossible. -->
+						<p
+							role="status"
+							class="m-0 rounded-input border border-olive-700/25 bg-olive-700/8 px-3 py-2.5 text-[12.5px] leading-[1.5] text-(--text-body)"
+							data-testid="details-changed"
+						>
+							{reviewSnapshotOpen
+								? 'Request details changed while this panel was open, so what it shows may be out of date.'
+								: "Request details changed, and the latest couldn't be loaded, so Right now and the Serving plan may be out of date."}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- route is resolve()d plus workspaceSearch -->
+							<a
+								href={route}
+								data-sveltekit-reload
+								class="font-semibold text-(--text-body) underline">Reload to review</a
+							>. Save unfinished work before reloading.
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
+						</p>
+					{/if}
 					<div class="flex flex-col gap-1.5">
 						<p class={caps}>Right now</p>
 						<h2
@@ -503,7 +561,7 @@
 						endpoint={workspacePath + '/conversation'}
 						returnContext={data.returnContext}
 						result={form as ConversationActionResult | null}
-						onrefreshed={() => activityRefreshes++}
+						onrefreshed={activityRefreshed}
 					/>
 				{/key}
 			</div>

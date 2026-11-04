@@ -20,6 +20,13 @@ async function conversation(context: BrowserContext, update?: unknown) {
 	return update === undefined ? (await response.json())[mayaId] : null;
 }
 
+/** Authoritative staff-request reads for Maya: the page load plus each live re-read. */
+async function requestReads(context: BrowserContext): Promise<number> {
+	return (await session(context)).readPaths.filter(
+		(path: string) => path === `/staff/requests/${mayaId}`
+	).length;
+}
+
 test('live history preserves composer, disclosures and workspace; disconnect releases subscriber', async ({
 	page,
 	context
@@ -64,7 +71,9 @@ test('live history preserves composer, disclosures and workspace; disconnect rel
 	await expect(card.getByText('Refund recorded', { exact: true })).toBeVisible();
 	await page.locator(`#message-${outboundId} > summary`).click();
 	await expect(card.getByText('Delivered', { exact: true })).toBeVisible();
-	await expect(card.getByText('Request details changed', { exact: false })).toBeVisible();
+	// Changed history re-reads the authoritative request and refreshes Right now in place.
+	await expect.poll(() => requestReads(context)).toBe(2);
+	await expect(page.getByTestId('details-changed')).toHaveCount(0);
 	await expect(card.getByText('Historical total', { exact: true }).first()).toBeVisible();
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Unfinished staff draft');
 	await conversation(context, { closeStream: true });
@@ -237,27 +246,29 @@ test('first recovered history establishes the workspace baseline', async ({ page
 	await page.goto(route);
 	await expect.poll(async () => (await conversation(context)).activeStreams).toBe(1);
 	const card = page.getByTestId('conversation');
-	const warning = card.getByText('Request details changed', { exact: false });
+	const warning = page.getByTestId('details-changed');
 	const quote = card.getByText('Quote v2 published', { exact: true });
 	await expect(quote).toHaveCount(0);
 	await conversation(context, { mode: 'accepted', notify: true });
 	await expect(quote).toBeVisible();
-	await expect(warning).toHaveCount(0);
+	// The first recovered history is the baseline: nothing to re-read.
+	expect(await requestReads(context)).toBe(1);
 	await conversation(context, { inbound: 'After baseline', notify: true });
 	await expect(card.getByText('New customer email · Maya Torres', { exact: true })).toBeVisible();
-	await expect(warning).toHaveCount(0);
 	const history = (await conversation(context)).timeline;
 	const milestone = milestoneFixture().items;
 	history.items.push(milestone.find((i) => i.kind === 'COMMUNICATION_ACKNOWLEDGED'));
 	await conversation(context, { timeline: history, notify: true });
 	await expect(card.getByText('Communication marked as read', { exact: true })).toBeVisible();
-	await expect(warning).toHaveCount(0);
+	expect(await requestReads(context)).toBe(1);
 	history.items.push(milestone.find((i) => i.kind === 'INVOICE_AMENDED'));
 	await conversation(context, { timeline: history, notify: true });
-	await expect(warning).toBeVisible();
+	await expect.poll(() => requestReads(context)).toBe(2);
+	await expect(warning).toHaveCount(0);
+	// An unchanged manual refresh re-reads nothing more.
 	await card.getByRole('button', { name: 'Refresh', exact: true }).click();
 	await expect(card.getByText('Conversation refreshed.', { exact: true })).toBeVisible();
-	await expect(warning).toBeVisible();
+	expect(await requestReads(context)).toBe(2);
 	await page.reload();
 	await expect(quote).toBeVisible();
 	await expect(warning).toHaveCount(0);

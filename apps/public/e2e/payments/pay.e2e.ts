@@ -437,8 +437,9 @@ test('disabled online payments and an unreachable backend fail safely', async ({
 	await update(request, publicId, { mode: 'disabled' });
 	await open(page, publicId, token);
 	await expect(page.getByTestId('payment-message')).toContainText(
-		"Online payments aren't available right now"
+		'Please try again later or contact us for help.'
 	);
+	await expect(page.getByTestId('payment-message')).not.toContainText(/charged/i);
 	await update(request, publicId, { mode: 'error' });
 	await page.reload();
 	await expect(page.getByTestId('payment-message')).toContainText(
@@ -448,6 +449,83 @@ test('disabled online payments and an unreachable backend fail safely', async ({
 	await update(request, publicId, { mode: null });
 	await page.getByRole('button', { name: 'Try again' }).click();
 	await expect(page.getByTestId('deposit-amount')).toHaveText('$240.00');
+});
+
+const STATUS_UNKNOWN =
+	"We can't confirm your payment status right now. Please don't make another payment until we've checked it.";
+
+test('after returning from Stripe, an outage never claims the customer was not charged', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, quotedSummary());
+	await simulateStripe(page, publicId);
+	await open(page, publicId, token);
+	await page.getByRole('button', { name: 'Pay deposit $240.00' }).click();
+	await expect(page).toHaveURL(/checkout\.stripe\.com/);
+	await update(request, publicId, { mode: 'disabled' });
+	await page.getByRole('link', { name: "Back to Fiona's" }).click();
+	const message = page.getByTestId('payment-message');
+	await expect(message).toContainText(STATUS_UNKNOWN);
+	await expect(message).not.toContainText(/haven't been charged|not charged/i);
+	await update(request, publicId, { mode: 'error' });
+	await page.reload();
+	await expect(message).toContainText(STATUS_UNKNOWN);
+	await expect(page.getByText(/Deposit received|Payment received/)).toHaveCount(0);
+	// Once commerce answers again, the authoritative state decides.
+	await update(request, publicId, { mode: null, summary: bookedSummary() });
+	await page.getByRole('button', { name: 'Try again' }).click();
+	await expect(page.getByTestId('payment-notice')).toContainText('Deposit received');
+});
+
+test('an unknown checkout from an earlier visit keeps the status-unknown wording', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, quotedSummary(), ['drop', 'drop', 'drop']);
+	await open(page, publicId, token);
+	await page.getByRole('button', { name: 'Pay deposit $240.00' }).click();
+	await expect(page.getByTestId('retry-payment')).toBeVisible({ timeout: 20_000 });
+	await update(request, publicId, { mode: 'error' });
+	await page.reload();
+	await expect(page.getByTestId('payment-message')).toContainText(STATUS_UNKNOWN);
+	await update(request, publicId, { mode: 'disabled' });
+	await page.reload();
+	await expect(page.getByTestId('payment-message')).toContainText(STATUS_UNKNOWN);
+});
+
+test('a summary that could not be refreshed cannot start a new payment', async ({
+	page,
+	request
+}) => {
+	await page.clock.install();
+	const { publicId, token } = await scenario(request, quotedSummary());
+	await open(page, publicId, token);
+	const pay = page.getByRole('button', { name: 'Pay deposit $240.00' });
+	await expect(pay).toBeEnabled();
+	// Five minutes later the page re-reads before paying; that read fails.
+	await update(request, publicId, { mode: 'error' });
+	await page.clock.fastForward('06:00');
+	await pay.click();
+	await expect(page.getByTestId('stale-summary')).toContainText('paying is paused');
+	await expect(page.getByTestId('payment-notice')).toContainText(
+		"We couldn't refresh your booking"
+	);
+	await expect(pay).toBeDisabled();
+	await expect(page.getByTestId('deposit-amount')).toHaveText('$240.00'); // still shown
+	expect(await posts(request, publicId)).toHaveLength(0);
+	// Staff publish new terms meanwhile; a successful check shows them before any payment.
+	await update(request, publicId, {
+		mode: null,
+		summary: quotedSummary({
+			requiredAmount: '300.00',
+			document: { ...quotedSummary().document, version: 4, businessRevision: 5 }
+		})
+	});
+	await page.getByTestId('stale-summary').getByRole('button', { name: 'Check again' }).click();
+	await expect(page.getByRole('button', { name: 'Pay deposit $300.00' })).toBeEnabled();
+	await expect(page.getByTestId('document-label')).toHaveText('Quote v5');
+	expect(await posts(request, publicId)).toHaveLength(0);
 });
 
 test('unknown states and codes never enable payment', async ({ page, request }) => {

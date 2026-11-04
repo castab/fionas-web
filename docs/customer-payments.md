@@ -163,6 +163,30 @@ An ambiguous outcome survives a reload of the tab: the saved command stays `send
 offers only **Try again** with the identical command. Payment is never re-authorized because a
 request timed out.
 
+## Freshness and uncertain outcomes
+
+**Fresh summaries only.** `summaryFresh` separates a summary kept on screen for reading from one
+that may back a new financial decision. It is true only after the latest read succeeded; a failed
+refresh keeps the figures visible but disables Pay and fresh-key recovery behind **We couldn't
+confirm your current balance, so paying is paused** with **Check again**. A summary older than five
+minutes (`MAX_SUMMARY_AGE_MS`) is re-read when the customer clicks Pay: unchanged terms proceed in
+the same click; changed terms (document version, business revision, purpose or amount) stop with
+**Your booking was updated** for review; a failed re-read pauses paying. Resending this tab's own
+saved command (Try again, resuming a cancelled Checkout) needs no fresh summary: the same key can
+only reach its original authorization.
+
+**Never a false guarantee.** `paymentUncertain` is true while this tab holds a saved command
+(`sending` or `redirected`), after a Stripe return until a summary has resolved it, or when a
+revoked link dropped one. Unavailability then reads **We can't confirm your payment status right
+now. Please don't make another payment until we've checked it. Contact Fiona's if you need
+assistance.**, for an unreachable backend, disabled payments and a failed refresh alike, and a
+revoked link asks the customer to contact Fiona's before paying again. Without a possible payment,
+disabled payments read "Online payments aren't available right now. Please try again later or
+contact us for help." No message says a customer was or wasn't charged unless a summary shows it:
+success wording needs the summary's effect, and a cancel redirect, an outage or a configuration
+failure proves nothing. A `stripe_disabled` answer keeps a saved command unless it was brand new
+and refused on its first attempt, because that refusal says nothing about an earlier send.
+
 ## Returning from Stripe
 
 Commerce sends customers to `/pay/{publicId}?checkout=returned` or `?checkout=cancelled`. Neither
@@ -254,8 +278,11 @@ Activity remains the payment history, and nothing here repeats it. No refund or 
 **Live updates.** The existing timeline SSE is unchanged. After each authoritative Activity read
 (`onrefreshed` on the Conversation card), Customer payments refreshes its diagnostics through
 `GET /requests/{id}/customer-payments` if the attempts disclosure is open, or marks them stale for
-when it opens. Financial changes still surface through Activity's existing "Request details
-changed … Reload to review" notice; nothing invalidates the whole page.
+when it opens. When the Activity history changed, the workspace also re-reads the authoritative
+staff request and refreshes Right now in place (an online deposit shows BOOKED, the Invoice and
+the new balance without a reload); an open review panel keeps its snapshot and says it is stale.
+See [Live staff financial state](admin-request-workspace.md#live-staff-financial-state). Nothing
+invalidates the whole page.
 
 ## Configuration and deployment
 

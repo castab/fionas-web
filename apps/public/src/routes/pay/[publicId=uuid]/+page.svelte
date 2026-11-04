@@ -11,7 +11,7 @@
 		type PageState,
 		type PaymentController
 	} from '$lib/payments/controller.js';
-	import { noticeCopy } from '$lib/payments/copy.js';
+	import { noticeCopy, STATUS_UNKNOWN_MESSAGE } from '$lib/payments/copy.js';
 	import { stageLabel } from '$lib/payments/view.js';
 	import PaymentAction from '$lib/components/payments/payment-action.svelte';
 	import PaymentNotice from '$lib/components/payments/payment-notice.svelte';
@@ -75,7 +75,9 @@
 		};
 	});
 
-	const notice = $derived(view?.notice ? noticeCopy(view.notice, view.summary) : null);
+	const notice = $derived(
+		view?.notice ? noticeCopy(view.notice, view.summary, view.paymentUncertain) : null
+	);
 	const ready = $derived(view?.phase === 'ready' && view.summary ? view : null);
 	const headline =
 		'm-0 font-sans text-[34px] leading-[1.2] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]';
@@ -159,17 +161,28 @@
 	{:else if view.phase === 'link-unavailable'}
 		{@render message(
 			'This payment link is no longer active',
-			'It may have been replaced with a newer link. Contact us and we will send your current one.'
+			view.paymentUncertain
+				? "It may have been replaced with a newer link, so we can't show the status of a payment you started from it. Please don't pay again until you've contacted us; we'll check it and send your current link."
+				: 'It may have been replaced with a newer link. Contact us and we will send your current one.'
 		)}
 	{:else if view.phase === 'payments-disabled'}
+		<!-- An outage says nothing about money: with a payment possibly underway, never reassure. -->
 		{@render message(
-			"Online payments aren't available right now",
-			"You haven't been charged. Please try again later, or contact us and we'll help you pay another way."
+			view.paymentUncertain
+				? "We can't confirm your payment status"
+				: "Online payments aren't available right now",
+			view.paymentUncertain
+				? STATUS_UNKNOWN_MESSAGE
+				: 'Online payments aren’t available right now. Please try again later or contact us for help.'
 		)}
 	{:else if view.phase === 'unreachable'}
 		{@render message(
-			"We can't load your booking right now",
-			'Check your connection and try again in a moment.',
+			view.paymentUncertain
+				? "We can't confirm your payment status"
+				: "We can't load your booking right now",
+			view.paymentUncertain
+				? STATUS_UNKNOWN_MESSAGE
+				: 'Check your connection and try again in a moment.',
 			true
 		)}
 	{:else if ready?.summary}

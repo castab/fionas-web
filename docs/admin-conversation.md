@@ -222,11 +222,14 @@ The composer remains mounted; its draft, immutable original expectation/key and 
 are untouched. Live updates never send, reconcile or acknowledge. Keyed native disclosures retain
 open state. The initial timeline supplies the financial and lifecycle history baseline. If it was
 unavailable, the first validated refresh establishes the baseline without raising a warning.
-Subsequent changes to authoritative non-communication history mark the rest of the workspace
-potentially stale with a **Request details changed … Reload to review** notice across the top of the
-card (Right now and the Serving plan sit beside Activity and keep their loaded values). This is an explicit full reload;
-staff must preserve unfinished work first. No automatic page invalidation replaces financial reviews,
-editors or mutation tokens. Timeline history alone cannot detect changes that commerce does not
+Subsequent changes to authoritative non-communication history are reported to the workspace
+(`onrefreshed({ historyChanged })`), which re-reads the staff request and updates Right now, the
+Event card and the Serving plan in place; see
+[Live staff financial state](admin-request-workspace.md#live-staff-financial-state). Only when that
+is impossible (an open review panel, a failed or incoherent read) does Right now show **Request
+details changed … Reload to review**, an explicit full reload for which staff preserve unfinished
+work first. A card rendered without that handler keeps its own notice. No automatic page
+invalidation replaces financial reviews, editors or mutation tokens. Timeline history alone cannot detect changes that commerce does not
 represent there (for example a service-only amendment); existing expected-version protections remain.
 
 ### Deployment prerequisite and verification

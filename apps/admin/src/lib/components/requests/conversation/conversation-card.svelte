@@ -57,8 +57,12 @@
 		endpoint: string;
 		returnContext: RequestListQuery | null;
 		result: ConversationActionResult | null;
-		/** After each applied authoritative timeline read (live hint or manual refresh). */
-		onrefreshed?: () => void;
+		/**
+		 * After each applied authoritative timeline read (live hint or manual refresh).
+		 * `historyChanged`: non-communication history (payments, publications, lifecycle) differs
+		 * from the previous read. When given, the page owns the "details changed" notice.
+		 */
+		onrefreshed?: (detail: { historyChanged: boolean }) => void;
 	} = $props();
 	let timeline = $state(untrack(() => initialTimeline));
 	let refreshing = $state(false);
@@ -145,6 +149,7 @@
 			) ?? []
 		);
 	let historyBaseline = untrack(() => (initialTimeline ? financialHistory(initialTimeline) : null));
+	let lastHistory: string | null = null;
 	$effect(() => {
 		const id = inquiry.id;
 		const target = endpoint;
@@ -175,9 +180,12 @@
 						haveMessageBaseline = true;
 					const history = financialHistory(next);
 					historyBaseline ??= history;
-					if (history !== historyBaseline) detailsChanged = true;
+					const historyChanged = history !== (lastHistory ?? historyBaseline);
+					lastHistory = history;
+					// Without a page handler the card keeps flagging the rest of the workspace as stale.
+					if (history !== historyBaseline && !onrefreshed) detailsChanged = true;
 					timeline = next;
-					onrefreshed?.();
+					onrefreshed?.({ historyChanged });
 				},
 				busy(value) {
 					refreshing = value;

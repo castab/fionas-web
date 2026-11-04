@@ -75,7 +75,7 @@
 
 	function submitPay(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy) return;
+		if (busy || stale) return;
 		const selected = choice();
 		if (selected) onpay(selected);
 	}
@@ -93,10 +93,11 @@
 	const selected = 'border-olive-700 bg-olive-100/60';
 	const unselected = 'border-olive-300/70 bg-cream-100';
 	const body = 'm-0 text-(--text-body) [font:var(--type-body-sm)]';
-	const canRecover = $derived(
-		view?.kind === 'in-progress' &&
-			(!!view.recovery || (!!pending && !pending.ambiguous && !pending.blocked))
-	);
+	// This tab's own earlier command can always be resent; anything else is a new decision.
+	const ownCommand = $derived(!!pending && !pending.ambiguous && !pending.blocked);
+	const canRecover = $derived(view?.kind === 'in-progress' && (!!view.recovery || ownCommand));
+	// A summary kept after a failed refresh is display-only: no new payment against it.
+	const stale = $derived(!current.summaryFresh);
 </script>
 
 {#snippet contact(text: string)}
@@ -199,6 +200,26 @@
 	</fieldset>
 {/snippet}
 
+{#snippet staleGate()}
+	{#if stale}
+		<div
+			class="flex flex-col items-start gap-2 rounded-input border border-olive-300 bg-cream-200 px-4 py-3"
+			data-testid="stale-summary"
+		>
+			<p class="m-0 text-(--text-body) [font:var(--type-body-sm)]">
+				We couldn't confirm your current balance, so paying is paused until it loads again.
+			</p>
+			<Button
+				variant="secondary"
+				size="sm"
+				class="min-h-11"
+				disabled={current.busy !== null}
+				onclick={onrefresh}>Check again</Button
+			>
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet submitLabel(text: string)}
 	{current.busy === 'redirecting'
 		? 'Taking you to secure checkout…'
@@ -240,8 +261,14 @@
 				data-testid="deposit-amount">{formatCents(view.terms.amountCents)}</span
 			>
 		</div>
+		{@render staleGate()}
 		<form onsubmit={submitPay} class="flex flex-col gap-2.5" aria-busy={busy}>
-			<Button type="submit" size="lg" class="min-h-13 w-full" disabled={busy} data-testid="pay"
+			<Button
+				type="submit"
+				size="lg"
+				class="min-h-13 w-full"
+				disabled={busy || stale}
+				data-testid="pay"
 				>{@render submitLabel(`Pay deposit ${formatCents(view.terms.amountCents)}`)}</Button
 			>
 			<p class={cn(hintText, 'm-0 text-center')}>
@@ -255,9 +282,15 @@
 				Your payment is credited toward the outstanding balance{label ? ` on ${label}` : ''}.
 			</p>
 		</div>
+		{@render staleGate()}
 		<form onsubmit={submitPay} class="flex flex-col gap-4" aria-busy={busy} novalidate>
 			{@render amountChooser(view.terms)}
-			<Button type="submit" size="lg" class="min-h-13 w-full" disabled={busy} data-testid="pay"
+			<Button
+				type="submit"
+				size="lg"
+				class="min-h-13 w-full"
+				disabled={busy || stale}
+				data-testid="pay"
 				>{@render submitLabel(payCents !== null ? `Pay ${formatCents(payCents)}` : 'Pay')}</Button
 			>
 			<p class={cn(hintText, 'm-0 text-center')}>
@@ -273,6 +306,7 @@
 			</p>
 		</div>
 		{#if canRecover}
+			{#if !ownCommand}{@render staleGate()}{/if}
 			<form onsubmit={submitRecover} class="flex flex-col gap-4" aria-busy={busy} novalidate>
 				{#if invoiceTerms}
 					<p class={body}>
@@ -291,7 +325,7 @@
 					variant="secondary"
 					size="lg"
 					class="min-h-13 w-full whitespace-normal"
-					disabled={busy}
+					disabled={busy || (stale && !ownCommand)}
 					data-testid="recover-payment"
 					>{@render submitLabel('Check previous payment and continue')}</Button
 				>

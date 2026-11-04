@@ -12,6 +12,13 @@ export type NoticeCopy = { tone: NoticeTone; title: string; body: string; contac
 export const STAFF_REVIEW_MESSAGE =
 	"We received a payment that needs staff review. Please contact Fiona's before paying again.";
 
+/**
+ * When a payment from this tab may exist but its outcome can't be read. Never "you weren't
+ * charged": an outage or a cancel redirect says nothing about money.
+ */
+export const STATUS_UNKNOWN_MESSAGE =
+	"We can't confirm your payment status right now. Please don't make another payment until we've checked it. Contact Fiona's if you need assistance.";
+
 function balanceSentence(summary: CustomerPaymentSummary | null): string {
 	const balance = summary ? decimalToCents(summary.balance) : null;
 	if (balance === null) return 'Your updated balance is shown below.';
@@ -20,7 +27,11 @@ function balanceSentence(summary: CustomerPaymentSummary | null): string {
 		: `Your remaining balance is ${formatCents(balance)}.`;
 }
 
-export function noticeCopy(kind: NoticeKind, summary: CustomerPaymentSummary | null): NoticeCopy {
+export function noticeCopy(
+	kind: NoticeKind,
+	summary: CustomerPaymentSummary | null,
+	paymentUncertain = false
+): NoticeCopy {
 	switch (kind) {
 		case 'deposit-confirmed':
 			return {
@@ -46,7 +57,8 @@ export function noticeCopy(kind: NoticeKind, summary: CustomerPaymentSummary | n
 			return {
 				tone: 'info',
 				title: "Your last checkout wasn't completed",
-				body: 'No payment from it has been applied to your booking. Review your balance below whenever you are ready.'
+				body: "It doesn't show as paid on your booking. Review your balance below whenever you're ready, and contact us if anything looks off.",
+				contact: true
 			};
 		case 'checkout-expired':
 			return {
@@ -55,16 +67,24 @@ export function noticeCopy(kind: NoticeKind, summary: CustomerPaymentSummary | n
 				body: 'Review the amount below and start a new payment when you are ready.'
 			};
 		case 'refresh-failed':
-			return {
-				tone: 'warning',
-				title: "We couldn't refresh your booking",
-				body: 'The details below may be out of date. Check your connection, then try again.'
-			};
+			return paymentUncertain
+				? {
+						tone: 'warning',
+						title: "We couldn't refresh your booking",
+						body: `The details below may be out of date. ${STATUS_UNKNOWN_MESSAGE}`,
+						contact: true
+					}
+				: {
+						tone: 'warning',
+						title: "We couldn't refresh your booking",
+						body: 'The details below may be out of date, so paying is paused until they load. Check your connection, then try again.'
+					};
 		case 'ambiguous':
 			return {
 				tone: 'warning',
 				title: "We couldn't confirm your payment started",
-				body: "The connection dropped before we heard back. Trying again continues the same payment, so you won't be charged twice for it."
+				body: 'The connection dropped before we heard back, so the payment may or may not have started. Trying again safely continues that same payment instead of starting a new one.',
+				contact: true
 			};
 		case 'terms-changed':
 			return {

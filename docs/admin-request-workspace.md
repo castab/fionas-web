@@ -220,6 +220,21 @@ Transport types include the complete payment, allocations, refunds, refund alloc
 reconciliation. Runtime checks cover the receipt/allocation fields actually rendered, alongside
 the existing canonical proposal/deposit checks. Missing/malformed consumed fields fail closed.
 
+## Live staff financial state
+
+**Live staff financial state.** After an Activity read whose non-communication history
+(payments, publications, amendments, lifecycle bands) differs from the previous read, the page
+re-reads the authoritative projection once through `GET /requests/{inquiryId}/staff-request` (the
+same `GET /staff/requests/{id}` and coherence validator as the load) and replaces Right now, the
+Event card, the Serving plan and Customer payments' stage for this page load. Nothing is
+invalidated: the Conversation card, its composer draft, recovery state and disclosures stay
+mounted. Reads are serialized by sequence, so a late answer never overwrites a newer one. While a
+review panel is open (`?quote`, `?quote-revision`, `?invoice-revision`, `?payment`, `?decline`) or
+a form result is shown, the reviewed snapshot is kept and Right now says **Request details changed
+while this panel was open … Reload to review**; a failed or incoherent re-read shows the same
+notice with "couldn't be loaded". Server actions still re-read and check every reviewed version,
+so a stale panel can never publish or record against moved terms.
+
 ## Customer payments
 
 Depends on fionas-commerce PR #36 (merged). A compact **Customer payments** card below Right now

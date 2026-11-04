@@ -65,6 +65,18 @@ export type PageState = {
 	polling: 'idle' | 'active' | 'exhausted';
 	/** False when sessionStorage is unavailable: leaving the page loses the link for this tab. */
 	persistent: boolean;
+	/**
+	 * The summary was read successfully just now and may back a new payment decision. A summary
+	 * kept on screen after a failed refresh is display-only; so is one older than five minutes
+	 * until it is re-read (pay re-reads it first).
+	 */
+	summaryFresh: boolean;
+	/**
+	 * A payment from this tab may exist whose outcome commerce has not confirmed to the page: a
+	 * saved command, a Stripe return, or one lost with a revoked link. Unavailability wording must
+	 * then never imply that nothing was charged.
+	 */
+	paymentUncertain: boolean;
 };
 
 /** The customer's amount choice. `null` pays the deposit or the whole Invoice balance. */
@@ -91,6 +103,8 @@ export type ControllerDeps = {
 	pollDelays?: number[];
 	/** Same-key retry delays after an ambiguous checkout response (bounded). */
 	retryDelays?: number[];
+	/** Clock for summary freshness (milliseconds). */
+	now?: () => number;
 };
 
 const POLL_DELAYS = [
@@ -99,6 +113,8 @@ const POLL_DELAYS = [
 const RETRY_DELAYS = [1500, 4000];
 const SUMMARY_TIMEOUT_MS = 15_000;
 const CHECKOUT_TIMEOUT_MS = 45_000;
+/** A summary older than this is re-read before it can back a new payment. */
+export const MAX_SUMMARY_AGE_MS = 5 * 60_000;
 /** Notices about an in-flight payment, dropped once the summary no longer shows one. */
 const IN_FLIGHT: NoticeKind[] = [
 	'confirming',
@@ -117,12 +133,18 @@ export function createPaymentController(deps: ControllerDeps) {
 		deps.clearTimer ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
 	const pollDelays = deps.pollDelays ?? POLL_DELAYS;
 	const retryDelays = deps.retryDelays ?? RETRY_DELAYS;
+	const now = deps.now ?? (() => Date.now());
 	const abort = new AbortController();
 	const { store } = deps;
 	let token: string | null = null;
 	let returned: 'returned' | 'cancelled' | null = null;
 	let disposed = false;
 	let sending = false;
+	/** Re-reading a stale summary before a payment decision. */
+	let preparing = false;
+	let loadedAt = 0;
+	/** A saved command or Stripe return that was dropped with a revoked link. */
+	let lostUncertain = false;
 	let pollTimer: unknown = null;
 	let pollIndex = 0;
 	let pollDue = false;
@@ -135,12 +157,16 @@ export function createPaymentController(deps: ControllerDeps) {
 		busy: null,
 		pending: null,
 		polling: 'idle',
-		persistent: store.persistent
+		persistent: store.persistent,
+		summaryFresh: false,
+		paymentUncertain: false
 	};
+
+	const uncertain = () => lostUncertain || returned !== null || store.checkout() !== null;
 
 	function emit(patch: Partial<PageState>) {
 		if (disposed) return;
-		state = { ...state, ...patch };
+		state = { ...state, ...patch, paymentUncertain: uncertain() };
 		deps.onState(state);
 	}
 
@@ -231,7 +257,10 @@ export function createPaymentController(deps: ControllerDeps) {
 		if (notice === 'refresh-failed') notice = derived;
 		if (notice && IN_FLIGHT.includes(notice) && view.kind !== 'in-progress')
 			notice = derived && !IN_FLIGHT.includes(derived) ? derived : null;
-		emit({ phase: 'ready', summary, view, notice, pending });
+		// Once a summary has resolved this tab's checkout, the return marker has been accounted for.
+		if (!store.checkout()) returned = null;
+		loadedAt = now();
+		emit({ phase: 'ready', summary, view, notice, pending, summaryFresh: true });
 		if (view.kind === 'in-progress') startPolling();
 		else stopPolling('idle');
 	}
@@ -264,22 +293,31 @@ export function createPaymentController(deps: ControllerDeps) {
 		code === 'stripe_disabled' || code === 'payments_unavailable';
 
 	function failRefresh() {
-		if (state.summary) emit({ notice: 'refresh-failed' });
-		else emit({ phase: 'unreachable' });
+		// Whatever is on screen stays readable, but it can no longer back a new payment.
+		if (state.summary) emit({ notice: 'refresh-failed', summaryFresh: false });
+		else emit({ phase: 'unreachable', summaryFresh: false });
 		if (state.polling === 'active') schedulePoll();
 	}
 
 	function linkUnavailable() {
+		lostUncertain = uncertain();
 		token = null;
 		store.forgetToken();
 		store.forgetCheckout();
 		stopPolling('idle');
-		emit({ phase: 'link-unavailable', summary: null, view: null, notice: null, pending: null });
+		emit({
+			phase: 'link-unavailable',
+			summary: null,
+			view: null,
+			notice: null,
+			pending: null,
+			summaryFresh: false
+		});
 	}
 
 	function paymentsDisabled() {
 		stopPolling('idle');
-		emit({ phase: 'payments-disabled', notice: null, busy: null });
+		emit({ phase: 'payments-disabled', notice: null, busy: null, summaryFresh: false });
 	}
 
 	// Polling: bounded backoff, only while the page is visible, only while a payment is underway.
@@ -352,8 +390,36 @@ export function createPaymentController(deps: ControllerDeps) {
 		};
 	}
 
+	const termsKey = (terms: PayableTerms) =>
+		[terms.purpose, terms.documentVersion, terms.businessRevision, terms.amountCents].join(':');
+
+	/**
+	 * The reviewed terms a new payment may use, or null. Requires a fresh summary; one past
+	 * MAX_SUMMARY_AGE_MS is re-read first, and if its terms moved the customer must review again.
+	 */
+	async function currentTerms(
+		pick: (view: PaymentView | null) => PayableTerms | null
+	): Promise<PayableTerms | null> {
+		const reviewed = pick(state.view);
+		if (!reviewed || !state.summaryFresh) return null;
+		if (now() - loadedAt <= MAX_SUMMARY_AGE_MS) return reviewed;
+		preparing = true;
+		try {
+			await refresh();
+		} finally {
+			preparing = false;
+		}
+		if (disposed || !state.summaryFresh) return null;
+		const latest = pick(state.view);
+		if (!latest || termsKey(latest) !== termsKey(reviewed)) {
+			emit({ notice: 'terms-changed' });
+			return null;
+		}
+		return latest;
+	}
+
 	/** Sends one stored command, retrying only the identical key/body after an ambiguous result. */
-	async function send(stored: StoredCheckout) {
+	async function send(stored: StoredCheckout, fresh = false) {
 		if (sending || disposed || !token) return;
 		sending = true;
 		const sendingCommand: StoredCheckout = { ...stored, phase: 'sending', blocked: undefined };
@@ -362,6 +428,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		emit({ busy: 'submitting', pending: pendingOf(sendingCommand, false), notice: null });
 		const body = serializeCommand(sendingCommand.command);
 		let result: FetchResult;
+		let unknownEarlier = false;
 		for (let attempt = 0; ; attempt++) {
 			result = await call(
 				`${endpoint}/checkout-sessions`,
@@ -381,6 +448,7 @@ export function createPaymentController(deps: ControllerDeps) {
 			const retryable =
 				!result.ok && classifyCheckoutFailure(result.status, result.error) === 'ambiguous';
 			if (!retryable || attempt >= retryDelays.length) break;
+			unknownEarlier = true;
 			await wait(retryDelays[attempt]);
 			if (disposed) return;
 		}
@@ -406,7 +474,11 @@ export function createPaymentController(deps: ControllerDeps) {
 		}
 		emit({ busy: null });
 		const failure = classifyCheckoutFailure(result.status, result.error);
-		if (!keepsCommand(failure)) store.forgetCheckout();
+		// Disabled payments are refused before commerce looks at the key, so they say nothing about
+		// an earlier send of this command: only a brand-new command refused at once is discarded.
+		const keep =
+			keepsCommand(failure) || (failure === 'payments-disabled' && (!fresh || unknownEarlier));
+		if (!keep) store.forgetCheckout();
 		if (failure === 'key-reused') store.saveCheckout({ ...sendingCommand, blocked: true });
 		if (failure === 'link-unavailable') return linkUnavailable();
 		if (failure === 'payments-disabled') return paymentsDisabled();
@@ -431,11 +503,13 @@ export function createPaymentController(deps: ControllerDeps) {
 		},
 		/** A deliberate payment of the reviewed terms. Ignored while anything is in flight. */
 		async pay(choice: AmountChoice) {
-			const view = state.view;
-			if (sending || isBusy() || store.checkout()) return;
-			if (view?.kind !== 'deposit-due' && view?.kind !== 'balance-due') return;
-			const stored = buildCommand(view.terms, choice);
-			if (stored) await send(stored);
+			if (sending || preparing || isBusy() || store.checkout()) return;
+			const terms = await currentTerms((view) =>
+				view?.kind === 'deposit-due' || view?.kind === 'balance-due' ? view.terms : null
+			);
+			if (!terms || sending || store.checkout()) return;
+			const stored = buildCommand(terms, choice);
+			if (stored) await send(stored, true);
 		},
 		/**
 		 * "Check previous payment and continue": resends this tab's original command when it has
@@ -443,14 +517,17 @@ export function createPaymentController(deps: ControllerDeps) {
 		 * conflicts claim no key and are never followed by another automatic attempt.
 		 */
 		async recover(choice: AmountChoice) {
-			if (sending || isBusy()) return;
+			if (sending || preparing || isBusy()) return;
 			const stored = store.checkout();
+			// This tab's own command: resending it is always safe (same key, same authorization).
 			if (stored && !stored.blocked) return send(stored);
 			if (stored) return;
-			const view = state.view;
-			if (view?.kind !== 'in-progress' || !view.recovery) return;
-			const fresh = buildCommand(view.recovery, choice);
-			if (fresh) await send(fresh);
+			const terms = await currentTerms((view) =>
+				view?.kind === 'in-progress' ? view.recovery : null
+			);
+			if (!terms || sending || store.checkout()) return;
+			const fresh = buildCommand(terms, choice);
+			if (fresh) await send(fresh, true);
 		},
 		/** Resends the identical stored command after an ambiguous outcome. */
 		async retry() {
@@ -467,7 +544,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		},
 		/** A manual summary read; also restarts an exhausted poll. */
 		async refresh() {
-			if (sending) return;
+			if (sending || preparing) return;
 			if (state.polling === 'exhausted') emit({ polling: 'idle' });
 			await refresh();
 		},
