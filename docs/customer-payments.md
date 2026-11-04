@@ -175,6 +175,15 @@ the same click; changed terms (document version, business revision, purpose or a
 saved command (Try again, resuming a cancelled Checkout) needs no fresh summary: the same key can
 only reach its original authorization.
 
+**Ordered reads.** Summary reads (start, manual refresh, polling, visibility, after a checkout
+response, the pre-payment re-read) can overlap, so each takes a monotonically increasing
+generation and only the latest may change anything: summary, freshness, notices, pending command
+state, polling, loading, link revocation and the disabled state alike. A superseded read, whether
+it succeeded, failed, got a 404 or `stripe_disabled`, is discarded untouched and reports
+`superseded`. The pre-payment re-read follows superseding reads to the latest outcome, and proceeds
+only when that read was accepted, nothing newer is pending and the terms still match; Pay is also
+disabled while any read is in flight. Same-key resends never depend on these reads.
+
 **Never a false guarantee.** `paymentUncertain` is true while this tab holds a saved command
 (`sending` or `redirected`), after a Stripe return until a summary has resolved it, or when a
 revoked link dropped one. Unavailability then reads **We can't confirm your payment status right

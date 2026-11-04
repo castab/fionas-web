@@ -33,7 +33,21 @@ function memoryStorage(): Storage {
 	};
 }
 
-type Reply = { status: number; body?: unknown; delayMs?: number } | 'network';
+type Settled = { status: number; body?: unknown; delayMs?: number } | 'network';
+/** A plain reply, or a deferred one the test settles explicitly (deterministic ordering). */
+type Reply = Settled | Promise<Settled>;
+
+/** A reply whose completion the test controls. */
+function deferred() {
+	let settle!: (reply: Settled) => void;
+	const promise = new Promise<Settled>((resolve) => (settle = resolve));
+	return { promise, settle };
+}
+
+/** Lets pending promise callbacks (fetch → json → apply) run to completion. */
+const flush = async () => {
+	for (let i = 0; i < 20; i++) await Promise.resolve();
+};
 type Call = { url: string; method: string; headers: Record<string, string>; body?: string };
 
 function harness(
@@ -44,6 +58,7 @@ function harness(
 		summary?: Reply[];
 		checkout?: Reply[];
 		uuids?: string[];
+		pollDelays?: number[];
 	} = {}
 ) {
 	const storage = options.storage === undefined ? memoryStorage() : options.storage;
@@ -57,8 +72,9 @@ function harness(
 	let visible = true;
 	let clock = 1_000_000;
 	let visibilityListener: (() => void) | null = null;
-	const respond = (reply: Reply | undefined) => {
-		if (!reply || reply === 'network') return Promise.reject(new TypeError('Failed to fetch'));
+	const respond = async (pending: Reply | undefined): Promise<Response> => {
+		const reply = await pending;
+		if (!reply || reply === 'network') throw new TypeError('Failed to fetch');
 		const response = new Response(reply.body === undefined ? null : JSON.stringify(reply.body), {
 			status: reply.status,
 			headers: { 'content-type': 'application/json' }
@@ -96,7 +112,7 @@ function harness(
 			return () => (visibilityListener = null);
 		},
 		onState: (state) => void states.push(state),
-		pollDelays: [1, 1, 1],
+		pollDelays: options.pollDelays ?? [1, 1, 1],
 		retryDelays: [1, 1],
 		now: () => clock
 	};
@@ -107,6 +123,7 @@ function harness(
 		storage,
 		calls,
 		navigated,
+		states,
 		get state() {
 			return controller.state;
 		},
@@ -543,16 +560,16 @@ describe('recovery without the original browser', () => {
 	});
 
 	it('never reports an in-flight recovery as an unknown outcome when a poll lands mid-send', async () => {
-		const h = harness({
-			hash: `#${token}`,
-			summary: [ok(inProgress)],
-			checkout: [{ status: 200, body: openCheckout, delayMs: 30 }]
-		});
+		// The checkout answer is held until the test releases it, so a poll always lands mid-send.
+		const held = deferred();
+		const h = harness({ hash: `#${token}`, summary: [ok(inProgress)], checkout: [held.promise] });
 		await h.controller.start();
 		const notices: unknown[] = [];
 		const recovery = h.controller.recover({ partialCents: null });
 		await vi.waitFor(() => expect(h.summaryCalls().length).toBeGreaterThan(1));
+		await flush();
 		notices.push(h.state.notice, h.state.pending?.ambiguous);
+		held.settle(ok(openCheckout));
 		await recovery;
 		expect(notices).toEqual([null, false]);
 		expect(h.navigated).toEqual([openCheckout.url]);
@@ -808,5 +825,229 @@ describe('summary freshness', () => {
 		await h.controller.retry();
 		expect(h.checkoutCalls().at(-1)?.headers['idempotency-key']).toBe('key-1');
 		expect(h.navigated).toEqual([openCheckout.url]);
+	});
+});
+
+describe('summary request ordering', () => {
+	const quoteV4 = () =>
+		quotedSummary({
+			requiredAmount: '300.00',
+			document: { ...quotedSummary().document, version: 4, businessRevision: 5 }
+		});
+	/** A started page whose next two summary reads are A (older) and B (newer). */
+	async function overlapping(initial: Record<string, unknown> = quotedSummary(), extra = {}) {
+		const a = deferred();
+		const b = deferred();
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(initial)],
+			checkout: [ok(openCheckout)],
+			pollDelays: [60_000],
+			...extra
+		});
+		await h.controller.start();
+		h.replySummary(a.promise, b.promise, 'network');
+		const reads = [h.controller.refresh(), h.controller.refresh()];
+		await flush();
+		return { h, a, b, done: () => Promise.all(reads) };
+	}
+
+	it('A: an older success arriving last cannot overwrite the newer one', async () => {
+		const { h, a, b, done } = await overlapping();
+		b.settle(ok(quoteV4()));
+		await flush();
+		a.settle(ok(quotedSummary()));
+		await done();
+		expect(h.state.summary?.document).toMatchObject({ version: 4, businessRevision: 5 });
+		expect(h.state.view).toMatchObject({ terms: { documentVersion: 4, amountCents: 30000n } });
+		expect(h.state.summaryFresh).toBe(true);
+	});
+
+	it('B: an older failure arriving last cannot mark a newer success stale', async () => {
+		const { h, a, b, done } = await overlapping();
+		b.settle(ok(quoteV4()));
+		await flush();
+		a.settle('network');
+		await done();
+		expect(h.state.summaryFresh).toBe(true);
+		expect(h.state.notice).toBeNull();
+	});
+
+	it('C: an older 404 cannot revoke the bearer or drop a stored command', async () => {
+		const { h, a, b, done } = await overlapping();
+		const stored = {
+			key: 'kept-key',
+			command: { expectedDocumentVersion: 3, expectedBusinessRevision: 4 },
+			purpose: 'DEPOSIT' as const,
+			amountCents: '24000',
+			paidBefore: '0.00',
+			lifecycleBefore: 'QUOTED',
+			phase: 'redirected' as const
+		};
+		h.store.saveCheckout(stored);
+		b.settle(ok(quotedSummary({ paymentInProgress: true, canPay: false })));
+		await flush();
+		a.settle({ status: 404, body: { code: 'not_found' } });
+		await done();
+		expect(h.state.phase).toBe('ready');
+		expect(h.store.token()).toBe(token);
+		expect(h.store.checkout()).toEqual(stored);
+	});
+
+	it('D: an older stripe_disabled cannot disable a newer valid state', async () => {
+		const { h, a, b, done } = await overlapping();
+		b.settle(ok(quotedSummary()));
+		await flush();
+		a.settle({ status: 503, body: { code: 'stripe_disabled' } });
+		await done();
+		expect(h.state.phase).toBe('ready');
+		expect(h.state.view?.kind).toBe('deposit-due');
+	});
+
+	it('E: an older success cannot restore eligibility after a newer failure', async () => {
+		const { h, a, b, done } = await overlapping();
+		b.settle('network');
+		await flush();
+		a.settle(ok(quotedSummary()));
+		await done();
+		expect(h.state.summaryFresh).toBe(false);
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()).toHaveLength(0);
+		h.replySummary(ok(quotedSummary()));
+		await h.controller.refresh();
+		expect(h.state.summaryFresh).toBe(true);
+	});
+
+	it('F: a confirmed deposit cannot regress to pending by response order', async () => {
+		const first = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await first.controller.start();
+		await first.controller.pay({ partialCents: null });
+		const { h, a, b, done } = await overlapping(
+			quotedSummary({ paymentInProgress: true, canPay: false }),
+			{ storage: first.storage, hash: '', search: '?checkout=returned' }
+		);
+		expect(h.state.notice).toBe('confirming');
+		b.settle(ok(bookedSummary()));
+		await flush();
+		a.settle(ok(quotedSummary({ paymentInProgress: true, canPay: false })));
+		await done();
+		expect(h.state.summary?.lifecycle).toBe('BOOKED');
+		expect(h.state.notice).toBe('deposit-confirmed');
+		expect(h.state.view?.kind).toBe('balance-due');
+		expect(h.state.polling).toBe('idle');
+	});
+
+	it('G: a pre-payment check cannot authorize superseded terms', async () => {
+		const a = deferred();
+		const b = deferred();
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		h.advance(MAX_SUMMARY_AGE_MS + 1);
+		h.replySummary(a.promise, b.promise, 'network');
+		const paying = h.controller.pay({ partialCents: null }); // re-reads (A)
+		await flush();
+		const competing = h.controller.refresh(); // B supersedes A
+		await flush();
+		b.settle(ok(quoteV4()));
+		await flush();
+		a.settle(ok(quotedSummary())); // the old terms, arriving last
+		await Promise.all([paying, competing]);
+		expect(h.checkoutCalls()).toHaveLength(0);
+		expect(h.state.notice).toBe('terms-changed');
+		expect(h.state.view).toMatchObject({ terms: { amountCents: 30000n, documentVersion: 4 } });
+		// A deliberate second click uses the reviewed new terms.
+		await h.controller.pay({ partialCents: null });
+		expect(h.checkoutCalls()[0].body).toBe(
+			'{"expectedDocumentVersion":4,"expectedBusinessRevision":5}'
+		);
+	});
+
+	it('G2: a pre-payment check never decides while a newer read is still pending', async () => {
+		const a = deferred();
+		const b = deferred();
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		h.advance(MAX_SUMMARY_AGE_MS + 1);
+		h.replySummary(a.promise, b.promise, 'network');
+		const paying = h.controller.pay({ partialCents: null });
+		await flush();
+		const competing = h.controller.refresh();
+		await flush();
+		a.settle(ok(quotedSummary()));
+		await flush();
+		expect(h.checkoutCalls()).toHaveLength(0); // still waiting for B
+		b.settle(ok(quotedSummary()));
+		await Promise.all([paying, competing]);
+		// Unchanged terms from the latest read: the same click proceeds, once.
+		expect(h.checkoutCalls()).toHaveLength(1);
+	});
+
+	it('H: superseded and failed reads never touch an ambiguous command; retry reuses it', async () => {
+		const h = harness({ hash: `#${token}`, summary: [ok(quotedSummary())], checkout: ['network'] });
+		await h.controller.start();
+		await h.controller.pay({ partialCents: null });
+		const saved = h.store.checkout();
+		expect(saved?.phase).toBe('sending');
+		const a = deferred();
+		const b = deferred();
+		h.replySummary(a.promise, b.promise, 'network');
+		const reads = [h.controller.refresh(), h.controller.refresh()];
+		await flush();
+		b.settle('network');
+		await flush();
+		a.settle({ status: 404, body: { code: 'not_found' } });
+		await Promise.all(reads);
+		expect(h.store.checkout()).toEqual(saved);
+		expect(h.store.token()).toBe(token);
+		h.replyCheckout(ok(openCheckout));
+		await h.controller.retry();
+		const last = h.checkoutCalls().at(-1)!;
+		expect(last.headers['idempotency-key']).toBe(saved!.key);
+		expect(last.body).toBe('{"expectedDocumentVersion":3,"expectedBusinessRevision":4}');
+		expect(h.navigated).toEqual([openCheckout.url]);
+	});
+
+	it('I: a disposed controller ignores a read that completes later', async () => {
+		const a = deferred();
+		const h = harness({ hash: `#${token}`, summary: [ok(quotedSummary())] });
+		await h.controller.start();
+		h.replySummary(a.promise);
+		const read = h.controller.refresh();
+		await flush();
+		h.controller.dispose();
+		const emitted = h.states.length;
+		a.settle({ status: 404, body: { code: 'not_found' } });
+		await read;
+		expect(h.states).toHaveLength(emitted);
+		expect(h.store.token()).toBe(token);
+	});
+
+	it('J: a superseded completion keeps loading and never restarts settled polling', async () => {
+		const pending = quotedSummary({ paymentInProgress: true, canPay: false });
+		const { h, a, b, done } = await overlapping(pending);
+		expect(h.state.polling).toBe('active');
+		expect(h.state.busy).toBe('refreshing');
+		a.settle(ok(pending)); // older completes first but is already superseded
+		await flush();
+		expect(h.state.busy).toBe('refreshing');
+		b.settle(ok(bookedSummary()));
+		await done();
+		expect(h.state.busy).toBeNull();
+		expect(h.state.polling).toBe('idle');
+		const reads = h.summaryCalls().length;
+		await flush();
+		expect(h.summaryCalls()).toHaveLength(reads);
 	});
 });

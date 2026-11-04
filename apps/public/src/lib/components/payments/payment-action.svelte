@@ -267,7 +267,7 @@
 				type="submit"
 				size="lg"
 				class="min-h-13 w-full"
-				disabled={busy || stale}
+				disabled={busy || stale || current.busy === 'refreshing'}
 				data-testid="pay"
 				>{@render submitLabel(`Pay deposit ${formatCents(view.terms.amountCents)}`)}</Button
 			>
@@ -289,7 +289,7 @@
 				type="submit"
 				size="lg"
 				class="min-h-13 w-full"
-				disabled={busy || stale}
+				disabled={busy || stale || current.busy === 'refreshing'}
 				data-testid="pay"
 				>{@render submitLabel(payCents !== null ? `Pay ${formatCents(payCents)}` : 'Pay')}</Button
 			>

@@ -123,6 +123,9 @@ const IN_FLIGHT: NoticeKind[] = [
 	'processing'
 ];
 
+/** How a summary read ended for its caller. `superseded`: a newer read owns the state. */
+type RefreshOutcome = 'applied' | 'failed' | 'superseded';
+
 type FetchResult =
 	| { ok: true; status: number; body: unknown }
 	| { ok: false; status: number | null; error: PaymentError | null };
@@ -265,25 +268,62 @@ export function createPaymentController(deps: ControllerDeps) {
 		else stopPolling('idle');
 	}
 
-	async function refresh(explicit?: NoticeKind | null): Promise<void> {
-		if (!token || disposed) return;
+	/**
+	 * Summary reads are ordered by generation: every read takes the next number, and only the
+	 * latest one may change anything. A superseded read (success, failure, 404, 503 alike) is
+	 * discarded untouched and reports `superseded`, so no caller mistakes it for authority.
+	 */
+	let summaryGeneration = 0;
+	let settledGeneration = 0;
+	let latestRead: Promise<RefreshOutcome> = Promise.resolve('failed');
+	/** An action's notice whose own read was superseded, applied by the read that replaced it. */
+	let carriedNotice: NoticeKind | null | undefined;
+	const summaryInFlight = () => settledGeneration !== summaryGeneration;
+
+	function refresh(explicit?: NoticeKind | null): Promise<RefreshOutcome> {
+		if (!token || disposed) return Promise.resolve('failed');
+		const generation = ++summaryGeneration;
+		const bearer = token;
+		if (explicit !== undefined) carriedNotice = explicit;
 		emit({ busy: state.busy ?? 'refreshing' });
-		const result = await call(
-			endpoint,
-			{ method: 'GET', headers: { accept: 'application/json', 'x-fionas-payment-token': token } },
-			SUMMARY_TIMEOUT_MS
-		);
-		if (disposed) return;
-		if (state.busy === 'refreshing') emit({ busy: null });
-		if (result.ok) {
-			const summary = readPaymentSummary(result.body);
-			if (summary) return applySummary(summary, explicit);
-			return failRefresh();
-		}
-		if (result.status === 404) return linkUnavailable();
-		if (result.status === 503 && result.error?.code && isDisabled(result.error.code))
-			return paymentsDisabled();
-		return failRefresh();
+		latestRead = (async (): Promise<RefreshOutcome> => {
+			const result = await call(
+				endpoint,
+				{
+					method: 'GET',
+					headers: { accept: 'application/json', 'x-fionas-payment-token': bearer }
+				},
+				SUMMARY_TIMEOUT_MS
+			);
+			if (disposed || generation !== summaryGeneration) return 'superseded';
+			settledGeneration = generation;
+			const notice = carriedNotice;
+			carriedNotice = undefined;
+			// Only the current read clears loading; a superseded one leaves the active read's state.
+			if (state.busy === 'refreshing') emit({ busy: null });
+			if (result.ok) {
+				const summary = readPaymentSummary(result.body);
+				if (summary) {
+					applySummary(summary, notice);
+					return 'applied';
+				}
+				failRefresh();
+				return 'failed';
+			}
+			if (result.status === 404) linkUnavailable();
+			else if (result.status === 503 && result.error?.code && isDisabled(result.error.code))
+				paymentsDisabled();
+			else failRefresh();
+			return 'failed';
+		})();
+		return latestRead;
+	}
+
+	/** Waits for the latest summary read, following any that supersede it, to its own outcome. */
+	async function settledRefresh(): Promise<RefreshOutcome> {
+		let outcome = await refresh();
+		while (outcome === 'superseded' && !disposed) outcome = await latestRead;
+		return outcome;
 	}
 
 	/** A command is being sent or the tab is leaving for Stripe (a background read is not busy). */
@@ -401,15 +441,18 @@ export function createPaymentController(deps: ControllerDeps) {
 		pick: (view: PaymentView | null) => PayableTerms | null
 	): Promise<PayableTerms | null> {
 		const reviewed = pick(state.view);
-		if (!reviewed || !state.summaryFresh) return null;
+		// A read in flight may replace these terms: never decide on the one it will supersede.
+		if (!reviewed || !state.summaryFresh || summaryInFlight()) return null;
 		if (now() - loadedAt <= MAX_SUMMARY_AGE_MS) return reviewed;
 		preparing = true;
+		let outcome: RefreshOutcome;
 		try {
-			await refresh();
+			outcome = await settledRefresh();
 		} finally {
 			preparing = false;
 		}
-		if (disposed || !state.summaryFresh) return null;
+		// Only the latest accepted summary, with nothing newer pending, may authorize a payment.
+		if (disposed || outcome !== 'applied' || summaryInFlight() || !state.summaryFresh) return null;
 		const latest = pick(state.view);
 		if (!latest || termsKey(latest) !== termsKey(reviewed)) {
 			emit({ notice: 'terms-changed' });
@@ -544,7 +587,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		},
 		/** A manual summary read; also restarts an exhausted poll. */
 		async refresh() {
-			if (sending || preparing) return;
+			if (sending) return;
 			if (state.polling === 'exhausted') emit({ polling: 'idle' });
 			await refresh();
 		},
