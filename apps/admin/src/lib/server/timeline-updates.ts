@@ -1,4 +1,4 @@
-import type { BackendConfig } from './backend.js';
+import { forwardedCookie, type BackendConfig } from './backend.js';
 
 const headers = {
 	'content-type': 'text/event-stream; charset=utf-8',
@@ -76,7 +76,8 @@ export async function subscribeTimeline(
 				headers: {
 					accept: 'text/event-stream',
 					origin: config.origin,
-					cookie,
+					// The staff session only: admin-local recovery cookies stay on this host.
+					cookie: forwardedCookie(cookie) ?? '',
 					'accept-encoding': 'identity'
 				}
 			}

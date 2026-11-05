@@ -1,3 +1,4 @@
+import type { FinancialEmailHistory } from './financial-email-contract.js';
 import type {
 	FinancialDocumentResponse,
 	HistoricalDepositRequirement,
@@ -29,6 +30,16 @@ export type ConversationMessage = Entry & {
 	text?: string | null;
 	sendState: SendState;
 	deliveryState?: DeliveryState | null;
+	/**
+	 * READABLE: complete provider text (possibly empty), including financial emails, payment links
+	 * and quoted history. PROVIDER_CONTENT_UNAVAILABLE: the provider supplied none. Absent from
+	 * commerce versions before PR #39, where null text means unavailable.
+	 */
+	textVisibility?: 'READABLE' | 'PROVIDER_CONTENT_UNAVAILABLE';
+	/** Deprecated, always false; tolerated and ignored. */
+	textOmittedForPaymentSecurity?: boolean;
+	/** The financial-email command this outbound provider message carried. The same message, never a second event. */
+	financialEmail?: FinancialEmailHistory | null;
 };
 type Allocation = {
 	documentId: string;
@@ -86,6 +97,8 @@ export type StaffTimeline = {
 	};
 	attention: CommunicationSummary;
 	items: TimelineItem[];
+	/** Safe financial-email command history, including UNKNOWN and REJECTED. Absent before PR #39. */
+	financialEmails?: FinancialEmailHistory[];
 };
 export type ReplyExpectation =
 	| { expectedLatestMessageId: string; expectEmptyConversation?: never }

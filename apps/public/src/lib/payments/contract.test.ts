@@ -37,6 +37,29 @@ describe('payment summary contract', () => {
 		expect(JSON.stringify(summary)).not.toContain('private');
 	});
 
+	it('never carries customer identity, contact details or conversation content', () => {
+		const leaked = {
+			customerName: 'Maria Lopez',
+			name: 'Maria Lopez',
+			email: 'maria@example.com',
+			phone: '+1 555 0100',
+			address: '1 Main St',
+			zipCode: '94110',
+			message: 'PRIVATE conversation text',
+			servicePlan: { description: 'PRIVATE service description' }
+		};
+		const booked = bookedSummary(leaked);
+		const summary = readPaymentSummary({
+			...booked,
+			document: { ...booked.document, customerName: 'Maria Lopez' },
+			history: [{ ...booked.history[0], payerEmail: 'maria@example.com' }]
+		});
+		expect(summary).not.toBeNull();
+		const serialized = JSON.stringify(summary);
+		for (const value of ['Maria', 'maria@example.com', '555', 'Main St', '94110', 'PRIVATE'])
+			expect(serialized).not.toContain(value);
+	});
+
 	it.each([
 		['float money', { requiredAmount: 240 }],
 		['sub-cent money', { balance: '1200.001' }],
@@ -59,10 +82,14 @@ describe('payment summary contract', () => {
 });
 
 describe('payment view', () => {
-	it('labels by business revision, never the ledger version', () => {
+	it('labels the document without generated version numbers, keeping revisions internal', () => {
 		const summary = readPaymentSummary(quotedSummary())!;
-		expect(documentLabel(summary)).toBe('Quote v4');
-		expect(documentLabel(readPaymentSummary(bookedSummary())!)).toBe('Invoice v8');
+		expect(documentLabel(summary)).toBe('Quote');
+		const booked = readPaymentSummary(bookedSummary())!;
+		expect(documentLabel(booked)).toBe('Invoice');
+		// The exact concurrency inputs survive for checkout, even though they are never displayed.
+		expect(booked.document).toMatchObject({ businessRevision: 8, acceptedQuoteRevision: 4 });
+		expect(paymentView(booked)).toMatchObject({ terms: { businessRevision: 8 } });
 		expect(stageLabel(summary)).toBe('Quote ready');
 		expect(eventDateLabel('2027-05-01')).toBe('Saturday, May 1, 2027');
 	});

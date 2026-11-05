@@ -17,6 +17,11 @@ import {
 import { editorAction, loadHistory } from '$lib/server/editor-actions.js';
 import { customerPaymentsAction, loadCustomerPayments } from '$lib/server/customer-payments.js';
 import {
+	loadFinancialEmail,
+	previewFinancialEmailAction,
+	sendFinancialEmailAction
+} from '$lib/server/financial-email-actions.js';
+import {
 	canRecordDeposit,
 	canRecordInvoicePayment,
 	hasPaymentPermission,
@@ -71,6 +76,7 @@ export const load: PageServerLoad = async ({
 	const historyOpen = url.searchParams.has('history');
 	const paymentOpen = url.searchParams.has('payment');
 	const declineOpen = url.searchParams.has('decline');
+	const emailOpen = url.searchParams.has('email');
 	// Opened from the Requests index: its validated filter/search/cursor, for Back to requests.
 	const returnContext = readReturnContext(url.searchParams);
 	const today = businessDate(new Date());
@@ -94,6 +100,8 @@ export const load: PageServerLoad = async ({
 			customerPayments: null,
 			paymentOpen,
 			declineOpen,
+			emailOpen,
+			financialEmail: null,
 			returnContext,
 			today
 		};
@@ -118,10 +126,19 @@ export const load: PageServerLoad = async ({
 		data.inquiry.lifecycle.stage,
 		permissions
 	);
+	// The lifecycle's Quote/Invoice email and its sealed recovery record; null when neither applies.
+	const financialEmail = await loadFinancialEmail(
+		{ params, request, url, cookies, locals },
+		data,
+		conversation?.timeline ?? null,
+		emailOpen
+	);
 	return {
 		inquiryId: params.inquiryId,
 		staffRequest: data,
 		conversation,
+		financialEmail,
+		emailOpen,
 		requestError: null,
 		quoteOpen,
 		editorMode,
@@ -138,6 +155,8 @@ export const actions: Actions = {
 	acknowledgeConversation,
 	sendConversationReply,
 	customerPayments: customerPaymentsAction,
+	previewFinancialEmail: previewFinancialEmailAction,
+	sendFinancialEmail: sendFinancialEmailAction,
 	markServed: fulfillmentAction('markServed'),
 	closeInquiry: fulfillmentAction('closeInquiry'),
 	recordDeposit: paymentAction(true),

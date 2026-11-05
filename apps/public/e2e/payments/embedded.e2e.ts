@@ -150,7 +150,7 @@ test('an embedded deposit stays on the page and confirms only from commerce', as
 	const panel = page.getByTestId('embedded-checkout');
 	await expect(panel.getByRole('heading', { name: 'Complete your payment' })).toBeFocused();
 	await expect(panel.getByTestId('embedded-amount')).toHaveText('$240.00');
-	await expect(panel).toContainText("Deposit for your Fiona's Ice Cream booking (Quote v4)");
+	await expect(panel).toContainText("Deposit for your Fiona's Ice Cream booking");
 	await expect(panel).toContainText('Secure payment powered by Stripe');
 	await expect(panel.locator('iframe[title="Secure checkout (test)"]')).toBeVisible();
 	await expect(
@@ -206,7 +206,7 @@ test('an embedded deposit stays on the page and confirms only from commerce', as
 		{ timeout: 15_000 }
 	);
 	await expect(page.getByTestId('stage-label')).toHaveText('Booked');
-	await expect(page.getByTestId('document-label')).toContainText('Invoice v8');
+	await expect(page.getByTestId('document-label')).toHaveText('Invoice');
 	await expect(page.getByTestId('figure-balance')).toContainText('$960.00');
 	await expect(page.getByTestId('payment-history')).toContainText('$240.00');
 	expect(await posts(request, publicId)).toHaveLength(1);
@@ -340,7 +340,7 @@ test('a partial Invoice payment updates the balance; paying again is a new decis
 	await page.getByRole('button', { name: 'Pay $100.00' }).click();
 	const panel = page.getByTestId('embedded-checkout');
 	await expect(panel.getByTestId('embedded-amount')).toHaveText('$100.00');
-	await expect(panel).toContainText('Payment toward Invoice v8');
+	await expect(panel).toContainText('Payment toward your Invoice');
 	await completeInStripe(page);
 	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
 	await update(request, publicId, {
@@ -423,7 +423,7 @@ test('a staff amendment while the form is open removes it; checking reuses the s
 	await expect(page.locator('iframe')).toHaveCount(0);
 	expect(await stripeTest(page)).toMatchObject({ destroys: 1, live: 0 });
 	await expect(notice).not.toContainText(/cancel|expired|refund|not charged/i);
-	await expect(page.getByTestId('document-label')).toContainText('Invoice v9');
+	await expect(page.getByTestId('document-label')).toHaveText('Invoice');
 	await expect(page.getByTestId('invalidated-payment')).toContainText('$200.00');
 	await expect(page.getByTestId('pay')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Continue your payment' })).toHaveCount(0);

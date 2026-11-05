@@ -23,12 +23,54 @@ export type RequestOptions = {
 	json?: unknown;
 	/** The browser's `Cookie` header, forwarded so the backend can identify the session. */
 	cookie?: string | null;
-	/** Only conversation replies may use these capabilities; never arbitrary browser headers. */
+	/** Only the send capabilities below may carry a key; never arbitrary browser headers. */
 	idempotencyKey?: string;
+	/** Shorthand for `capability: 'conversationReply'`. */
 	conversationReply?: boolean;
+	/**
+	 * A named, path-bound capability. Each allows exactly one POST route: the two staff email sends
+	 * (which require an Idempotency-Key and wait for the provider), and the write-free financial
+	 * email preview (which performs a provider thread lookup).
+	 */
+	capability?: Capability;
 };
 
 const TIMEOUT_MS = 8000;
+type Capability = 'conversationReply' | 'financialEmailSend' | 'financialEmailPreview';
+/**
+ * The explicit Idempotency-Key allowlist. A lookup plus two bounded provider attempts can take 90s,
+ * so the sends wait 100s; configure ingress for at least 110s (docs/admin-conversation.md).
+ */
+const CAPABILITIES: Record<Capability, { path: RegExp; timeout: number; key: boolean }> = {
+	conversationReply: {
+		path: /^\/staff\/requests\/[^/]+\/conversation\/replies$/,
+		timeout: 100000,
+		key: true
+	},
+	financialEmailSend: {
+		path: /^\/staff\/requests\/[^/]+\/financial-emails$/,
+		timeout: 100000,
+		key: true
+	},
+	financialEmailPreview: {
+		path: /^\/staff\/requests\/[^/]+\/financial-emails\/preview$/,
+		timeout: 30000,
+		key: false
+	}
+};
+/**
+ * Admin-local cookies (recovery pointers and sealed financial-email records) belong to this host
+ * only. They are never forwarded: commerce receives the staff session and nothing else of ours.
+ */
+const LOCAL_COOKIE = /^(?:fionas_reply_intent|fionas_fe\d)$/;
+export function forwardedCookie(cookie: string | null | undefined): string | null {
+	if (!cookie) return null;
+	const kept = cookie
+		.split(';')
+		.map((part) => part.trim())
+		.filter((part) => part && !LOCAL_COOKIE.test(part.slice(0, part.indexOf('=')).trim()));
+	return kept.length ? kept.join('; ') : null;
+}
 
 /** Seconds from a `Retry-After` header (the backend sends delta-seconds), or null. */
 function parseRetryAfter(value: string | null): number | null {
@@ -40,24 +82,32 @@ function parseRetryAfter(value: string | null): number | null {
 export async function request<T = null>(
 	config: BackendConfig,
 	path: string,
-	{ method = 'GET', json, cookie, idempotencyKey, conversationReply = false }: RequestOptions = {}
+	{
+		method = 'GET',
+		json,
+		cookie,
+		idempotencyKey,
+		conversationReply = false,
+		capability = conversationReply ? 'conversationReply' : undefined
+	}: RequestOptions = {}
 ): Promise<ApiResult<T>> {
+	const allowed = capability ? CAPABILITIES[capability] : null;
 	if (
-		idempotencyKey !== undefined &&
-		(!/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey) ||
-			method !== 'POST' ||
-			!/^\/staff\/requests\/[^/]+\/conversation\/replies$/.test(path))
+		(capability && (!allowed || method !== 'POST' || !allowed.path.test(path))) ||
+		(idempotencyKey !== undefined &&
+			(!allowed?.key || !/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey)))
 	) {
 		throw new TypeError('Invalid reply transport options');
 	}
-	if (conversationReply && idempotencyKey === undefined) throw new TypeError('Reply key required');
+	if (allowed?.key && idempotencyKey === undefined) throw new TypeError('Reply key required');
 	const doFetch = config.fetch ?? fetch;
 	const headers: Record<string, string> = {
 		accept: 'application/json',
 		origin: config.origin
 	};
 	if (json !== undefined) headers['content-type'] = 'application/json';
-	if (cookie) headers.cookie = cookie;
+	const session = forwardedCookie(cookie);
+	if (session) headers.cookie = session;
 	if (idempotencyKey) headers['idempotency-key'] = idempotencyKey;
 
 	let response: Response;
@@ -67,7 +117,7 @@ export async function request<T = null>(
 			headers,
 			body: json === undefined ? undefined : JSON.stringify(json),
 			redirect: 'manual',
-			signal: AbortSignal.timeout(conversationReply ? 100000 : TIMEOUT_MS)
+			signal: AbortSignal.timeout(allowed?.timeout ?? TIMEOUT_MS)
 		});
 	} catch {
 		return {

@@ -63,7 +63,7 @@ function event(
 			headers: { cookie: '__Host-fionas_session=staff' },
 			body: postedForm(values, extra)
 		}),
-		cookies: { set: vi.fn() },
+		cookies: { get: () => undefined, set: vi.fn(), delete: vi.fn() },
 		setHeaders: vi.fn()
 	} as never;
 }
@@ -75,7 +75,7 @@ function pageEvent(search: string, permissions = quotePermissions) {
 		request: new Request('https://admin.test', {
 			headers: { cookie: '__Host-fionas_session=staff' }
 		}),
-		cookies: { set: vi.fn() },
+		cookies: { get: () => undefined, set: vi.fn(), delete: vi.fn() },
 		setHeaders: vi.fn()
 	} as never;
 }

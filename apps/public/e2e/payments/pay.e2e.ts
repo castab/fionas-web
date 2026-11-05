@@ -73,7 +73,7 @@ test('a new link captures the bearer, cleans the URL and shows the deposit', asy
 
 	await expect(page.getByTestId('pay-page')).toBeVisible();
 	await expect(page.getByTestId('stage-label')).toHaveText('Quote ready');
-	await expect(page.getByTestId('document-label')).toHaveText('Quote v4');
+	await expect(page.getByTestId('document-label')).toHaveText('Quote');
 	await expect(page.getByTestId('event-date')).toHaveText('Saturday, May 1, 2027');
 	await expect(page.getByTestId('figure-total')).toContainText('$1,200.00');
 	await expect(page.getByTestId('figure-paid')).toContainText('$0.00');
@@ -132,8 +132,10 @@ test('paying the exact deposit goes to Stripe; returning confirms only from comm
 		'Your remaining balance is $960.00.'
 	);
 	await expect(page.getByTestId('stage-label')).toHaveText('Booked');
-	await expect(page.getByTestId('document-label')).toContainText('Invoice v8');
-	await expect(page.getByTestId('document-label')).toContainText('Booked from Quote v4');
+	await expect(page.getByTestId('document-label')).toHaveText('Invoice');
+	await expect(page.getByTestId('payment-overview')).not.toContainText(
+		/Quote v\d|Invoice v\d|Booked from/
+	);
 	await expect(page.getByTestId('payment-history')).toContainText('$240.00');
 	await expect(page.getByRole('progressbar', { name: 'Payment progress' })).toHaveAttribute(
 		'aria-valuenow',
@@ -237,7 +239,7 @@ test('an amended Invoice appears on the same URL; changed terms require review',
 	]);
 	await simulateStripe(page, publicId);
 	await open(page, publicId, token);
-	await expect(page.getByTestId('document-label')).toContainText('Invoice v8');
+	await expect(page.getByTestId('document-label')).toHaveText('Invoice');
 	const amended = bookedSummary({
 		document: {
 			...bookedSummary().document,
@@ -251,10 +253,10 @@ test('an amended Invoice appears on the same URL; changed terms require review',
 	await update(request, publicId, { summary: amended });
 	await page.getByRole('button', { name: 'Pay $960.00' }).click();
 	await expect(page.getByTestId('payment-notice')).toContainText('Your booking was updated');
-	await expect(page.getByTestId('document-label')).toContainText('Invoice v9');
+	await expect(page.getByTestId('document-label')).toHaveText('Invoice');
 	await expect(page.getByRole('button', { name: 'Pay $1,160.00' })).toBeVisible();
 	await page.reload(); // same URL, bearer from this tab
-	await expect(page.getByTestId('document-label')).toContainText('Invoice v9');
+	await expect(page.getByTestId('document-label')).toHaveText('Invoice');
 	await page.getByRole('button', { name: 'Pay $1,160.00' }).click();
 	await expect(page).toHaveURL(/checkout\.stripe\.com/);
 	const sent = await posts(request, publicId);
@@ -524,7 +526,7 @@ test('a summary that could not be refreshed cannot start a new payment', async (
 	});
 	await page.getByTestId('stale-summary').getByRole('button', { name: 'Check again' }).click();
 	await expect(page.getByRole('button', { name: 'Pay deposit $300.00' })).toBeEnabled();
-	await expect(page.getByTestId('document-label')).toHaveText('Quote v5');
+	await expect(page.getByTestId('document-label')).toHaveText('Quote');
 	expect(await posts(request, publicId)).toHaveLength(0);
 });
 

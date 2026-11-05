@@ -291,7 +291,7 @@
 		<div class="flex flex-col gap-1">
 			<h2 class={heading}>Make a payment</h2>
 			<p class={body}>
-				Your payment is credited toward the outstanding balance{label ? ` on ${label}` : ''}.
+				Your payment is credited toward the outstanding balance{label ? ` on your ${label}` : ''}.
 			</p>
 		</div>
 		{@render staleGate()}

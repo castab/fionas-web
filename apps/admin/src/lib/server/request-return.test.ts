@@ -38,7 +38,7 @@ function event(search: string, body?: FormData) {
 			body
 		}),
 		locals: { user: { id: 'staff', roles: [], permissions } },
-		cookies: {},
+		cookies: { get: () => undefined, set: vi.fn(), delete: vi.fn() },
 		setHeaders: vi.fn()
 	} as never;
 }

@@ -8,6 +8,7 @@ import type {
 } from './conversation-contract.js';
 import { isFinancialDocumentHistory, isDepositRequirementHistory } from './revision-history.js';
 import { BUSINESS_TIME_ZONE } from './presentation.js';
+import { isFinancialEmailHistory } from './financial-email.js';
 
 const object = (v: unknown): v is Record<string, unknown> =>
 	!!v && typeof v === 'object' && !Array.isArray(v);
@@ -82,7 +83,17 @@ function item(v: unknown, inquiryId: string): v is TimelineItem {
 						'complained',
 						'suppressed',
 						'failed'
-					].includes(String(v.deliveryState)))
+					].includes(String(v.deliveryState))) &&
+				// READABLE always carries text (even empty); unavailable never does.
+				(v.textVisibility === undefined ||
+					(v.textVisibility === 'READABLE' && typeof v.text === 'string') ||
+					(v.textVisibility === 'PROVIDER_CONTENT_UNAVAILABLE' && v.text == null)) &&
+				(v.textOmittedForPaymentSecurity === undefined ||
+					typeof v.textOmittedForPaymentSecurity === 'boolean') &&
+				(v.financialEmail == null ||
+					(v.direction === 'outbound' &&
+						isFinancialEmailHistory(v.financialEmail) &&
+						v.financialEmail.messageId === v.messageId))
 			);
 		case 'QUOTE_PUBLISHED': {
 			if (
@@ -180,9 +191,13 @@ export function isStaffTimeline(v: unknown, inquiryId: string): v is StaffTimeli
 		!optionalText(c.subject) ||
 		!optionalText(c.providerState) ||
 		!optionalText(c.latestMessageId) ||
-		!v.items.every((i) => item(i, inquiryId))
+		!v.items.every((i) => item(i, inquiryId)) ||
+		(v.financialEmails !== undefined &&
+			(!Array.isArray(v.financialEmails) || !v.financialEmails.every(isFinancialEmailHistory)))
 	)
 		return false;
+	const emails = (v.financialEmails ?? []) as { sendId: string }[];
+	if (new Set(emails.map((e) => e.sendId)).size !== emails.length) return false;
 	const messages = v.items.filter((i) => i.kind === 'MESSAGE');
 	return (
 		new Set(v.items.map((i) => i.id)).size === v.items.length &&

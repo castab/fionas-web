@@ -76,8 +76,8 @@
 	const body = 'm-0 text-(--text-body) [font:var(--type-body-sm)]';
 	const description = $derived(
 		launch.purpose === 'DEPOSIT'
-			? `Deposit for your ${site.name} booking (Quote v${launch.businessRevision})`
-			: `Payment toward Invoice v${launch.businessRevision}`
+			? `Deposit for your ${site.name} booking`
+			: 'Payment toward your Invoice'
 	);
 </script>
 

@@ -4,8 +4,15 @@
 	import { cn, focusRing } from '@fionas/ui';
 	import type { ConversationMessage } from '$lib/conversation-contract.js';
 	import { messageStatus, splitQuotedTrail } from '$lib/conversation.js';
+	import { emailedVersionLabel, kindLabel } from '$lib/financial-email.js';
 	import { receivedTimeLabel } from '$lib/payments.js';
-	let { message, newest }: { message: ConversationMessage; newest: boolean } = $props();
+	let {
+		message,
+		newest,
+		userId = ''
+	}: { message: ConversationMessage; newest: boolean; userId?: string } = $props();
+	// The provider message a financial-email command produced: labelled here, never a second band.
+	const financialEmail = $derived(message.financialEmail ?? null);
 	// Initialize once. Keyed message identity preserves the staff member's disclosure on refresh.
 	let open = $state(untrack(() => newest));
 	const unavailable = 'Plain-text content is unavailable for this email.';
@@ -18,9 +25,16 @@
 			? `${message.senderName ? `${message.senderAddress} · ` : ''}To ${site.name}`
 			: `To ${message.recipient}`
 	);
-	// Earlier mail a client quoted below the reply is folded, never removed.
-	const split = $derived(message.text == null ? null : splitQuotedTrail(message.text));
-	const snippet = $derived(split?.body.replace(/\s+/g, ' ').trim().slice(0, 180) || unavailable);
+	// READABLE text is complete provider text, payment links and quoted history included. Earlier
+	// mail a client quoted below the reply is folded for presentation only, never removed.
+	const readable = $derived(
+		message.textVisibility !== 'PROVIDER_CONTENT_UNAVAILABLE' && typeof message.text === 'string'
+	);
+	const split = $derived(readable ? splitQuotedTrail(message.text!) : null);
+	const empty = 'This email has no plain-text content.';
+	const snippet = $derived(
+		split ? split.body.replace(/\s+/g, ' ').trim().slice(0, 180) || empty : unavailable
+	);
 	const failed = [
 		'Bounced',
 		'Failed to send',
@@ -55,8 +69,18 @@
 		>
 		<span class="flex min-w-0 flex-1 flex-col gap-0.5">
 			<span class="flex min-w-0 items-baseline gap-2">
-				<span class="sr-only">{inbound ? 'Customer email' : 'Staff reply'}</span>
+				<span class="sr-only"
+					>{inbound
+						? 'Customer email'
+						: financialEmail
+							? `${kindLabel(financialEmail.kind)} email`
+							: 'Staff reply'}</span
+				>
 				<span class="min-w-0 truncate text-[13.5px] font-semibold">{name}</span>
+				{#if financialEmail}<span
+						class="shrink-0 rounded-full bg-olive-700 px-2 py-0.5 font-sans text-[9.5px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-cream-200 uppercase"
+						data-testid="financial-email-chip">{kindLabel(financialEmail.kind)} emailed</span
+					>{/if}
 				<time
 					datetime={message.occurredAt}
 					class="ml-auto shrink-0 text-[11px] whitespace-nowrap text-(--text-muted)"
@@ -70,6 +94,18 @@
 		</span>
 	</summary>
 	<div class="flex flex-col gap-3 pr-[18px] pb-[18px] pl-16">
+		{#if financialEmail}<p
+				class="m-0 text-[12px] leading-[1.5] text-(--text-muted)"
+				data-testid="financial-email-meta"
+			>
+				<span class="font-semibold text-(--text-body)">{emailedVersionLabel(financialEmail)}</span>
+				(staff only) · {financialEmail.current
+					? `Current ${kindLabel(financialEmail.kind)}`
+					: `Earlier ${kindLabel(financialEmail.kind)}`} · Sent by {financialEmail.actor
+					.principalId === userId
+					? 'you'
+					: 'staff'}
+			</p>{/if}
 		{#if !inbound}<div class="flex flex-wrap gap-1.5">
 				{#each messageStatus(message) as status (status)}<span
 						class={cn(
@@ -78,8 +114,13 @@
 						)}>{status}</span
 					>{/each}
 			</div>{/if}
-		<p class="m-0 text-[13.5px] leading-[1.65] wrap-anywhere whitespace-pre-wrap">
-			{split?.body ?? unavailable}
+		<p
+			class={cn(
+				'm-0 text-[13.5px] leading-[1.65] wrap-anywhere whitespace-pre-wrap',
+				(!split || !split.body.trim()) && 'text-(--text-muted)'
+			)}
+		>
+			{split ? split.body || empty : unavailable}
 		</p>
 		{#if split?.quoted}<details class="group/quote min-w-0">
 				<summary
@@ -130,6 +171,8 @@
 				<dd class="m-0 wrap-anywhere select-all">{message.recipient}</dd>
 				<dt>Message ID</dt>
 				<dd class="m-0 wrap-anywhere select-all">{message.messageId}</dd>
+				{#if financialEmail}<dt>Send ID</dt>
+					<dd class="m-0 wrap-anywhere select-all">{financialEmail.sendId}</dd>{/if}
 			</dl>
 		</details>
 	</div>

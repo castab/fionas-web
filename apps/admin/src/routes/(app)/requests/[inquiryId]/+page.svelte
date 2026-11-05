@@ -14,6 +14,14 @@
 	import DeclineControls from '$lib/components/requests/decline-controls.svelte';
 	import CustomerPayments from '$lib/components/requests/customer-payments.svelte';
 	import type { CustomerPaymentsResult } from '$lib/customer-payments.js';
+	import FinancialEmailPanel from '$lib/components/requests/financial-email/financial-email-panel.svelte';
+	import FinancialEmailStatus from '$lib/components/requests/financial-email/financial-email-status.svelte';
+	import type {
+		FinancialEmailActionResult,
+		FinancialEmailKind
+	} from '$lib/financial-email-contract.js';
+	import { draftLocked, financialEmailStatus } from '$lib/financial-email.js';
+	import type { StaffTimeline } from '$lib/conversation-contract.js';
 	import { canRecordDeposit, canRecordInvoicePayment, receivedTimeLabel } from '$lib/payments.js';
 	import { isDecimal } from '$lib/payment-history.js';
 	import { depositTermsLabel } from '$lib/deposit.js';
@@ -80,7 +88,21 @@
 			if (sequence === liveSequence) liveStale = true;
 		}
 	}
-	function activityRefreshed({ historyChanged }: { historyChanged: boolean }) {
+	// The latest applied Activity read for this page load: current financial-email status.
+	let liveTimeline = $state.raw<{ base: unknown; timeline: StaffTimeline } | null>(null);
+	const timeline = $derived(
+		liveTimeline && liveTimeline.base === data.conversation
+			? liveTimeline.timeline
+			: (data.conversation?.timeline ?? null)
+	);
+	function activityRefreshed({
+		historyChanged,
+		timeline: next
+	}: {
+		historyChanged: boolean;
+		timeline: StaffTimeline;
+	}) {
+		liveTimeline = { base: data.conversation, timeline: next };
 		activityRefreshes++;
 		if (!historyChanged) return;
 		if (reviewSnapshotOpen) liveStale = true;
@@ -172,6 +194,27 @@
 		form && 'customerPayments' in form ? (form.customerPayments as CustomerPaymentsResult) : null
 	);
 	const publications = $derived(request ? publicationEntries(request) : []);
+	// Quote (QUOTED) or balance-due Invoice (SERVED) email: one reviewed, recoverable command.
+	const emailView = $derived(data.financialEmail);
+	const emailResult = $derived(
+		form && 'financialEmail' in form ? (form as FinancialEmailActionResult).financialEmail : null
+	);
+	const emailStatus = $derived(
+		emailView && timeline ? financialEmailStatus(timeline.financialEmails, emailView.kind) : null
+	);
+	// Opened by ?email (works without JavaScript); a native result or a possibly sent email keeps it.
+	const showEmail = $derived(
+		!!request &&
+			!!emailView &&
+			(data.emailOpen || !!emailResult || draftLocked(emailView.draft) || emailView.lost)
+	);
+	// Bumped after an enhanced financial email is accepted: one targeted Activity read.
+	let emailRefresh = $state(0);
+	let emailAccepted = $state<{
+		sendId: string;
+		replayed: boolean;
+		kind: FinancialEmailKind;
+	} | null>(null);
 	const caps =
 		'm-0 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-heading) uppercase';
 	const micro =
@@ -361,6 +404,17 @@
 							{/if}
 						{/if}
 					</div>
+					{#if emailView}
+						<FinancialEmailStatus
+							view={emailView}
+							status={emailStatus}
+							historyLoaded={!!timeline}
+							userId={data.user.id}
+							href={showEmail ? '#financial-email' : panelHref('email')}
+							disabled={mutationPending}
+							accepted={emailAccepted ?? emailView.accepted ?? null}
+						/>
+					{/if}
 					{#if availableMode || canDecline}
 						<!-- Separate permissions: either action can appear without the other. -->
 						<div class="flex flex-wrap gap-2.5">
@@ -502,6 +556,25 @@
 						</dl>
 					</Card>
 				{/if}
+				{#if showEmail && emailView}
+					{#key data.financialEmail}
+						<FinancialEmailPanel
+							view={emailView}
+							result={emailResult}
+							{request}
+							{timeline}
+							{route}
+							returnContext={data.returnContext}
+							blocked={mutationReviewRequired || mutationPending}
+							detailsChanged={liveStale}
+							focusOnOpen={data.emailOpen && !form}
+							onaccepted={(accepted) => {
+								emailAccepted = accepted;
+								emailRefresh++;
+							}}
+						/>
+					{/key}
+				{/if}
 				{#if showPayment}
 					<PaymentControls
 						{request}
@@ -562,6 +635,7 @@
 						returnContext={data.returnContext}
 						result={form as ConversationActionResult | null}
 						onrefreshed={activityRefreshed}
+						refreshSignal={emailRefresh}
 					/>
 				{/key}
 			</div>

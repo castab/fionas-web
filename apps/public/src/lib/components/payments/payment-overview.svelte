@@ -31,17 +31,13 @@
 		</div>
 		{#if label}
 			<div class="flex flex-col gap-0.5">
-				<dt class={micro}>{summary.document.stage === 'INVOICE' ? 'Invoice' : 'Quote'}</dt>
+				<dt class={micro}>Document</dt>
+				<!-- No generated version labels: revisions stay internal to checkout concurrency. -->
 				<dd
 					class="m-0 font-sans text-[15px] font-semibold text-(--text-body)"
 					data-testid="document-label"
 				>
 					{label}
-					{#if summary.document.stage === 'INVOICE' && summary.document.acceptedQuoteRevision}
-						<span class={cn(hintText, 'block font-normal')}
-							>Booked from Quote v{summary.document.acceptedQuoteRevision}</span
-						>
-					{/if}
 				</dd>
 			</div>
 		{/if}

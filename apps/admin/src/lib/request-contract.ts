@@ -130,6 +130,17 @@ export type StaffRequestResponse = {
 	servicePlanHistory: ServicePlanResponse[];
 	/** Every publication in durable order. Always present (empty before the first Quote). */
 	proposalHistory: InquiryProposalResponse[];
+	/**
+	 * Business revisions (fionas-commerce revisions handoff). Distinct from `financial.version`, the
+	 * ledger version: service- or deposit-only publications advance them without a new ledger
+	 * version. Optional during deployment overlap; financial email needs the current one.
+	 */
+	/** Latest published Quote business revision; historical context after booking. */
+	currentQuoteRevision?: number | null;
+	/** Immutable accepted Quote business revision; present only after booking. */
+	acceptedQuoteRevision?: number | null;
+	/** Current Invoice business revision; present only after booking. */
+	currentInvoiceRevision?: number | null;
 };
 /** `GET /financial-documents/{id}/history`: every immutable snapshot, oldest first. */
 export type FinancialDocumentHistoryResponse = {
@@ -180,6 +191,8 @@ export type InquiryProposalResponse = {
 	issuanceKind: string;
 	/** The service approval this publication carries; absent when none was ever approved. */
 	servicePlanRevision?: number | null;
+	/** Customer-facing Quote business revision; increases for every material publication. */
+	quoteRevision?: number | null;
 };
 export type IssueInquiryProposalRequest = {
 	expectedDocumentVersion: number;
