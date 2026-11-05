@@ -99,10 +99,14 @@ const stripeTest = (page: Page) =>
 		const t = (window as unknown as { __stripeTest?: Record<string, unknown> }).__stripeTest;
 		return t ? { ...t, complete: typeof t.complete === 'function' } : null;
 	});
-const completeInStripe = (page: Page) =>
-	page.evaluate(() =>
-		(window as unknown as { __stripeTest: { complete: () => void } }).__stripeTest.complete()
+/** Stripe reports completion only from a mounted form: wait for it, then fire onComplete. */
+async function completeInStripe(page: Page) {
+	type Fake = { __stripeTest?: { complete: (() => void) | null } };
+	await page.waitForFunction(
+		() => typeof (window as unknown as Fake).__stripeTest?.complete === 'function'
 	);
+	await page.evaluate(() => (window as unknown as Fake).__stripeTest!.complete!());
+}
 
 /** Console output, sessionStorage, localStorage, cookies and the URL: no secret may appear. */
 async function persisted(page: Page, logs: string[]) {
