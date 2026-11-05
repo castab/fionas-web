@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { env } from '$env/dynamic/public';
 	import { Badge, Button, Card, capsSm, cn } from '@fionas/ui';
 	import { instagramUrl, mailtoUrl, site } from '@fionas/shared';
 	import { paymentStore } from '$lib/payments/checkout.js';
@@ -13,6 +14,8 @@
 	} from '$lib/payments/controller.js';
 	import { noticeCopy, STATUS_UNKNOWN_MESSAGE } from '$lib/payments/copy.js';
 	import { stageLabel } from '$lib/payments/view.js';
+	import { readPublishableKey } from '$lib/payments/embedded.js';
+	import EmbeddedCheckout from '$lib/components/payments/embedded-checkout.svelte';
 	import PaymentAction from '$lib/components/payments/payment-action.svelte';
 	import PaymentNotice from '$lib/components/payments/payment-notice.svelte';
 	import PaymentHistory from '$lib/components/payments/payment-history.svelte';
@@ -79,6 +82,8 @@
 		view?.notice ? noticeCopy(view.notice, view.summary, view.paymentUncertain) : null
 	);
 	const ready = $derived(view?.phase === 'ready' && view.summary ? view : null);
+	// Public by design (a Stripe publishable key); only needed once an embedded payment opens.
+	const publishableKey = readPublishableKey(env.PUBLIC_STRIPE_PUBLISHABLE_KEY);
 	const headline =
 		'm-0 font-sans text-[34px] leading-[1.2] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]';
 </script>
@@ -194,14 +199,26 @@
 		{/if}
 		{#if notice}<PaymentNotice {notice} />{/if}
 		<PaymentOverview summary={ready.summary} />
-		<PaymentAction
-			current={ready}
-			onpay={(choice) => controller?.pay(choice)}
-			onrecover={(choice) => controller?.recover(choice)}
-			onretry={() => controller?.retry()}
-			onstartover={() => controller?.startOver()}
-			onrefresh={() => controller?.refresh()}
-		/>
+		{#if ready.embedded}
+			<!-- Keyed by launch: a new authorization always gets a fresh Stripe instance. -->
+			{#key ready.embedded.id}
+				<EmbeddedCheckout
+					launch={ready.embedded}
+					{publishableKey}
+					oncomplete={(id) => controller?.embeddedComplete(id)}
+					onclose={() => controller?.closeEmbedded()}
+				/>
+			{/key}
+		{:else}
+			<PaymentAction
+				current={ready}
+				onpay={(choice) => controller?.pay(choice)}
+				onrecover={(choice) => controller?.recover(choice)}
+				onretry={() => controller?.retry()}
+				onstartover={() => controller?.startOver()}
+				onrefresh={() => controller?.refresh()}
+			/>
+		{/if}
 		<PaymentHistory history={ready.summary.history} />
 	{/if}
 

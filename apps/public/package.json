@@ -19,7 +19,8 @@
 		"@fionas/shared": "*",
 		"@fionas/ui": "*",
 		"@nats-io/jetstream": "^3.4.0",
-		"@nats-io/transport-node": "^3.4.0"
+		"@nats-io/transport-node": "^3.4.0",
+		"@stripe/stripe-js": "^10.1.0"
 	},
 	"devDependencies": {
 		"@asyncapi/parser": "^3.6.3",

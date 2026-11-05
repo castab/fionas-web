@@ -77,12 +77,26 @@ async function checkout(req, res, scenario) {
 			message: 'The existing Checkout is still open'
 		});
 	const attemptId = randomUUID();
-	const response = {
-		attemptId,
-		url: `https://checkout.stripe.com/c/pay/cs_test_${attemptId.replaceAll('-', '')}`,
-		state: 'OPEN',
-		outcome: 'PENDING'
-	};
+	const session = `cs_test_${attemptId.replaceAll('-', '')}`;
+	// The presentation is fixed when the attempt is created: a same-key replay above keeps it even
+	// after the scenario switches modes, exactly like commerce's immutable uiMode.
+	const response =
+		scenario.uiMode === 'EMBEDDED'
+			? {
+					attemptId,
+					uiMode: 'EMBEDDED',
+					clientSecret: `${session}_secret_${randomBytes(12).toString('hex')}`,
+					state: 'OPEN',
+					outcome: 'PENDING'
+				}
+			: {
+					attemptId,
+					...(scenario.uiMode !== 'LEGACY' && { uiMode: 'HOSTED' }),
+					url: `https://checkout.stripe.com/c/pay/${session}`,
+					state: 'OPEN',
+					outcome: 'PENDING'
+				};
+	scenario.secrets.push(response.clientSecret ?? response.url);
 	scenario.keys.set(key, { body: raw, response });
 	scenario.summary = inProgress(scenario.summary);
 	send(res, 200, response);
@@ -101,8 +115,11 @@ createServer(async (req, res) => {
 			summary: body.summary,
 			replies: body.replies ?? [],
 			mode: body.mode ?? null,
+			// How new attempts are presented: HOSTED (default), EMBEDDED, or LEGACY (no uiMode).
+			uiMode: body.uiMode ?? 'HOSTED',
 			revoked: false,
 			keys: new Map(),
+			secrets: [],
 			calls: []
 		};
 		scenarios.set(publicId, scenario);
@@ -112,11 +129,13 @@ createServer(async (req, res) => {
 	if (control) {
 		const scenario = scenarios.get(control[1]);
 		if (!scenario) return send(res, 404);
-		if (req.method === 'GET') return send(res, 200, { calls: scenario.calls });
+		if (req.method === 'GET')
+			return send(res, 200, { calls: scenario.calls, secrets: scenario.secrets });
 		const body = JSON.parse((await readBody(req)) || '{}');
 		if (body.summary) scenario.summary = body.summary;
 		if (body.replies) scenario.replies.push(...body.replies);
 		if ('mode' in body) scenario.mode = body.mode;
+		if (body.uiMode) scenario.uiMode = body.uiMode;
 		if (body.revoked !== undefined) scenario.revoked = body.revoked;
 		if (body.rotate) scenario.token = bearer();
 		return send(res, 200, { token: scenario.token });

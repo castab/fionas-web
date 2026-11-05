@@ -53,6 +53,23 @@ export function noticeCopy(
 				title: 'Checkout was cancelled',
 				body: 'That checkout may stay open for a little while. You can go back to it below, or wait for it to expire before starting a new payment.'
 			};
+		case 'embedded-closed':
+			// The form was closed or the page reloaded: the Session may still be open, and the
+			// customer may even have just submitted it. Never imply either way that money moved.
+			return {
+				tone: 'info',
+				title: 'Your payment is still open',
+				body: "If you already submitted your card details, we'll confirm the payment here shortly. Otherwise, continue below to return to the same payment; it never starts a second one."
+			};
+		case 'embedded-invalidated':
+			// The form was removed because the booking's terms changed under it. Unmounting proves
+			// nothing about the Session or money: never say cancelled, expired or not charged.
+			return {
+				tone: 'warning',
+				title: "Your booking's payment details have changed",
+				body: "The payment form you opened may no longer match your booking's current balance or terms. We've closed the form while we check the earlier payment. Please review the updated details before trying to pay again.",
+				contact: true
+			};
 		case 'checkout-not-completed':
 			return {
 				tone: 'info',

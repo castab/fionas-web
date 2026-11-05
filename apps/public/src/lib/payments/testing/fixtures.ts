@@ -50,9 +50,31 @@ export function bookedSummary(overrides: Record<string, unknown> = {}) {
 	});
 }
 
+/** An open hosted attempt (fionas-commerce PR #38 shape). */
 export const openCheckout = {
 	attemptId: '8cf42464-739b-43ca-b684-d0f802245c55',
+	uiMode: 'HOSTED',
 	url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+	state: 'OPEN',
+	outcome: 'PENDING'
+};
+
+/** An open hosted attempt from a commerce release without `uiMode` (deploy overlap only). */
+export const legacyOpenCheckout = {
+	attemptId: '8cf42464-739b-43ca-b684-d0f802245c55',
+	url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+	state: 'OPEN',
+	outcome: 'PENDING'
+};
+
+/** A recognizable fake client secret: tests assert it never leaks anywhere persistent. */
+export const embeddedSecret = 'cs_test_a1EmbeddedFixture_secret_DoNotPersist42';
+
+/** An open embedded attempt (fionas-commerce PR #38 shape). */
+export const embeddedCheckout = {
+	attemptId: '5d0b8f8e-29c4-4d6e-9f63-0b9b4f1d2a77',
+	uiMode: 'EMBEDDED',
+	clientSecret: embeddedSecret,
 	state: 'OPEN',
 	outcome: 'PENDING'
 };
