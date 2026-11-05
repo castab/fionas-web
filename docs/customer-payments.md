@@ -310,12 +310,48 @@ isn't available on this page right now" with the contact email. A Stripe.js load
 remounts the same launch. Neither touches the saved command or creates a new authorization;
 Stripe's error text is never logged or shown.
 
-**Mode switches and changed terms.** An attempt keeps its mode for its lifetime: a hosted attempt
-still navigates after commerce switches to embedded, and an embedded one still mounts after a
-switch back. While the form is open the amount shown is the authorized one. If a summary shows the
-attempt no longer underway (settled, expired, amended, manual payment, reconciliation) the form is
+**Mode switches.** An attempt keeps its mode for its lifetime: a hosted attempt still navigates
+after commerce switches to embedded, and an embedded one still mounts after a switch back.
+
+**Changed terms.** A mounted form stays tied to the authorization that created it. Commerce keeps
+reporting `paymentInProgress` while the original Session is open, even after staff amend the
+booking, so "still underway" isn't enough. Every accepted (latest-generation) summary is compared
+with the saved command by `authorizationMatches` (`controller.ts`):
+
+| Saved command | Still valid only while the summary shows                                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| both          | the same `document.version` and `businessRevision`, USD                                              |
+| DEPOSIT       | QUOTED, mode DEPOSIT, stage QUOTE, `requiredAmount` exactly the authorized cents                     |
+| INVOICE       | BOOKED or SERVED, mode INVOICE, stage INVOICE, `balance` (applied money only) ≥ the authorized cents |
+
+So an Invoice amendment, a deposit change, a manual payment that leaves less than the authorized
+amount, a paid-in-full or CLOSED booking, or a DEPOSIT → INVOICE change all remove the form, even
+while the attempt stays underway. A change commerce doesn't publish (such as an internal
+deposit-requirement revision with the same amount) isn't visible here; commerce's own checks and
+reconciliation remain the final safeguard, and a payment already submitted in that race is
+reconciled there.
+
+On a mismatch the controller drops the secret (its capability rejects, so a pending Stripe.js
+initialization gets nothing and a late `onComplete` for that launch is ignored), the component
+destroys the iframe, and the saved command, key, body, amount and revisions stay untouched. The
+page shows **Your booking's payment details have changed** (derived again on every summary, so it
+stays while the attempt is unresolved and survives reloads) and offers only **Check previous
+payment**. That resends the original key and body so commerce can inspect the Session. If commerce
+answers with the same OPEN embedded Session, its secret is discarded unmounted; EXPIRED/FAILED,
+`PAYMENT_TERMS_CHANGED`, recovery and reconciliation answers follow the usual rules. A new payment
+is possible only after the old attempt is resolved, as a fresh reviewed decision with a new key.
+
+| Situation                                    | Page shows                                                      |
+| -------------------------------------------- | --------------------------------------------------------------- |
+| Customer closed the form, terms unchanged    | Your payment is still open → **Continue your payment**          |
+| Accepted summary shows changed terms         | payment details have changed → **Check previous payment**       |
+| Stripe completed, commerce hasn't reconciled | Confirming your payment (no action)                             |
+| No answer to the checkout request            | the existing unknown-outcome wording → **Try again** (same key) |
+
+If a summary shows the attempt no longer underway (settled, expired, reconciliation) the form is
 removed and the authoritative state shown; a revoked link or disabled payments remove it too. It is
-never replaced automatically. A failed refresh leaves it mounted (Stripe doesn't depend on it).
+never replaced automatically. Failed, 5xx or superseded reads change nothing, so a valid form stays
+mounted (Stripe doesn't depend on them), and only the newest accepted summary decides.
 
 **Appearance.** Stripe's form uses the Stripe account's Checkout branding. Set it in the Stripe
 Dashboard to match the page (background `--cream-100` `#f6f1e4`, button/accent `--olive-700`

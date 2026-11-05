@@ -100,8 +100,14 @@
 	const canRecover = $derived(
 		view?.kind === 'in-progress' && !completing && (!!view.recovery || ownCommand)
 	);
-	// This tab's own closed embedded form: continuing reopens that same Session here.
-	const resumesEmbedded = $derived(ownCommand && pending?.uiMode === 'EMBEDDED');
+	// This tab's own embedded form whose terms changed under it: only a same-key check is offered.
+	const invalidated = $derived(
+		ownCommand && !completing && pending?.uiMode === 'EMBEDDED' && !!pending?.termsChanged
+	);
+	// This tab's own closed embedded form, still on current terms: continuing reopens it here.
+	const resumesEmbedded = $derived(
+		ownCommand && pending?.uiMode === 'EMBEDDED' && !pending?.termsChanged
+	);
 	// A summary kept after a failed refresh is display-only: no new payment against it.
 	const stale = $derived(!current.summaryFresh);
 </script>
@@ -322,7 +328,14 @@
 		{#if canRecover}
 			{#if !ownCommand}{@render staleGate()}{/if}
 			<form onsubmit={submitRecover} class="flex flex-col gap-4" aria-busy={busy} novalidate>
-				{#if resumesEmbedded}
+				{#if invalidated}
+					<p class={body} data-testid="invalidated-payment">
+						Your booking changed after you opened a payment form for {formatCents(
+							pending!.amountCents
+						)}. We'll check that earlier payment with our payment processor first. You can review
+						your balance and pay again once it's resolved.
+					</p>
+				{:else if resumesEmbedded}
 					<p class={body}>
 						Your secure payment form for {formatCents(pending!.amountCents)} is still open. Continue to
 						return to that same payment here.
@@ -347,7 +360,11 @@
 					disabled={busy || (stale && !ownCommand)}
 					data-testid="recover-payment"
 					>{@render submitLabel(
-						resumesEmbedded ? 'Continue your payment' : 'Check previous payment and continue'
+						invalidated
+							? 'Check previous payment'
+							: resumesEmbedded
+								? 'Continue your payment'
+								: 'Check previous payment and continue'
 					)}</Button
 				>
 			</form>

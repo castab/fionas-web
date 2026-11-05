@@ -36,6 +36,7 @@ export type NoticeKind =
 	| 'checkout-not-completed'
 	| 'checkout-expired'
 	| 'embedded-closed'
+	| 'embedded-invalidated'
 	| 'refresh-failed'
 	| Exclude<CheckoutFailure, 'link-unavailable' | 'payments-disabled'>;
 
@@ -59,7 +60,51 @@ export type PendingCheckout = {
 	uiMode: CheckoutUiMode | null;
 	/** Stripe.js reported an embedded completion; commerce has not confirmed it yet. */
 	completing: boolean;
+	/**
+	 * The latest accepted summary no longer matches the terms this opened attempt was authorized
+	 * for (see `authorizationMatches`). Its form is never shown again; only a same-key check is
+	 * offered until commerce resolves the attempt.
+	 */
+	termsChanged: boolean;
 };
+
+/**
+ * Whether an opened checkout command still matches the latest authoritative summary: the same
+ * document version and business revision, the same purpose and stage, and an amount the current
+ * terms still allow (exactly the approved deposit; no more than the outstanding Invoice balance,
+ * which counts only applied money, so the attempt itself never reduces it). A pure, fail-closed
+ * comparison of what the public contract exposes: commerce's own authorization checks remain the
+ * final safeguard (for example, a deposit-requirement change it doesn't publish here).
+ */
+export function authorizationMatches(
+	stored: StoredCheckout,
+	summary: CustomerPaymentSummary
+): boolean {
+	const { document, lifecycle, mode } = summary;
+	const amount = BigInt(stored.amountCents);
+	if (
+		document.version !== stored.command.expectedDocumentVersion ||
+		document.businessRevision !== stored.command.expectedBusinessRevision ||
+		document.currency !== 'USD' ||
+		amount <= 0n
+	)
+		return false;
+	if (stored.purpose === 'DEPOSIT')
+		return (
+			lifecycle === 'QUOTED' &&
+			mode === 'DEPOSIT' &&
+			document.stage === 'QUOTE' &&
+			decimalToCents(summary.requiredAmount) === amount
+		);
+	const balance = decimalToCents(summary.balance);
+	return (
+		(lifecycle === 'BOOKED' || lifecycle === 'SERVED') &&
+		mode === 'INVOICE' &&
+		document.stage === 'INVOICE' &&
+		balance !== null &&
+		balance >= amount
+	);
+}
 
 /**
  * An open embedded Checkout to show on this page. The client secret is not a field: it stays in
@@ -146,6 +191,7 @@ const IN_FLIGHT: NoticeKind[] = [
 	'confirming',
 	'checkout-cancelled-open',
 	'embedded-closed',
+	'embedded-invalidated',
 	'checkout-open',
 	'processing'
 ];
@@ -230,7 +276,11 @@ export function createPaymentController(deps: ControllerDeps) {
 
 	const endpoint = `/api/payments/${encodeURIComponent(deps.publicId)}`;
 
-	function pendingOf(stored: StoredCheckout | null, ambiguous: boolean): PendingCheckout | null {
+	function pendingOf(
+		stored: StoredCheckout | null,
+		ambiguous: boolean,
+		summary?: CustomerPaymentSummary
+	): PendingCheckout | null {
 		return stored
 			? {
 					purpose: stored.purpose,
@@ -238,7 +288,9 @@ export function createPaymentController(deps: ControllerDeps) {
 					ambiguous,
 					blocked: stored.blocked === true,
 					uiMode: stored.uiMode ?? null,
-					completing: stored.completing === true
+					completing: stored.completing === true,
+					termsChanged:
+						!!summary && stored.phase === 'redirected' && !authorizationMatches(stored, summary)
 				}
 			: null;
 	}
@@ -291,6 +343,8 @@ export function createPaymentController(deps: ControllerDeps) {
 	function applySummary(summary: CustomerPaymentSummary, explicit?: NoticeKind | null) {
 		const view = paymentView(summary);
 		const stored = store.checkout();
+		// Only this accepted (latest-generation) summary may judge the open authorization stale.
+		const matches = stored !== null && authorizationMatches(stored, summary);
 		let derived: NoticeKind | null = null;
 		let pending: PendingCheckout | null = null;
 		if (stored?.blocked) {
@@ -302,23 +356,27 @@ export function createPaymentController(deps: ControllerDeps) {
 			derived = sending ? null : 'ambiguous';
 		} else if (stored?.phase === 'redirected') {
 			if (summary.paymentInProgress) {
-				pending = pendingOf(stored, false);
-				derived = launch
-					? null // The customer is still in Stripe's form on this page.
-					: returned === 'cancelled'
-						? 'checkout-cancelled-open'
-						: returned === 'returned' || stored.completing || stored.uiMode !== 'EMBEDDED'
-							? 'confirming'
-							: 'embedded-closed';
+				pending = pendingOf(stored, false, summary);
+				derived =
+					launch && matches
+						? null // The customer is still in Stripe's form on this page.
+						: returned === 'cancelled'
+							? 'checkout-cancelled-open'
+							: returned === 'returned' || stored.completing || stored.uiMode !== 'EMBEDDED'
+								? 'confirming'
+								: matches
+									? 'embedded-closed'
+									: 'embedded-invalidated';
 			} else {
 				// The attempt is no longer active: commerce has settled, expired or failed it.
 				derived = outcomeNotice(stored, summary);
 				store.forgetCheckout();
 			}
 		}
-		// The embedded form stays only while commerce still shows this tab's attempt underway: a
-		// settled, expired, superseded or staff-changed authorization is never left mounted.
-		if (launch && (view.kind !== 'in-progress' || !store.checkout())) discardEmbedded();
+		// The embedded form stays only while commerce still shows this tab's attempt underway on the
+		// terms it was authorized for: a settled, expired, amended, partly paid or otherwise changed
+		// authorization is never left mounted. The saved command (and its key) stay for recovery.
+		if (launch && (view.kind !== 'in-progress' || !store.checkout() || !matches)) discardEmbedded();
 		// An action's own result wins; a background read keeps the current notice unless the stored
 		// checkout says something newer. In-flight wording never outlives the payment it describes.
 		let notice = explicit !== undefined ? (explicit ?? derived) : (derived ?? state.notice);
@@ -603,6 +661,12 @@ export function createPaymentController(deps: ControllerDeps) {
 			if (response && launchable?.mode === 'EMBEDDED') {
 				// The customer stays here. Only nonsecret metadata is saved; the secret stays in memory.
 				store.saveCheckout(opened);
+				// A same-key check of an authorization the latest summary already showed stale reaches
+				// the original Session, but its form is never shown again: the secret is dropped here.
+				if (state.summary && !authorizationMatches(opened, state.summary)) {
+					emit({ busy: null });
+					return refresh(null);
+				}
 				const embedded = openEmbedded(opened, response.attemptId, launchable.clientSecret);
 				emit({ busy: null, notice: null, embedded, pending: pendingOf(opened, false) });
 				return refresh(null);

@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+	authorizationMatches,
 	createPaymentController,
 	MAX_SUMMARY_AGE_MS,
 	type ControllerDeps,
 	type PageState
 } from './controller.js';
 import { noticeCopy, STATUS_UNKNOWN_MESSAGE } from './copy.js';
-import { paymentStore } from './checkout.js';
+import { paymentStore, type StoredCheckout } from './checkout.js';
 import { readPaymentSummary } from './contract.js';
 
 const readSummary = (value: unknown) => readPaymentSummary(value);
@@ -1354,5 +1355,320 @@ describe('embedded Checkout', () => {
 		const launch = h.state.embedded!;
 		h.controller.dispose();
 		await expect(launch.clientSecret()).rejects.toThrow();
+	});
+});
+
+describe('embedded forms whose terms changed', () => {
+	const underway = (summary: Record<string, unknown>) => ({
+		...summary,
+		paymentInProgress: true,
+		canPay: false,
+		unavailableReason: 'PAYMENT_IN_PROGRESS',
+		checkoutRecoveryAvailable: true
+	});
+	const invoiceBody =
+		'{"expectedDocumentVersion":6,"expectedBusinessRevision":8,"amountMinor":20000}';
+	const invoiceV9 = () =>
+		bookedSummary({ document: { ...bookedSummary().document, version: 7, businessRevision: 9 } });
+
+	/** A booked Invoice with an open embedded $200 partial payment, still underway. */
+	async function invoiceOpen() {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(bookedSummary())],
+			checkout: [ok(embeddedCheckout)],
+			pollDelays: [60_000]
+		});
+		await h.controller.start();
+		h.replySummary(ok(underway(bookedSummary())));
+		await h.controller.pay({ partialCents: 20000n });
+		expect(h.state.embedded).toMatchObject({ purpose: 'INVOICE', amountCents: 20000n });
+		return h;
+	}
+	async function depositOpen() {
+		const h = harness({
+			hash: `#${token}`,
+			summary: [ok(quotedSummary())],
+			checkout: [ok(embeddedCheckout)],
+			pollDelays: [60_000]
+		});
+		await h.controller.start();
+		h.replySummary(ok(underway(quotedSummary())));
+		await h.controller.pay({ partialCents: null });
+		expect(h.state.embedded).not.toBeNull();
+		return h;
+	}
+	/** Receives one authoritative summary and checks the form is gone but the attempt is kept. */
+	async function expectInvalidated(h: ReturnType<typeof harness>, summary: unknown) {
+		const launch = h.state.embedded!;
+		const saved = h.store.checkout();
+		h.replySummary(ok(summary));
+		await h.controller.refresh();
+		expect(h.state.embedded).toBeNull();
+		await expect(launch.clientSecret()).rejects.toThrow();
+		expect(h.store.checkout()).toEqual(saved); // same key, body, amount, purpose, revisions
+		expect(h.state.notice).toBe('embedded-invalidated');
+		expect(h.state.pending).toMatchObject({ termsChanged: true, completing: false });
+		expect(h.state.view?.kind).toBe('in-progress');
+		expect(h.checkoutCalls()).toHaveLength(1); // never a replacement on its own
+		return launch;
+	}
+
+	it('A: a new Invoice revision removes the form even while the attempt stays underway', async () => {
+		const h = await invoiceOpen();
+		await expectInvalidated(h, underway(invoiceV9()));
+		expect(h.store.checkout()?.command).toEqual({
+			expectedDocumentVersion: 6,
+			expectedBusinessRevision: 8,
+			amountMinor: 20000
+		});
+	});
+
+	it('B: a manual payment that leaves less than the authorized amount removes the form', async () => {
+		const h = await invoiceOpen();
+		// Same document version and revision; only the applied money changed.
+		await expectInvalidated(
+			h,
+			underway(
+				bookedSummary({ paidAmount: '1100.00', balance: '100.00', requiredAmount: '100.00' })
+			)
+		);
+	});
+
+	it('B2: a fully paid Invoice or a CLOSED booking removes the form', async () => {
+		const paid = await invoiceOpen();
+		await expectInvalidated(
+			paid,
+			underway(bookedSummary({ paidAmount: '1200.00', balance: '0.00', requiredAmount: '0.00' }))
+		);
+		const closed = await invoiceOpen();
+		const launch = closed.state.embedded!;
+		closed.replySummary(ok(underway(bookedSummary({ lifecycle: 'CLOSED' }))));
+		await closed.controller.refresh();
+		expect(closed.state.embedded).toBeNull();
+		await expect(launch.clientSecret()).rejects.toThrow();
+	});
+
+	it('C: a changed deposit requirement removes the form and keeps the command', async () => {
+		const h = await depositOpen();
+		await expectInvalidated(h, underway(quotedSummary({ requiredAmount: '300.00' })));
+		expect(h.store.checkout()).toMatchObject({ key: 'key-1', amountCents: '24000' });
+	});
+
+	it('D: a deposit form is never reused as an Invoice payment', async () => {
+		const h = await depositOpen();
+		// Same version, revision and amount, but now an Invoice: a different authorization.
+		await expectInvalidated(
+			h,
+			underway(
+				bookedSummary({
+					document: { ...quotedSummary().document, stage: 'INVOICE' },
+					balance: '240.00',
+					requiredAmount: '240.00'
+				})
+			)
+		);
+	});
+
+	it('E: an unchanged authoritative refresh keeps the same mounted form', async () => {
+		const h = await invoiceOpen();
+		const launch = h.state.embedded;
+		h.replySummary(ok(underway(bookedSummary({ history: [] }))));
+		await h.controller.refresh();
+		await h.controller.refresh();
+		expect(h.state.embedded).toBe(launch);
+		expect(h.state.notice).toBeNull();
+		await expect(launch!.clientSecret()).resolves.toBe(embeddedSecret);
+	});
+
+	it('F: failed or 5xx summary reads never count as changed terms', async () => {
+		const h = await invoiceOpen();
+		const launch = h.state.embedded;
+		for (const reply of ['network', { status: 502, body: { code: 'internal_failure' } }] as const) {
+			h.replySummary(reply);
+			await h.controller.refresh();
+			expect(h.state.embedded).toBe(launch);
+			expect(h.state.notice).toBe('refresh-failed');
+			expect(h.state.summaryFresh).toBe(false);
+		}
+		await expect(launch!.clientSecret()).resolves.toBe(embeddedSecret);
+	});
+
+	it('G: an older changed summary arriving last cannot remove a form the newer one kept', async () => {
+		const h = await invoiceOpen();
+		const launch = h.state.embedded;
+		const older = deferred();
+		const newer = deferred();
+		h.replySummary(older.promise, newer.promise);
+		const reads = [h.controller.refresh(), h.controller.refresh()];
+		await flush();
+		newer.settle(ok(underway(bookedSummary())));
+		await flush();
+		older.settle(ok(underway(invoiceV9())));
+		await Promise.all(reads);
+		expect(h.state.embedded).toBe(launch);
+		expect(h.state.summary?.document.version).toBe(6);
+	});
+
+	it('G2: an older matching summary arriving last cannot restore an invalidated form', async () => {
+		const h = await invoiceOpen();
+		const older = deferred();
+		const newer = deferred();
+		h.replySummary(older.promise, newer.promise);
+		const reads = [h.controller.refresh(), h.controller.refresh()];
+		await flush();
+		newer.settle(ok(underway(invoiceV9())));
+		await flush();
+		expect(h.state.embedded).toBeNull();
+		older.settle(ok(underway(bookedSummary())));
+		await Promise.all(reads);
+		expect(h.state.embedded).toBeNull();
+		expect(h.state.notice).toBe('embedded-invalidated');
+		expect(h.state.summary?.document.version).toBe(7);
+	});
+
+	it('keeps the explanation through routine refreshes while the attempt is unresolved', async () => {
+		const h = await invoiceOpen();
+		await expectInvalidated(h, underway(invoiceV9()));
+		h.replySummary(ok(underway(invoiceV9())));
+		await h.controller.refresh();
+		await h.controller.refresh();
+		expect(h.state.notice).toBe('embedded-invalidated');
+		expect(noticeCopy('embedded-invalidated', h.state.summary).body).not.toMatch(
+			/cancel|expired|refund|not charged|no charge/i
+		);
+	});
+
+	it('H: the explicit check resends the same key and body and never shows the stale form', async () => {
+		const h = await invoiceOpen();
+		await expectInvalidated(h, underway(invoiceV9()));
+		await h.controller.pay({ partialCents: 10000n }); // the ordinary Pay stays closed
+		expect(h.checkoutCalls()).toHaveLength(1);
+		// Commerce returns the original, still-open Session for the same key.
+		h.replyCheckout(ok(embeddedCheckout));
+		const before = h.states.length;
+		await h.controller.recover({ partialCents: null });
+		// Not even briefly: the stale Session's form is never mounted again.
+		expect(h.states.slice(before).every((s) => s.embedded === null)).toBe(true);
+		const [first, check] = h.checkoutCalls();
+		expect(check.headers['idempotency-key']).toBe(first.headers['idempotency-key']);
+		expect(check.body).toBe(invoiceBody);
+		expect(first.body).toBe(invoiceBody);
+		expect(h.checkoutCalls()).toHaveLength(2);
+		expect(h.state.embedded).toBeNull(); // its secret was dropped, never mounted
+		expect(h.state.notice).toBe('embedded-invalidated');
+		expect(h.store.checkout()?.key).toBe('key-1');
+		await flush();
+		expect(h.checkoutCalls()).toHaveLength(2);
+	});
+
+	it.each([
+		[ok({ ...embeddedCheckout, state: 'EXPIRED', clientSecret: undefined }), 'checkout-expired'],
+		[
+			{ status: 409, body: { code: 'conflict', message: 'PAYMENT_TERMS_CHANGED' } },
+			'terms-changed'
+		],
+		[{ status: 409, body: { code: 'checkout_reconciliation_required' } }, 'reconciliation-required']
+	])(
+		'H2: the check follows commerce’s outcome through the existing rules (%#)',
+		async (reply, notice) => {
+			const h = await invoiceOpen();
+			await expectInvalidated(h, underway(invoiceV9()));
+			h.replyCheckout(reply);
+			h.replySummary(ok(invoiceV9()));
+			await h.controller.recover({ partialCents: null });
+			expect(h.state.notice).toBe(notice);
+			expect(h.state.embedded).toBeNull();
+			expect(h.checkoutCalls()).toHaveLength(2);
+			expect(h.checkoutCalls()[1].headers['idempotency-key']).toBe('key-1');
+		}
+	);
+
+	it('H3: a new payment after the old attempt is resolved is a fresh, reviewed decision', async () => {
+		const h = await invoiceOpen();
+		await expectInvalidated(h, underway(invoiceV9()));
+		h.replyCheckout(ok({ ...embeddedCheckout, state: 'EXPIRED', clientSecret: undefined }));
+		h.replySummary(ok(invoiceV9()));
+		await h.controller.recover({ partialCents: null });
+		expect(h.store.checkout()).toBeNull();
+		h.replyCheckout(ok({ ...embeddedCheckout, attemptId: '0e7d1c8a-3b2f-4a5e-8c9d-1f2e3d4c5b6a' }));
+		h.replySummary(ok(underway(invoiceV9())));
+		await h.controller.pay({ partialCents: 20000n });
+		const fresh = h.checkoutCalls()[2];
+		expect(fresh.headers['idempotency-key']).toBe('key-2');
+		expect(fresh.body).toBe(
+			'{"expectedDocumentVersion":7,"expectedBusinessRevision":9,"amountMinor":20000}'
+		);
+		expect(h.state.embedded).toMatchObject({ businessRevision: 9, amountCents: 20000n });
+	});
+
+	it('I: a late Stripe completion after invalidation cannot revive the form or claim success', async () => {
+		const h = await invoiceOpen();
+		const launch = await expectInvalidated(h, underway(invoiceV9()));
+		h.controller.embeddedComplete(launch.id);
+		expect(h.state.notice).toBe('embedded-invalidated');
+		expect(h.state.embedded).toBeNull();
+		expect(h.store.checkout()?.completing).toBeUndefined();
+		await expect(launch.clientSecret()).rejects.toThrow(); // a pending Stripe init gets nothing
+		expect(h.states.some((s) => s.notice === 'payment-received')).toBe(false);
+	});
+
+	it('a completion that raced an amendment keeps confirming, never offers the form again', async () => {
+		const h = await invoiceOpen();
+		h.replySummary(ok(underway(invoiceV9())));
+		h.controller.embeddedComplete(h.state.embedded!.id);
+		await flush();
+		expect(h.state.notice).toBe('confirming');
+		expect(h.state.embedded).toBeNull();
+		expect(h.state.pending).toMatchObject({ completing: true });
+	});
+});
+
+describe('authorizationMatches', () => {
+	const stored = (overrides: Partial<StoredCheckout> = {}): StoredCheckout => ({
+		key: 'k',
+		command: { expectedDocumentVersion: 6, expectedBusinessRevision: 8, amountMinor: 20000 },
+		purpose: 'INVOICE',
+		amountCents: '20000',
+		paidBefore: '240.00',
+		lifecycleBefore: 'BOOKED',
+		phase: 'redirected',
+		...overrides
+	});
+	const deposit = stored({
+		command: { expectedDocumentVersion: 3, expectedBusinessRevision: 4 },
+		purpose: 'DEPOSIT',
+		amountCents: '24000',
+		paidBefore: '0.00',
+		lifecycleBefore: 'QUOTED'
+	});
+	const matches = (s: StoredCheckout, summary: Record<string, unknown>) =>
+		authorizationMatches(s, readSummary(summary)!);
+
+	it('matches unchanged terms, whatever the in-progress flags say', () => {
+		expect(matches(stored(), bookedSummary())).toBe(true);
+		expect(matches(stored(), bookedSummary({ paymentInProgress: true, canPay: false }))).toBe(true);
+		expect(matches(stored(), bookedSummary({ lifecycle: 'SERVED' }))).toBe(true);
+		expect(matches(stored({ amountCents: '96000' }), bookedSummary())).toBe(true);
+		expect(matches(deposit, quotedSummary())).toBe(true);
+	});
+
+	it('refuses any change the public summary can show', () => {
+		const doc = bookedSummary().document;
+		for (const changed of [
+			bookedSummary({ document: { ...doc, version: 7 } }),
+			bookedSummary({ document: { ...doc, businessRevision: 9 } }),
+			bookedSummary({ document: { ...doc, stage: 'QUOTE' } }),
+			bookedSummary({ mode: 'DEPOSIT' }),
+			bookedSummary({ lifecycle: 'CLOSED' }),
+			bookedSummary({ lifecycle: 'QUOTED' }),
+			bookedSummary({ balance: '199.99' }),
+			bookedSummary({ balance: '0.00' }),
+			bookedSummary({ balance: '-5.00' })
+		])
+			expect(matches(stored(), changed)).toBe(false);
+		expect(matches(deposit, quotedSummary({ requiredAmount: '240.01' }))).toBe(false);
+		expect(matches(deposit, quotedSummary({ mode: 'INVOICE' }))).toBe(false);
+		expect(matches(deposit, bookedSummary())).toBe(false);
 	});
 });

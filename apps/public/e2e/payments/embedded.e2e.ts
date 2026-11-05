@@ -31,6 +31,14 @@ const posts = async (request: APIRequestContext, publicId: string) =>
 	(await stubState(request, publicId)).calls.filter((c) => c.method === 'POST');
 const open = (page: Page, publicId: string, token?: string) =>
 	page.goto(`/pay/${publicId}${token ? `#${token}` : ''}`);
+/** What commerce reports while an attempt is open: underway, no new collection. */
+const underway = (summary: Summary) => ({
+	...summary,
+	canPay: false,
+	unavailableReason: 'PAYMENT_IN_PROGRESS',
+	paymentInProgress: true,
+	checkoutRecoveryAvailable: true
+});
 
 const FAKE_STRIPE_JS = `(() => {
 	const t = (window.__stripeTest = { creates: 0, mounts: 0, destroys: 0, live: 0, keys: [], complete: null });
@@ -384,4 +392,50 @@ test('the payment form is keyboard reachable and fits without horizontal scroll'
 	await page.keyboard.press('Enter');
 	await expect(page.getByTestId('embedded-checkout')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Continue your payment' })).toBeVisible();
+});
+
+test('a staff amendment while the form is open removes it; checking reuses the same key', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, bookedSummary(), 'EMBEDDED');
+	await fakeStripe(page);
+	await open(page, publicId, token);
+	await page.getByRole('radio', { name: 'A different amount' }).check();
+	await page.getByLabel('Amount (USD)').fill('200');
+	await page.getByRole('button', { name: 'Pay $200.00' }).click();
+	await expect(page.locator('iframe[title="Secure checkout (test)"]')).toBeVisible();
+
+	// Staff publishes Invoice v9 while the original Session stays open (still underway).
+	const amended = bookedSummary({
+		document: { ...bookedSummary().document, version: 7, businessRevision: 9 },
+		balance: '1060.00',
+		requiredAmount: '1060.00'
+	});
+	await update(request, publicId, { summary: underway(amended) });
+	const notice = page.getByTestId('payment-notice');
+	await expect(notice).toContainText("Your booking's payment details have changed", {
+		timeout: 15_000
+	});
+	await expect(page.getByTestId('embedded-checkout')).toHaveCount(0);
+	await expect(page.locator('iframe')).toHaveCount(0);
+	expect(await stripeTest(page)).toMatchObject({ destroys: 1, live: 0 });
+	await expect(notice).not.toContainText(/cancel|expired|refund|not charged/i);
+	await expect(page.getByTestId('document-label')).toContainText('Invoice v9');
+	await expect(page.getByTestId('invalidated-payment')).toContainText('$200.00');
+	await expect(page.getByTestId('pay')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Continue your payment' })).toHaveCount(0);
+
+	// The deliberate check resends the original command; the stale form never comes back.
+	await page.getByRole('button', { name: 'Check previous payment', exact: true }).click();
+	await expect.poll(async () => (await posts(request, publicId)).length).toBe(2);
+	const [first, check] = await posts(request, publicId);
+	expect(check.key).toBe(first.key);
+	expect(check.body).toBe(first.body);
+	expect(first.body).toBe(
+		'{"expectedDocumentVersion":6,"expectedBusinessRevision":8,"amountMinor":20000}'
+	);
+	await expect(notice).toContainText("Your booking's payment details have changed");
+	await expect(page.getByTestId('embedded-checkout')).toHaveCount(0);
+	expect(await stripeTest(page)).toMatchObject({ creates: 1, live: 0 });
 });
