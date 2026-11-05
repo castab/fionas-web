@@ -51,7 +51,9 @@ const FAKE_STRIPE_JS = `(() => {
 				t.live++;
 				t.creates++;
 				const secret = await options.fetchClientSecret();
-				if (!/^cs_test_[A-Za-z0-9_]+$/.test(secret)) throw new Error('invalid client secret');
+				// Exactly the secret commerce issued must arrive (format is Stripe's business).
+				if (typeof secret !== 'string' || !secret.startsWith('cs_test_') || !secret.includes('#'))
+					throw new Error('invalid client secret');
 				let frame = null;
 				let destroyed = false;
 				return {

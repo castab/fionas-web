@@ -85,7 +85,8 @@ async function checkout(req, res, scenario) {
 			? {
 					attemptId,
 					uiMode: 'EMBEDDED',
-					clientSecret: `${session}_secret_${randomBytes(12).toString('hex')}`,
+					// Deliberately not a "tidy" shape: Stripe documents no client-secret format.
+					clientSecret: `${session}_secret_fid-${randomBytes(12).toString('hex')}#%2B`,
 					state: 'OPEN',
 					outcome: 'PENDING'
 				}

@@ -90,10 +90,19 @@ export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{1,128}$/;
 const ENUM = /^[A-Z][A-Z_]{0,63}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
- * A Stripe Checkout Session client secret (`cs_test_…_secret_…`): the object prefix plus a
- * conservative charset and length. Anything else is refused rather than handed to Stripe.js.
+ * A Checkout Session client secret, checked structurally only. Stripe documents no format for
+ * `client_secret` (no prefix, charset or length), so a stricter pattern would refuse genuine
+ * secrets: one non-empty token of visible ASCII, bounded in size. It is only ever handed to
+ * Stripe.js, which validates it. A Stripe secret or restricted API key is still refused, so a
+ * misconfiguration can never put one in a browser.
  */
-export const CLIENT_SECRET = /^cs_(test|live)_[A-Za-z0-9_]{8,1000}$/;
+export function isClientSecret(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		/^[\x21-\x7e]{1,4096}$/.test(value) &&
+		!/^(sk|rk)_(test|live)_/.test(value)
+	);
+}
 const MAX_INT = 2_147_483_647;
 const MAX_HISTORY = 500;
 
@@ -213,26 +222,55 @@ const absent = (value: unknown) => value === undefined || value === null;
  * on it is dropped: nothing can be launched from it.
  */
 export function readCheckoutResponse(value: unknown): CheckoutResponse | null {
-	if (!isObject(value)) return null;
+	const read = inspectCheckoutResponse(value);
+	return 'response' in read ? read.response : null;
+}
+
+/**
+ * Why a checkout answer was refused: a fixed code naming the failed check, safe to log. It never
+ * carries a value from the answer (the url and client secret are credentials).
+ */
+export type CheckoutResponseProblem =
+	| 'not_object'
+	| 'attempt_id'
+	| 'state'
+	| 'outcome'
+	| 'ui_mode'
+	| 'url'
+	| 'client_secret'
+	| 'credentials';
+
+/** `readCheckoutResponse`, also saying which check refused an answer (for operator logs). */
+export function inspectCheckoutResponse(
+	value: unknown
+): { response: CheckoutResponse } | { problem: CheckoutResponseProblem } {
+	if (!isObject(value)) return { problem: 'not_object' };
 	const { attemptId, uiMode, url, clientSecret, state, outcome } = value;
-	if (
-		typeof attemptId !== 'string' ||
-		!UUID.test(attemptId) ||
-		!isEnum(state) ||
-		!isEnum(outcome) ||
-		!(absent(uiMode) || uiMode === 'HOSTED' || uiMode === 'EMBEDDED')
-	)
-		return null;
+	if (typeof attemptId !== 'string' || !UUID.test(attemptId)) return { problem: 'attempt_id' };
+	if (!isEnum(state)) return { problem: 'state' };
+	if (!isEnum(outcome)) return { problem: 'outcome' };
+	if (!(absent(uiMode) || uiMode === 'HOSTED' || uiMode === 'EMBEDDED'))
+		return { problem: 'ui_mode' };
 	const mode = absent(uiMode) ? undefined : (uiMode as CheckoutUiMode);
-	if (state !== 'OPEN') return { attemptId, ...(mode && { uiMode: mode }), state, outcome };
+	if (state !== 'OPEN')
+		return { response: { attemptId, ...(mode && { uiMode: mode }), state, outcome } };
 	const hasUrl = typeof url === 'string' && url.length > 0 && url.length <= 4096;
-	const hasSecret = typeof clientSecret === 'string' && CLIENT_SECRET.test(clientSecret);
-	if (!(hasUrl || absent(url)) || !(hasSecret || absent(clientSecret))) return null;
+	const hasSecret = isClientSecret(clientSecret);
+	if (!(hasUrl || absent(url))) return { problem: 'url' };
+	if (!(hasSecret || absent(clientSecret))) return { problem: 'client_secret' };
 	if ((mode === 'HOSTED' || mode === undefined) && hasUrl && !hasSecret)
-		return { attemptId, uiMode: 'HOSTED', url: url as string, state, outcome };
+		return { response: { attemptId, uiMode: 'HOSTED', url: url as string, state, outcome } };
 	if (mode === 'EMBEDDED' && hasSecret && !hasUrl)
-		return { attemptId, uiMode: 'EMBEDDED', clientSecret: clientSecret as string, state, outcome };
-	return null;
+		return {
+			response: {
+				attemptId,
+				uiMode: 'EMBEDDED',
+				clientSecret: clientSecret as string,
+				state,
+				outcome
+			}
+		};
+	return { problem: 'credentials' };
 }
 
 /**
@@ -259,7 +297,7 @@ export function checkoutRedirect(response: CheckoutResponse): string | null {
 export function checkoutLaunch(response: CheckoutResponse): CheckoutLaunch | null {
 	if (response.state !== 'OPEN') return null;
 	if (response.uiMode === 'EMBEDDED')
-		return response.clientSecret && CLIENT_SECRET.test(response.clientSecret)
+		return isClientSecret(response.clientSecret)
 			? { mode: 'EMBEDDED', clientSecret: response.clientSecret }
 			: null;
 	const url = checkoutRedirect(response);

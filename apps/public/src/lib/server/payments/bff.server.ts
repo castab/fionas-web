@@ -3,8 +3,8 @@ import {
 	IDEMPOTENCY_KEY,
 	PAYMENT_TOKEN,
 	UUID,
+	inspectCheckoutResponse,
 	readCheckoutCommand,
-	readCheckoutResponse,
 	type CheckoutCommand,
 	readPaymentError,
 	readPaymentSummary,
@@ -67,7 +67,23 @@ const crossSite = (request: Request) => {
 	return site !== null && site !== 'same-origin';
 };
 
-function relay(result: CommerceResult, readSuccess: (body: unknown) => unknown): Response {
+/** A whitelisted success body, or the fixed reason it was refused (safe to log; no values). */
+type Read = { value: unknown } | { problem: string };
+
+const readSummary = (body: unknown): Read => {
+	const value = readPaymentSummary(body);
+	return value ? { value } : { problem: 'summary' };
+};
+const readCheckout = (body: unknown): Read => {
+	const read = inspectCheckoutResponse(body);
+	return 'response' in read ? { value: read.response } : { problem: read.problem };
+};
+
+function relay(
+	operation: 'summary' | 'checkout',
+	result: CommerceResult,
+	readSuccess: (body: unknown) => Read
+): Response {
 	if (!result.ok)
 		return result.kind === 'misconfigured'
 			? reply(503, { code: 'payments_unavailable' })
@@ -75,15 +91,28 @@ function relay(result: CommerceResult, readSuccess: (body: unknown) => unknown):
 				reply(504, { code: 'unavailable' });
 	const { status, body } = result;
 	if (status === 200) {
-		const value = readSuccess(body);
-		return value ? reply(200, value) : reply(502, { code: 'invalid_response' });
+		const read = readSuccess(body);
+		if ('value' in read) return reply(200, read.value);
+		// Commerce answered but the body failed a check: the outcome is unknown to the customer,
+		// so operators need to know which check. Only the fixed check name is logged, never values.
+		console.error('[payments] Commerce payments answered with an unreadable body', {
+			operation,
+			problem: read.problem
+		});
+		return reply(502, { code: 'invalid_response' });
 	}
 	const error = readPaymentError(body);
 	if (status === 503 && error?.code === 'stripe_disabled')
 		return reply(503, { code: 'stripe_disabled' });
 	if ([400, 404, 409, 422].includes(status))
 		return reply(status, error ?? { code: status === 409 ? 'conflict' : 'malformed_request' });
-	// 5xx, redirects and unexpected statuses: never interpreted, treated as an unknown outcome.
+	// 5xx (already logged by the transport), redirects and unexpected statuses: never
+	// interpreted, treated as an unknown outcome.
+	if (status < 500)
+		console.error('[payments] Commerce payments answered with an unexpected status', {
+			operation,
+			status
+		});
 	return reply(502, { code: 'internal_failure' });
 }
 
@@ -97,11 +126,12 @@ export async function paymentSummary({ params, request }: RequestEvent): Promise
 	const token = bearer(request);
 	if (!token) return reply(400, { code: 'malformed_request' });
 	return relay(
+		'summary',
 		await requestCommercePayments('summary', commercePath(publicId), {
 			token,
 			timeoutMs: SUMMARY_TIMEOUT_MS
 		}),
-		readPaymentSummary
+		readSummary
 	);
 }
 
@@ -150,12 +180,13 @@ export async function createCheckout({ params, request, url }: RequestEvent): Pr
 	}
 	if (!command) return reply(400, { code: 'malformed_request' });
 	return relay(
+		'checkout',
 		await requestCommercePayments('checkout', `${commercePath(publicId)}/checkout-sessions`, {
 			token,
 			idempotencyKey: key,
 			body: serializeCommand(command),
 			timeoutMs: CHECKOUT_TIMEOUT_MS
 		}),
-		readCheckoutResponse
+		readCheckout
 	);
 }
