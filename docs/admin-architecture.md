@@ -114,12 +114,13 @@ Because the cookie is `Secure`, SvelteKit sets it with `Secure` too; browsers ac
 
 ## Environment
 
-| Variable           | Required | Purpose                                                                                                               |
-| ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- |
-| `COMMERCE_API_URL` | yes\*    | Commerce API base URL. Defaults to `http://localhost:8080`.                                                           |
-| `ADMIN_ORIGIN`     | in prod  | The admin site's public origin, sent as `Origin`. Must be trusted by the API. Falls back to the request's own origin. |
+| Variable                | Required | Purpose                                                                                                                                   |
+| ----------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `COMMERCE_API_URL`      | yes\*    | Commerce API base URL. Defaults to `http://localhost:8080`.                                                                               |
+| `ADMIN_ORIGIN`          | in prod  | The admin site's public origin, sent as `Origin`. Must be trusted by the API. Falls back to the request's own origin.                     |
+| `ADMIN_RECOVERY_SECRET` | in prod  | 32+ characters, shared by all instances: seals financial-email recovery cookies ([admin-financial-emails.md](admin-financial-emails.md)). |
 
-Both are read per request with `$env/dynamic/private`. See `apps/admin/.env.example`. The admin app
+All are read with `$env/dynamic/private`. See `apps/admin/.env.example`. The admin app
 acts only as the signed-in staff member (a USER session) and never sends a service bearer token;
 calling the backend as a service on a user's behalf (caller + actor delegation) would be designed
 separately. (The public site publishes inquiry events to NATS, see `docs/public-inquiry-submission.md`;
@@ -168,7 +169,7 @@ rate limited per IP, so don't point automated tests at it.
 
 ## Conversation boundary
 
-See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. Only the staff reply route accepts a validated `idempotencyKey` and `conversationReply` timeout policy (100 seconds, no retry); all other calls keep eight seconds. No arbitrary browser headers pass through. Neither admin tier accesses Resend directly.
+See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. A validated `idempotencyKey` is accepted only with a named, path-bound `capability`: `conversationReply` (`…/conversation/replies`) and `financialEmailSend` (`…/financial-emails`), both POST with a 100-second timeout and no retry; `financialEmailPreview` (`…/financial-emails/preview`, no key) waits 30 seconds for the provider thread lookup. All other calls keep eight seconds. No arbitrary browser headers pass through, and admin-local cookies (`fionas_reply_intent`, `fionas_fe*`) are stripped from the forwarded `Cookie`, so commerce receives only the staff session. Neither admin tier accesses Resend directly. Quote/Invoice emails: [admin-financial-emails.md](admin-financial-emails.md).
 
 ## Request-scoped SSE exception
 

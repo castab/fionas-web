@@ -249,6 +249,23 @@ results stay in the card (no workspace invalidation), mutations are never retrie
 are diagnostics, not ledger history: Activity stays the single payment history. Live Activity
 refreshes also refresh displayed attempts. See [customer-payments.md](customer-payments.md).
 
+## Quote and Invoice emails
+
+Right now carries a **Customer email** block while QUOTED or SERVED: never emailed, current
+document emailed (with provider send/delivery labels; accepted is never shown as delivered), only an
+earlier revision emailed, UNKNOWN sends needing reconciliation, or a rejected latest attempt, plus
+an explanation when nothing can be emailed (fully paid or overpaid Invoice, missing business
+revision, unreviewable conversation, unresolved send, missing permissions). **Email quote** /
+**Email invoice** opens the `?email` review panel in the main column; it requires all five
+permissions (`fionas.inquiries.read`, `commerce.financial-document.read`,
+`fionas.communications.read`, `fionas.communications.send`, `fionas.payment-access.manage`). The
+panel previews the backend-rendered email in an isolated frame, then sends it only on **Send
+quote** / **Send invoice**. A possibly sent email reopens the panel by itself, locked to **Reconcile
+original send**. Publishing a Quote, amending an Invoice and recording payments never email. The
+panel does not join the review-snapshot set: a live staff-request re-read that changes the
+document, or newer correspondence, invalidates its preview instead. See
+[admin-financial-emails.md](admin-financial-emails.md).
+
 ## Explicit fulfillment and closeout
 
 BOOKED + INVOICE with `fionas.inquiries.manage` exposes **Mark event served**. Serving is an

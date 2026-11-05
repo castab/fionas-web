@@ -9,31 +9,32 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
 ## Where to look
 
-| Need                                        | Read                                                                                                                                               |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Brand colors, type, spacing tokens          | `packages/design-tokens/src/tokens.css`                                                                                                            |
-| Tailwind utilities for those tokens         | `packages/design-tokens/src/theme.css`                                                                                                             |
-| Components (Button, Badge, Card, toast…)    | `packages/ui/src/components/`                                                                                                                      |
-| Site details, coming-soon copy              | `packages/shared/src/`                                                                                                                             |
-| Inquiry form types, validation, mapping     | `packages/shared/src/inquiry.ts`                                                                                                                   |
-| Booking form (`/book`)                      | `apps/public/src/routes/book/`, `$lib/server/menu.ts` (copy + rules)                                                                               |
-| Inquiry submission, idempotency, stale      | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                                                                           |
-| Inquiry event contract (AsyncAPI 3.1.0)     | `asyncapi.yaml`, `$lib/server/inquiry-event.ts` (+ `.test.ts` validates against the spec)                                                          |
-| Publishing to NATS (outcomes, retry)        | `$lib/server/event-bus.ts`, `$lib/server/nats.ts` (env, connection), `$lib/server/testing/`                                                        |
-| Local NATS + JetStream, stream setup        | `compose.yaml`, `infra/nats/nats-server.conf`, `scripts/nats-*.mjs`, `scripts/lib/nats-*.mjs`                                                      |
-| Admin architecture, backend access rule     | `docs/admin-architecture.md`                                                                                                                       |
-| Admin sign-in, session, guard               | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`                                                                |
-| Admin dashboard, shell, data gaps           | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`                                                              |
-| Requests index (filters, search, cursor)    | `docs/admin-requests-index.md`, `$lib/request-list.ts`, `$lib/server/request-list.ts`                                                              |
-| Staff request workspace, Quote/deposit      | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`                                                     |
-| Decline a request (confirm, reason)         | `docs/admin-request-workspace.md`, `$lib/decline.ts`, `decline-controls.svelte`                                                                    |
-| Admin quote builder (preview, compose)      | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts`                                                  |
-| Quote revision, invoice amendment, history  | `$lib/financial-editor.ts`, `$lib/server/editor-actions.ts`, `$lib/service-plan.ts`, `$lib/revision-history.ts`, `docs/admin-request-workspace.md` |
-| Categorized service selections              | `$lib/service-selections.ts`, `categorized-selections.svelte`, `service-selections-editor.svelte`                                                  |
-| Container images (build from repo root)     | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                                                                 |
-| Customer payments (`/pay`, BFF, staff link) | `docs/customer-payments.md`, `apps/public/src/lib/payments/`, `$lib/server/payments/`, `customer-payments.svelte`                                  |
-| Gallery                                     | `apps/public/src/routes/gallery/`, `$lib/server/presentation-service/`                                                                             |
-| Landing page                                | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                                                                          |
+| Need                                           | Read                                                                                                                                               |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brand colors, type, spacing tokens             | `packages/design-tokens/src/tokens.css`                                                                                                            |
+| Tailwind utilities for those tokens            | `packages/design-tokens/src/theme.css`                                                                                                             |
+| Components (Button, Badge, Card, toast…)       | `packages/ui/src/components/`                                                                                                                      |
+| Site details, coming-soon copy                 | `packages/shared/src/`                                                                                                                             |
+| Inquiry form types, validation, mapping        | `packages/shared/src/inquiry.ts`                                                                                                                   |
+| Booking form (`/book`)                         | `apps/public/src/routes/book/`, `$lib/server/menu.ts` (copy + rules)                                                                               |
+| Inquiry submission, idempotency, stale         | `docs/public-inquiry-submission.md`, `$lib/server/inquiry-submission.ts`                                                                           |
+| Inquiry event contract (AsyncAPI 3.1.0)        | `asyncapi.yaml`, `$lib/server/inquiry-event.ts` (+ `.test.ts` validates against the spec)                                                          |
+| Publishing to NATS (outcomes, retry)           | `$lib/server/event-bus.ts`, `$lib/server/nats.ts` (env, connection), `$lib/server/testing/`                                                        |
+| Local NATS + JetStream, stream setup           | `compose.yaml`, `infra/nats/nats-server.conf`, `scripts/nats-*.mjs`, `scripts/lib/nats-*.mjs`                                                      |
+| Admin architecture, backend access rule        | `docs/admin-architecture.md`                                                                                                                       |
+| Admin sign-in, session, guard                  | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`                                                                |
+| Admin dashboard, shell, data gaps              | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`                                                              |
+| Requests index (filters, search, cursor)       | `docs/admin-requests-index.md`, `$lib/request-list.ts`, `$lib/server/request-list.ts`                                                              |
+| Staff request workspace, Quote/deposit         | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`                                                     |
+| Decline a request (confirm, reason)            | `docs/admin-request-workspace.md`, `$lib/decline.ts`, `decline-controls.svelte`                                                                    |
+| Admin quote builder (preview, compose)         | `$lib/quote-builder.ts`, `$lib/components/requests/quote-builder/`, `$lib/server/quote-review.ts`                                                  |
+| Quote revision, invoice amendment, history     | `$lib/financial-editor.ts`, `$lib/server/editor-actions.ts`, `$lib/service-plan.ts`, `$lib/revision-history.ts`, `docs/admin-request-workspace.md` |
+| Categorized service selections                 | `$lib/service-selections.ts`, `categorized-selections.svelte`, `service-selections-editor.svelte`                                                  |
+| Container images (build from repo root)        | `apps/public/Dockerfile`, `apps/admin/Dockerfile`, `.dockerignore`                                                                                 |
+| Customer payments (`/pay`, BFF, staff link)    | `docs/customer-payments.md`, `apps/public/src/lib/payments/`, `$lib/server/payments/`, `customer-payments.svelte`                                  |
+| Quote/Invoice emails (preview, send, recovery) | `docs/admin-financial-emails.md`, `$lib/financial-email.ts`, `$lib/server/financial-email-*.ts`, `components/requests/financial-email/`            |
+| Gallery                                        | `apps/public/src/routes/gallery/`, `$lib/server/presentation-service/`                                                                             |
+| Landing page                                   | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                                                                          |
 
 ## Commands (run from the repo root)
 
@@ -100,4 +101,14 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 
 - Admin Conversation uses `$lib/conversation-contract.ts`, `$lib/server/conversation.ts` and the optional timeline read. See `docs/admin-conversation.md`. It is the workspace's **Activity** column and single history: Payment history, Quote publications and the Decline decision card render only when the timeline did not load. Preserve backend order, historical money and attention; never call Resend directly. Replies require communication read/send permissions and an immutable key/body/original expectation. UNKNOWN reconciles only that command. Acknowledge posts the displayed watermark, never a fresh one, and only while messages are reviewable (READY plus communications.read, enforced in the action); it submits through the composer so unsent text survives the PRG. Recovery is bounded in memory: expired never-attempted/resolved drafts revive under a fresh draft, while attempted-unknown or unclassifiable pointers block resending.
 
+- Admin Quote/Invoice emails (`docs/admin-financial-emails.md`): staff-initiated only, QUOTED → current Quote, SERVED with a
+  positive balance → current Invoice; nothing else. All five permissions (inquiries.read, financial-document.read,
+  communications.read/send, payment-access.manage). Identities come only from the staff request (`financial.id`,
+  `financial.version`, `currentQuoteRevision`/`currentInvoiceRevision`, `proposal.id`/`depositRequirementRevision`);
+  never browser amounts, recipients, HTML or URLs. Preview is explicit (never per keystroke), write-free and rendered only
+  in the sandboxed srcdoc frame (`email-preview.ts`), never `{@html}`. The preview action seals the complete command (key,
+  email incl. message, review token, original expectation) into the AES-GCM `fionas_fe*` cookies; send and Reconcile post
+  only that, never rebased or re-keyed. UNKNOWN/ambiguous outcomes lock to Reconcile; never clear UNKNOWN on a refresh;
+  a commerce UNKNOWN without a local record fails closed. Accepted is not Delivered. Sends never acknowledge mail.
+  Customers never see generated version labels; staff Activity does. `ADMIN_RECOVERY_SECRET` is shared by all instances.
 - Admin live timeline updates use `$lib/server/timeline-updates.ts` and the exact GET `/requests/[inquiryId]/updates` hook exception; commerce's SSE handshake owns authorization. Native EventSource only invalidates the authoritative conversation read. Preserve retryable placeholders versus terminal 204, initial revision-zero synchronization, serialized pending refreshes, local composer/recovery state and disclosure keys. Never refresh on open or automatically invalidate the whole workspace; changed financial history re-reads only the staff request (`/requests/[inquiryId]/staff-request`) to update Right now in place, never while a review panel or form result holds a reviewed snapshot (then it says Reload to review). Deploy commerce `FIONAS_TIMELINE_UPDATES_ENABLED=true` with V7/V8; see `docs/admin-conversation.md` for proxy checks and limitations.

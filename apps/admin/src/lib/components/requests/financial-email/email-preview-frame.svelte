@@ -9,7 +9,7 @@
 	const doc = $derived(previewDocument(html));
 	const toggle = (active: boolean) =>
 		cn(
-			'min-h-9 cursor-pointer rounded-pill px-3 text-[11.5px] font-semibold transition-colors duration-(--dur-fast) ease-(--ease-out)',
+			'min-h-9 cursor-pointer rounded-full px-3 text-[11.5px] font-semibold transition-colors duration-(--dur-fast) ease-(--ease-out)',
 			active
 				? 'bg-olive-700 text-cream-200'
 				: 'bg-transparent text-(--text-body) hover:bg-olive-700/10',

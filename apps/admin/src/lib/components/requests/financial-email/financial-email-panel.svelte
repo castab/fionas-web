@@ -333,7 +333,7 @@
 			<div class="min-w-0">
 				<dt class={micro}>Document (staff only)</dt>
 				<dd class="m-0 mt-0.5 text-[13px]" data-testid="email-document">
-					{intentVersionLabel(draft?.intent ?? fields)}
+					{intentVersionLabel(locked && draft ? draft.intent : fields)}
 				</dd>
 			</div>
 		{/if}
@@ -350,7 +350,7 @@
 			Emailing a {name} requires inquiry read, financial-document read, communications read and send,
 			and payment-access manage permissions.
 		</p>
-	{:else if fields}
+	{:else if fields && !lost}
 		<form
 			method="POST"
 			action={previewAction}

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { conversationFixture, actor } from './conversation-fixture.mjs';
 import { mayaId } from './request-fixture.mjs';
+import { currentFinancialEmails } from './financial-email-stub.mjs';
 
 const streams = new WeakMap();
 const heldReads = new WeakMap();
@@ -148,7 +149,10 @@ export async function conversationRoute(
 	}
 	if (operation === 'timeline' && req.method === 'GET') {
 		state.timelineReads = (state.timelineReads ?? 0) + 1;
-		const snapshot = structuredClone(state.timeline);
+		const snapshot = currentFinancialEmails(
+			structuredClone(state.timeline),
+			session.requests[inquiryId]
+		);
 		if (state.holdTimeline) {
 			const held = heldReads.get(state) ?? [];
 			heldReads.set(state, held);

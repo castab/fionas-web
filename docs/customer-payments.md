@@ -147,12 +147,23 @@ the page shows a branded explanation with the contact email; secrets never move 
 
 Page phases around it: initializing, link required, link incomplete, link unavailable, backend
 unreachable (with Try again) and online payments unavailable. Busy states (`submitting`,
-`redirecting`) disable the action. Labels use `document.businessRevision` ("Quote v4",
-"Invoice v8"; "Booked from Quote v4" from `acceptedQuoteRevision`); `document.version` is only
-sent back as `expectedDocumentVersion`. Figures come straight from the summary: total, payments
+`redirecting`) disable the action. The document is labelled **Quote** or **Invoice** only:
+customers never see generated version labels (no "Quote v4", "Invoice v8" or "Booked from Quote
+v4"), in the overview, the payment copy or the Embedded Checkout description. `document.version`
+and `businessRevision` stay internal and are still sent back exactly as `expectedDocumentVersion`
+and `expectedBusinessRevision`; `acceptedQuoteRevision` is still validated but not shown. Hiding a
+label never relaxes stale-term rejection. Figures come straight from the summary: total, payments
 applied, remaining balance (or credit), the deposit while QUOTED, a whole-percent progress bar
 after booking (presentation only), and receipts with refunded amounts. No line items, taxes,
 service details, names, receipts or PDFs are invented.
+
+**Privacy boundary.** A payment link is a bearer capability anyone holding it can open, including
+from a forwarded financial email. The page shows only the event date, the document kind, totals,
+payment progress and receipt amounts/dates. `readPaymentSummary` whitelists those fields, so the
+page cannot render customer names, email addresses, phone numbers, postal addresses, staff notes,
+conversation text, service descriptions or administration capabilities even if a response carried
+them (covered by `contract.test.ts`). Bearer-only access, fragment handling, no-store, no-referrer
+and noindex are unchanged.
 
 **Exact money.** Decimal strings become BigInt cents (`decimalToCents`); a value that isn't whole
 cents makes the summary invalid rather than rounded. Partial input accepts `250`, `250.5`,
@@ -488,9 +499,10 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
    sees the workspace and manual payments but no Customer payments card.
 2. On a QUOTED request, **Create payment link**, then **Copy payment link**; copy again and confirm
    the same URL.
-3. Open it in a fresh window: the fragment disappears, Quote v{n} and the exact deposit show.
+3. Open it in a fresh window: the fragment disappears, "Quote" (no version) and the exact deposit
+   show.
 4. Pay the deposit with test card `4242 4242 4242 4242`; on return the page shows confirming,
-   then **Deposit received. Your booking is confirmed.**, Booked, Invoice v{n} and the balance.
+   then **Deposit received. Your booking is confirmed.**, Booked, "Invoice" and the balance.
 5. Amend the Invoice in the console; reload the same link: the new Invoice revision and balance.
 6. Pay a partial amount, then the rest; the page reports each applied payment and the balance.
 7. Start a checkout and press Back on Stripe: **Checkout was cancelled**; **Check previous payment

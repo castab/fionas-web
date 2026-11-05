@@ -67,7 +67,9 @@ describe('embedded Checkout panel', () => {
 		await expect.element(page.getByTestId('embedded-amount')).toHaveTextContent('$240.00');
 		await expect
 			.element(page.getByTestId('embedded-description'))
-			.toHaveTextContent("Deposit for your Fiona's Ice Cream booking (Quote v4)");
+			.toHaveTextContent("Deposit for your Fiona's Ice Cream booking");
+		// Customers never see generated version labels.
+		await expect.element(page.getByTestId('embedded-description')).not.toHaveTextContent(/v\d/);
 		await expect.element(page.getByTitle('Secure payment input frame')).toBeInTheDocument();
 		await expect.element(page.getByTestId('embedded-loading')).not.toBeInTheDocument();
 		expect(stripe.log).toEqual(['create:1', 'mount:1']);
@@ -117,7 +119,10 @@ describe('embedded Checkout panel', () => {
 			onclose: () => undefined
 		});
 		await expect.element(page.getByRole('alert')).toHaveTextContent("isn't available on this page");
-		await expect.element(page.getByTestId('embedded-description')).toHaveTextContent('Invoice v8');
+		await expect
+			.element(page.getByTestId('embedded-description'))
+			.toHaveTextContent('Payment toward your Invoice');
+		await expect.element(page.getByTestId('embedded-description')).not.toHaveTextContent(/v\d/);
 		await expect.element(page.getByTestId('embedded-amount')).toHaveTextContent('$100.00');
 		await expect.element(page.getByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 		expect(stripe.log).toEqual([]);

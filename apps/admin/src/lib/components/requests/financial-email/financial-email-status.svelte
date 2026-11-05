@@ -60,7 +60,8 @@
 	class="flex flex-col gap-2 border-t border-(--border-soft) pt-3"
 	data-testid="financial-email-status"
 >
-	<h3 id="financial-email-status-title" class={micro}>Customer email</h3>
+	<!-- A label like Right now’s own, not a heading: the card keeps one headline. -->
+	<p id="financial-email-status-title" class={micro}>Customer email</p>
 	{#if accepted}
 		<p
 			role="status"

@@ -269,6 +269,9 @@ describe('email preview isolation', () => {
 			`content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'"`
 		);
 		expect(doc).not.toMatch(/http-equiv="refresh"/i);
+		expect(
+			previewDocument('<a target="_self" href="x">a</a><a TARGET=_top href=y>b</a>')
+		).not.toMatch(/target=(?!"_blank")/i);
 	});
 
 	it('wraps a fragment in a complete document', () => {

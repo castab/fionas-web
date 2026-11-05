@@ -48,7 +48,10 @@ describe('payment summary contract', () => {
 			message: 'PRIVATE conversation text',
 			servicePlan: { description: 'PRIVATE service description' }
 		};
-		const booked = bookedSummary(leaked);
+		const booked = bookedSummary(leaked) as {
+			document: Record<string, unknown>;
+			history: Record<string, unknown>[];
+		};
 		const summary = readPaymentSummary({
 			...booked,
 			document: { ...booked.document, customerName: 'Maria Lopez' },
