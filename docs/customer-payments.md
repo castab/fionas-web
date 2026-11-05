@@ -99,7 +99,11 @@ Backend message text never reaches the customer.
 | timeout / connection failure           | 504 `unavailable`          | unknown outcome (same key)  |
 
 `transport.server.ts` is the only reader of `COMMERCE_API_URL` and logs only an operation name, a
-status and a failure kind: never the URL, bearer, key, body or publicId. It never imports NATS or
+status and a failure kind: never the URL, bearer, key, body or publicId. When commerce answers
+200 but the body fails validation, `bff.server.ts` logs `Commerce payments answered with an
+unreadable body` with the operation and the fixed name of the failed check (`ui_mode`,
+`client_secret`, `credentials`, `summary`, …); an unexpected non-5xx status is logged as
+`answered with an unexpected status`. Neither ever includes a value from the body. It never imports NATS or
 inquiry submission code (`server-boundary.test.ts` enforces both).
 
 **Headers.** Every `/pay/*` response (including `__data.json` and error pages) and every
@@ -246,13 +250,13 @@ authentication step inside its own iframe; Fiona's page never has a card input.
 assumes how commerce is currently configured. `readCheckoutResponse` / `checkoutLaunch` in
 `contract.ts`:
 
-| OPEN answer                                                   | Read as                                        |
-| ------------------------------------------------------------- | ---------------------------------------------- |
-| `uiMode: HOSTED` + allowlisted `url`, no `clientSecret`       | navigate this tab (as before)                  |
-| `uiMode: EMBEDDED` + `clientSecret` (`cs_test_…`/`cs_live_…`) | mount Stripe's form on this page               |
-| no `uiMode` + `url`, no `clientSecret` (pre-PR #38 release)   | HOSTED, for the deploy overlap only            |
-| unknown mode, both credentials, the wrong one, or neither     | refused (unknown outcome, same-key Try again)  |
-| PROCESSING / SUCCEEDED / EXPIRED / FAILED                     | state and outcome kept; any credential dropped |
+| OPEN answer                                                 | Read as                                        |
+| ----------------------------------------------------------- | ---------------------------------------------- |
+| `uiMode: HOSTED` + allowlisted `url`, no `clientSecret`     | navigate this tab (as before)                  |
+| `uiMode: EMBEDDED` + `clientSecret` (any well-formed token) | mount Stripe's form on this page               |
+| no `uiMode` + `url`, no `clientSecret` (pre-PR #38 release) | HOSTED, for the deploy overlap only            |
+| unknown mode, both credentials, the wrong one, or neither   | refused (unknown outcome, same-key Try again)  |
+| PROCESSING / SUCCEEDED / EXPIRED / FAILED                   | state and outcome kept; any credential dropped |
 
 EMBEDDED is never inferred. The BFF re-serializes the same reader's output, so the client secret
 reaches the browser only in the answer to its own authorized checkout POST; summaries, page loads,
@@ -563,8 +567,10 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
   `onComplete` restarts the bounded polling once.
 - Embedded Checkout is verified here only against a fake Stripe.js; Stripe's real iframe needs the
   manual test-mode run above. The site has no `script-src`/`connect-src` CSP (see Headers).
-- The client-secret format check expects `cs_test_`/`cs_live_` Checkout Session secrets; a Stripe
-  format change would fail closed (same-key Try again) until `CLIENT_SECRET` is updated.
+- Stripe documents no `client_secret` format, so `isClientSecret` checks structure only: one
+  non-empty token of visible ASCII, at most 4,096 characters, never an `sk_`/`rk_` API key. An
+  earlier `cs_…[A-Za-z0-9_]` pattern refused real secrets in development (502, "We couldn't
+  confirm your payment started"); don't reintroduce a format assumption.
 - If sessionStorage is lost after leaving for Stripe, the customer must reopen the original link
   (by design; there is no credential recovery).
 - No receipts, Invoice PDFs, payment-link emails, refunds, disputes or automatic reconciliation of

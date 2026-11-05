@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	checkoutLaunch,
 	checkoutRedirect,
+	inspectCheckoutResponse,
 	readCheckoutCommand,
 	readCheckoutResponse,
 	readPaymentError,
@@ -158,6 +159,39 @@ describe('checkout contract', () => {
 		});
 	});
 
+	it('accepts any well-formed client secret: Stripe documents no format for it', () => {
+		// Shapes a Stripe API release could plausibly return; none may be refused by format.
+		for (const clientSecret of [
+			'cs_test_a1YS1URlnyQCN5fUUduORoQ7Pw41PJqDWkIVQCpJPqkfIhd6tVY8XB1OLY_secret_fidwbEhqYWAnPyd',
+			'cs_live_b2c3_secret_fid-dWxOYHwnPyd1blpxYHZxWjA0-Tg',
+			'cs_test_a1b2#fidkdWxOYHwnPyd1blpxYHZxWjA0%2B%3D',
+			'cs_test_short',
+			'ecs_1Q2w3E4r5T6y_secret_AbC+/=',
+			`cs_test_${'a'.repeat(3000)}`
+		]) {
+			const read = readCheckoutResponse({ ...embeddedCheckout, clientSecret });
+			expect(read, clientSecret.slice(0, 40)).not.toBeNull();
+			expect(checkoutLaunch(read!)).toEqual({ mode: 'EMBEDDED', clientSecret });
+		}
+	});
+
+	it('names the failed check without echoing any value', () => {
+		const cases: [unknown, string][] = [
+			[[], 'not_object'],
+			[{ ...embeddedCheckout, attemptId: 'x' }, 'attempt_id'],
+			[{ ...embeddedCheckout, state: 'open' }, 'state'],
+			[{ ...embeddedCheckout, outcome: 1 }, 'outcome'],
+			[{ ...embeddedCheckout, uiMode: 'POPUP' }, 'ui_mode'],
+			[{ ...openCheckout, url: 'x'.repeat(5000) }, 'url'],
+			[{ ...embeddedCheckout, clientSecret: 'has space' }, 'client_secret'],
+			[{ ...embeddedCheckout, url: openCheckout.url }, 'credentials'],
+			[{ ...embeddedCheckout, clientSecret: undefined }, 'credentials']
+		];
+		for (const [value, problem] of cases)
+			expect(inspectCheckoutResponse(value), problem).toEqual({ problem });
+		expect(inspectCheckoutResponse(embeddedCheckout)).toEqual({ response: embeddedCheckout });
+	});
+
 	it('refuses unknown modes and contradictory or incomplete OPEN answers', () => {
 		const { url } = openCheckout;
 		const clientSecret = embeddedSecret;
@@ -170,8 +204,12 @@ describe('checkout contract', () => {
 			{ ...embeddedCheckout, clientSecret: undefined },
 			{ ...embeddedCheckout, clientSecret: '' },
 			{ ...embeddedCheckout, clientSecret: 'sk_test_notAClientSecret123' },
+			{ ...embeddedCheckout, clientSecret: 'rk_live_notAClientSecret123' },
 			{ ...embeddedCheckout, clientSecret: 'cs_test_bad secret' },
-			{ ...embeddedCheckout, clientSecret: `cs_test_${'a'.repeat(2000)}` },
+			{ ...embeddedCheckout, clientSecret: 'cs_test_line\nbreak' },
+			{ ...embeddedCheckout, clientSecret: 'cs_test_été' },
+			{ ...embeddedCheckout, clientSecret: `cs_test_${'a'.repeat(5000)}` },
+			{ ...embeddedCheckout, clientSecret: 42 },
 			{ ...openCheckout, url: undefined },
 			{ ...openCheckout, url: '' },
 			{ ...legacyOpenCheckout, url: undefined, clientSecret },

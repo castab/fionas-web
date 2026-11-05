@@ -231,6 +231,42 @@ describe('checkout BFF', () => {
 		}
 	});
 
+	it('relays a client secret whatever its undocumented format (development regression)', async () => {
+		// The first deployed attempt answered 502: a strict cs_…[A-Za-z0-9_] pattern refused the
+		// secret commerce received from Stripe. Any well-formed token must pass through.
+		const clientSecret = 'cs_test_a1b2-c3_secret_fid#dWxOYHwnPyd1-blpx%2B%3D';
+		reply = () => Response.json({ ...embeddedCheckout, clientSecret, url: null });
+		const response = await createCheckout(checkoutEvent());
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ ...embeddedCheckout, clientSecret });
+		expect(vi.mocked(console.error)).not.toHaveBeenCalled();
+	});
+
+	it('logs which check refused a commerce answer, never its values', async () => {
+		const secret = 'cs_test_has a space_secret_x';
+		reply = () => Response.json({ ...embeddedCheckout, clientSecret: secret });
+		expect((await createCheckout(checkoutEvent())).status).toBe(502);
+		expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+			'[payments] Commerce payments answered with an unreadable body',
+			{ operation: 'checkout', problem: 'client_secret' }
+		);
+		reply = () => Response.json({ ...openCheckout, url: 'x'.repeat(5000) });
+		await createCheckout(checkoutEvent());
+		reply = () => Response.json({ ...quotedSummary(), lifecycle: 'quoted' });
+		await paymentSummary(summaryEvent());
+		reply = () => Response.json(openCheckout, { status: 201 });
+		expect((await createCheckout(checkoutEvent())).status).toBe(502);
+		expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+			'[payments] Commerce payments answered with an unexpected status',
+			{ operation: 'checkout', status: 201 }
+		);
+		const logged = JSON.stringify(vi.mocked(console.error).mock.calls);
+		expect(logged).toContain('"problem":"url"');
+		expect(logged).toContain('"operation":"summary","problem":"summary"');
+		for (const value of [secret, 'xxxxxxxx', openCheckout.url, token, publicId, 'quoted'])
+			expect(logged).not.toContain(value);
+	});
+
 	it('refuses cross-origin and cross-site POSTs', async () => {
 		const refused: Record<string, string>[] = [
 			{ origin: 'https://evil.example' },
