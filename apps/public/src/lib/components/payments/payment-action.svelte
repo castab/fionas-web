@@ -95,7 +95,13 @@
 	const body = 'm-0 text-(--text-body) [font:var(--type-body-sm)]';
 	// This tab's own earlier command can always be resent; anything else is a new decision.
 	const ownCommand = $derived(!!pending && !pending.ambiguous && !pending.blocked);
-	const canRecover = $derived(view?.kind === 'in-progress' && (!!view.recovery || ownCommand));
+	// Stripe.js reported completion: only commerce can settle it, so nothing to resume or retry.
+	const completing = $derived(ownCommand && !!pending?.completing);
+	const canRecover = $derived(
+		view?.kind === 'in-progress' && !completing && (!!view.recovery || ownCommand)
+	);
+	// This tab's own closed embedded form: continuing reopens that same Session here.
+	const resumesEmbedded = $derived(ownCommand && pending?.uiMode === 'EMBEDDED');
 	// A summary kept after a failed refresh is display-only: no new payment against it.
 	const stale = $derived(!current.summaryFresh);
 </script>
@@ -267,12 +273,12 @@
 				type="submit"
 				size="lg"
 				class="min-h-13 w-full"
-				disabled={busy || stale || current.busy === 'refreshing'}
+				disabled={busy || stale || !!pending || current.busy === 'refreshing'}
 				data-testid="pay"
 				>{@render submitLabel(`Pay deposit ${formatCents(view.terms.amountCents)}`)}</Button
 			>
 			<p class={cn(hintText, 'm-0 text-center')}>
-				You'll finish on Stripe's secure checkout, then come back here.
+				You'll enter your card details securely with Stripe.
 			</p>
 		</form>
 	{:else if view?.kind === 'balance-due'}
@@ -289,26 +295,39 @@
 				type="submit"
 				size="lg"
 				class="min-h-13 w-full"
-				disabled={busy || stale || current.busy === 'refreshing'}
+				disabled={busy || stale || !!pending || current.busy === 'refreshing'}
 				data-testid="pay"
 				>{@render submitLabel(payCents !== null ? `Pay ${formatCents(payCents)}` : 'Pay')}</Button
 			>
 			<p class={cn(hintText, 'm-0 text-center')}>
-				You'll finish on Stripe's secure checkout, then come back here.
+				You'll enter your card details securely with Stripe.
 			</p>
 		</form>
 	{:else if view?.kind === 'in-progress'}
 		<div class="flex flex-col gap-1">
-			<h2 class={heading}>A payment is already underway</h2>
-			<p class={body}>
-				Another payment for this booking may already be in progress, so a new one can't start right
-				now. This page checks for updates while it's open.
-			</p>
+			{#if completing}
+				<h2 class={heading}>We're confirming your payment</h2>
+				<p class={body}>
+					We're waiting for our payment processor to confirm it, so there's no need to pay again.
+					This page checks for updates while it's open.
+				</p>
+			{:else}
+				<h2 class={heading}>A payment is already underway</h2>
+				<p class={body}>
+					Another payment for this booking may already be in progress, so a new one can't start
+					right now. This page checks for updates while it's open.
+				</p>
+			{/if}
 		</div>
 		{#if canRecover}
 			{#if !ownCommand}{@render staleGate()}{/if}
 			<form onsubmit={submitRecover} class="flex flex-col gap-4" aria-busy={busy} novalidate>
-				{#if invoiceTerms}
+				{#if resumesEmbedded}
+					<p class={body}>
+						Your secure payment form for {formatCents(pending!.amountCents)} is still open. Continue to
+						return to that same payment here.
+					</p>
+				{:else if invoiceTerms}
 					<p class={body}>
 						We'll check that earlier payment first. If it's still open you can go back to it; if it
 						expired, we'll start a new checkout for the amount you choose.
@@ -327,7 +346,9 @@
 					class="min-h-13 w-full whitespace-normal"
 					disabled={busy || (stale && !ownCommand)}
 					data-testid="recover-payment"
-					>{@render submitLabel('Check previous payment and continue')}</Button
+					>{@render submitLabel(
+						resumesEmbedded ? 'Continue your payment' : 'Check previous payment and continue'
+					)}</Button
 				>
 			</form>
 		{/if}

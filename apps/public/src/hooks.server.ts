@@ -1,13 +1,12 @@
 import type { Handle } from '@sveltejs/kit';
-import { PAYMENT_HEADERS, isPaymentPath } from '$lib/server/payments/bff.server.js';
+import { PAYMENT_CSP, PAYMENT_HEADERS, isPaymentPath } from '$lib/server/payments/bff.server.js';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
 	if (!isPaymentPath(event.url.pathname)) return response;
 	const headers = {
 		...PAYMENT_HEADERS,
-		// Nothing may frame the payment page (no clickjacking of the Pay button).
-		'content-security-policy': "frame-ancestors 'none'",
+		'content-security-policy': PAYMENT_CSP,
 		'x-content-type-options': 'nosniff'
 	};
 	try {

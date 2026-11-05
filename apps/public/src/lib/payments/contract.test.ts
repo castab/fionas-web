@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	checkoutLaunch,
 	checkoutRedirect,
 	readCheckoutCommand,
 	readCheckoutResponse,
@@ -8,7 +9,14 @@ import {
 	serializeCommand
 } from './contract.js';
 import { documentLabel, eventDateLabel, paidPercent, paymentView, stageLabel } from './view.js';
-import { bookedSummary, openCheckout, quotedSummary } from './testing/fixtures.js';
+import {
+	bookedSummary,
+	embeddedCheckout,
+	embeddedSecret,
+	legacyOpenCheckout,
+	openCheckout,
+	quotedSummary
+} from './testing/fixtures.js';
 
 const view = (value: Record<string, unknown>) => paymentView(readPaymentSummary(value)!);
 
@@ -130,6 +138,75 @@ describe('checkout contract', () => {
 			expect(checkoutRedirect({ ...response, url })).toBeNull();
 		expect(checkoutRedirect({ ...response, state: 'PROCESSING' })).toBeNull();
 		expect(checkoutRedirect({ ...response, url: undefined })).toBeNull();
+	});
+
+	it('reads a hosted, embedded or legacy-hosted OPEN answer by its own mode', () => {
+		expect(readCheckoutResponse(openCheckout)).toEqual(openCheckout);
+		expect(checkoutLaunch(readCheckoutResponse(openCheckout)!)).toEqual({
+			mode: 'HOSTED',
+			url: openCheckout.url
+		});
+		const embedded = readCheckoutResponse(embeddedCheckout)!;
+		expect(embedded).toEqual(embeddedCheckout);
+		expect(embedded.attemptId).toBe(embeddedCheckout.attemptId);
+		expect(checkoutLaunch(embedded)).toEqual({ mode: 'EMBEDDED', clientSecret: embeddedSecret });
+		expect(checkoutRedirect(embedded)).toBeNull();
+		// Deploy overlap only: a url and no mode is HOSTED; EMBEDDED is never inferred.
+		expect(readCheckoutResponse(legacyOpenCheckout)).toEqual({
+			...legacyOpenCheckout,
+			uiMode: 'HOSTED'
+		});
+	});
+
+	it('refuses unknown modes and contradictory or incomplete OPEN answers', () => {
+		const { url } = openCheckout;
+		const clientSecret = embeddedSecret;
+		for (const bad of [
+			{ ...openCheckout, uiMode: 'POPUP' },
+			{ ...openCheckout, uiMode: 'embedded' },
+			{ ...openCheckout, uiMode: 7 },
+			{ ...openCheckout, clientSecret },
+			{ ...embeddedCheckout, url },
+			{ ...embeddedCheckout, clientSecret: undefined },
+			{ ...embeddedCheckout, clientSecret: '' },
+			{ ...embeddedCheckout, clientSecret: 'sk_test_notAClientSecret123' },
+			{ ...embeddedCheckout, clientSecret: 'cs_test_bad secret' },
+			{ ...embeddedCheckout, clientSecret: `cs_test_${'a'.repeat(2000)}` },
+			{ ...openCheckout, url: undefined },
+			{ ...openCheckout, url: '' },
+			{ ...legacyOpenCheckout, url: undefined, clientSecret },
+			{ ...legacyOpenCheckout, clientSecret },
+			{ attemptId: openCheckout.attemptId, state: 'OPEN', outcome: 'PENDING' }
+		])
+			expect(readCheckoutResponse(bad), JSON.stringify(bad)).toBeNull();
+	});
+
+	it('keeps the state of a non-OPEN answer but never a launch credential', () => {
+		for (const state of ['PROCESSING', 'SUCCEEDED', 'EXPIRED', 'FAILED']) {
+			const hosted = readCheckoutResponse({ ...openCheckout, state, outcome: 'PAID' })!;
+			expect(hosted).toEqual({
+				attemptId: openCheckout.attemptId,
+				uiMode: 'HOSTED',
+				state,
+				outcome: 'PAID'
+			});
+			const embedded = readCheckoutResponse({ ...embeddedCheckout, state })!;
+			expect(JSON.stringify(embedded)).not.toContain(embeddedSecret);
+			expect(embedded.uiMode).toBe('EMBEDDED');
+			expect(checkoutLaunch(hosted)).toBeNull();
+			expect(checkoutLaunch(embedded)).toBeNull();
+		}
+		expect(readCheckoutResponse({ ...legacyOpenCheckout, state: 'EXPIRED' })).toEqual({
+			attemptId: openCheckout.attemptId,
+			state: 'EXPIRED',
+			outcome: 'PENDING'
+		});
+	});
+
+	it('launches hosted Checkout only on Stripe’s allowlisted host', () => {
+		const response = readCheckoutResponse(openCheckout)!;
+		for (const url of ['https://evil.test/c', 'https://checkout.stripe.com:444/c'])
+			expect(checkoutLaunch({ ...response, url })).toBeNull();
 	});
 
 	it('reads only the documented command fields, canonically', () => {

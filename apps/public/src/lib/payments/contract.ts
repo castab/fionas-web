@@ -52,12 +52,27 @@ export type CheckoutCommand = {
 	amountMinor?: number;
 };
 
+/** How commerce presents an attempt. Immutable per attempt: a same-key retry keeps its mode. */
+export type CheckoutUiMode = 'HOSTED' | 'EMBEDDED';
+
+/**
+ * A validated checkout answer. Only an OPEN attempt carries a launch credential, and exactly the
+ * one its `uiMode` names: `url` for HOSTED, `clientSecret` for EMBEDDED. Both are short-lived
+ * credentials: never persisted, logged or put in a URL. `uiMode` is absent only for a non-OPEN
+ * answer from a commerce release that predates presentation modes.
+ */
 export type CheckoutResponse = {
 	attemptId: string;
+	uiMode?: CheckoutUiMode;
 	url?: string;
+	clientSecret?: string;
 	state: string;
 	outcome: string;
 };
+
+/** What the page may do with an OPEN attempt: navigate this tab, or mount Stripe's form here. */
+export type CheckoutLaunch =
+	{ mode: 'HOSTED'; url: string } | { mode: 'EMBEDDED'; clientSecret: string };
 
 export type PaymentError = { code: string; message?: string };
 
@@ -74,6 +89,11 @@ export const PAYMENT_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{1,128}$/;
 const ENUM = /^[A-Z][A-Z_]{0,63}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A Stripe Checkout Session client secret (`cs_test_…_secret_…`): the object prefix plus a
+ * conservative charset and length. Anything else is refused rather than handed to Stripe.js.
+ */
+export const CLIENT_SECRET = /^cs_(test|live)_[A-Za-z0-9_]{8,1000}$/;
 const MAX_INT = 2_147_483_647;
 const MAX_HISTORY = 500;
 
@@ -182,18 +202,37 @@ export function readPaymentSummary(value: unknown): CustomerPaymentSummary | nul
 	};
 }
 
+const absent = (value: unknown) => value === undefined || value === null;
+
+/**
+ * Reads a checkout answer, failing closed. An OPEN answer must name a known `uiMode` and carry
+ * exactly its one credential: a HOSTED url or an EMBEDDED client secret, never both, never the
+ * other. Unknown modes and contradictory or incomplete OPEN answers are refused (null). A legacy
+ * OPEN answer with no `uiMode` is read as HOSTED only when it carries a url and nothing else;
+ * EMBEDDED is never inferred. A non-OPEN answer keeps its state and outcome, and any credential
+ * on it is dropped: nothing can be launched from it.
+ */
 export function readCheckoutResponse(value: unknown): CheckoutResponse | null {
 	if (!isObject(value)) return null;
-	const { attemptId, url, state, outcome } = value;
+	const { attemptId, uiMode, url, clientSecret, state, outcome } = value;
 	if (
 		typeof attemptId !== 'string' ||
 		!UUID.test(attemptId) ||
-		(url !== undefined && url !== null && (typeof url !== 'string' || url.length > 4096)) ||
 		!isEnum(state) ||
-		!isEnum(outcome)
+		!isEnum(outcome) ||
+		!(absent(uiMode) || uiMode === 'HOSTED' || uiMode === 'EMBEDDED')
 	)
 		return null;
-	return { attemptId, ...(typeof url === 'string' && { url }), state, outcome };
+	const mode = absent(uiMode) ? undefined : (uiMode as CheckoutUiMode);
+	if (state !== 'OPEN') return { attemptId, ...(mode && { uiMode: mode }), state, outcome };
+	const hasUrl = typeof url === 'string' && url.length > 0 && url.length <= 4096;
+	const hasSecret = typeof clientSecret === 'string' && CLIENT_SECRET.test(clientSecret);
+	if (!(hasUrl || absent(url)) || !(hasSecret || absent(clientSecret))) return null;
+	if ((mode === 'HOSTED' || mode === undefined) && hasUrl && !hasSecret)
+		return { attemptId, uiMode: 'HOSTED', url: url as string, state, outcome };
+	if (mode === 'EMBEDDED' && hasSecret && !hasUrl)
+		return { attemptId, uiMode: 'EMBEDDED', clientSecret: clientSecret as string, state, outcome };
+	return null;
 }
 
 /**
@@ -201,7 +240,7 @@ export function readCheckoutResponse(value: unknown): CheckoutResponse | null {
  * host over HTTPS. Anything else is refused: the page never navigates to an arbitrary URL.
  */
 export function checkoutRedirect(response: CheckoutResponse): string | null {
-	if (response.state !== 'OPEN' || !response.url) return null;
+	if (response.state !== 'OPEN' || response.uiMode !== 'HOSTED' || !response.url) return null;
 	try {
 		const url = new URL(response.url);
 		return url.protocol === 'https:' &&
@@ -214,6 +253,17 @@ export function checkoutRedirect(response: CheckoutResponse): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/** How to present an OPEN attempt, from its own immutable mode; null when it can't be launched. */
+export function checkoutLaunch(response: CheckoutResponse): CheckoutLaunch | null {
+	if (response.state !== 'OPEN') return null;
+	if (response.uiMode === 'EMBEDDED')
+		return response.clientSecret && CLIENT_SECRET.test(response.clientSecret)
+			? { mode: 'EMBEDDED', clientSecret: response.clientSecret }
+			: null;
+	const url = checkoutRedirect(response);
+	return url ? { mode: 'HOSTED', url } : null;
 }
 
 /** Strictly reads exactly the documented command fields (nothing else is ever forwarded). */

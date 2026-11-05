@@ -53,6 +53,14 @@ export function noticeCopy(
 				title: 'Checkout was cancelled',
 				body: 'That checkout may stay open for a little while. You can go back to it below, or wait for it to expire before starting a new payment.'
 			};
+		case 'embedded-closed':
+			// The form was closed or the page reloaded: the Session may still be open, and the
+			// customer may even have just submitted it. Never imply either way that money moved.
+			return {
+				tone: 'info',
+				title: 'Your payment is still open',
+				body: "If you already submitted your card details, we'll confirm the payment here shortly. Otherwise, continue below to return to the same payment; it never starts a second one."
+			};
 		case 'checkout-not-completed':
 			return {
 				tone: 'info',

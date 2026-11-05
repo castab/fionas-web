@@ -6,12 +6,13 @@
  * reviewed command, and never decides that money was received. See docs/customer-payments.md.
  */
 import {
-	checkoutRedirect,
+	checkoutLaunch,
 	readCheckoutResponse,
 	readPaymentError,
 	readPaymentSummary,
 	serializeCommand,
 	type CheckoutCommand,
+	type CheckoutUiMode,
 	type CustomerPaymentSummary,
 	type PaymentError
 } from './contract.js';
@@ -34,6 +35,7 @@ export type NoticeKind =
 	| 'checkout-cancelled-open'
 	| 'checkout-not-completed'
 	| 'checkout-expired'
+	| 'embedded-closed'
 	| 'refresh-failed'
 	| Exclude<CheckoutFailure, 'link-unavailable' | 'payments-disabled'>;
 
@@ -53,6 +55,28 @@ export type PendingCheckout = {
 	ambiguous: boolean;
 	/** CHECKOUT_KEY_REUSED: never resent; the customer must deliberately start over. */
 	blocked: boolean;
+	/** How commerce presented the opened attempt, when known. */
+	uiMode: CheckoutUiMode | null;
+	/** Stripe.js reported an embedded completion; commerce has not confirmed it yet. */
+	completing: boolean;
+};
+
+/**
+ * An open embedded Checkout to show on this page. The client secret is not a field: it stays in
+ * the controller's closure, and `clientSecret()` hands it to Stripe.js only while this launch is
+ * current (it rejects once the form was closed, completed, replaced or revoked). Nothing here can
+ * be serialized into a credential, so state snapshots, logs or devtools copies never carry it.
+ */
+export type EmbeddedLaunch = {
+	/** Distinct per launch: re-rendering the same launch never creates another Session. */
+	readonly id: number;
+	readonly attemptId: string;
+	readonly purpose: 'DEPOSIT' | 'INVOICE';
+	/** The amount this Session was authorized for (from the command, never a newer summary). */
+	readonly amountCents: bigint;
+	/** The Quote/Invoice revision the customer reviewed for this Session. */
+	readonly businessRevision: number;
+	clientSecret(): Promise<string>;
 };
 
 export type PageState = {
@@ -65,6 +89,8 @@ export type PageState = {
 	polling: 'idle' | 'active' | 'exhausted';
 	/** False when sessionStorage is unavailable: leaving the page loses the link for this tab. */
 	persistent: boolean;
+	/** Stripe's embedded form, shown in place of the payment actions while it is open. */
+	embedded: EmbeddedLaunch | null;
 	/**
 	 * The summary was read successfully just now and may back a new payment decision. A summary
 	 * kept on screen after a failed refresh is display-only; so is one older than five minutes
@@ -119,6 +145,7 @@ export const MAX_SUMMARY_AGE_MS = 5 * 60_000;
 const IN_FLIGHT: NoticeKind[] = [
 	'confirming',
 	'checkout-cancelled-open',
+	'embedded-closed',
 	'checkout-open',
 	'processing'
 ];
@@ -152,6 +179,9 @@ export function createPaymentController(deps: ControllerDeps) {
 	let pollIndex = 0;
 	let pollDue = false;
 	let unsubscribe: (() => void) | null = null;
+	/** The open embedded launch and its client secret: memory only, never persisted or emitted. */
+	let launch: { public: EmbeddedLaunch; secret: string } | null = null;
+	let launchCount = 0;
 	let state: PageState = {
 		phase: 'initializing',
 		summary: null,
@@ -161,6 +191,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		pending: null,
 		polling: 'idle',
 		persistent: store.persistent,
+		embedded: null,
 		summaryFresh: false,
 		paymentUncertain: false
 	};
@@ -205,9 +236,34 @@ export function createPaymentController(deps: ControllerDeps) {
 					purpose: stored.purpose,
 					amountCents: BigInt(stored.amountCents),
 					ambiguous,
-					blocked: stored.blocked === true
+					blocked: stored.blocked === true,
+					uiMode: stored.uiMode ?? null,
+					completing: stored.completing === true
 				}
 			: null;
+	}
+
+	/** Shows Stripe's embedded form for this tab's opened command, holding its secret in memory. */
+	function openEmbedded(stored: StoredCheckout, attemptId: string, secret: string) {
+		const id = ++launchCount;
+		const embedded: EmbeddedLaunch = {
+			id,
+			attemptId,
+			purpose: stored.purpose,
+			amountCents: BigInt(stored.amountCents),
+			businessRevision: stored.command.expectedBusinessRevision,
+			clientSecret: () =>
+				launch?.public.id === id && !disposed
+					? Promise.resolve(launch.secret)
+					: Promise.reject(new Error('This payment form is no longer active.'))
+		};
+		launch = { public: embedded, secret };
+		return embedded;
+	}
+
+	/** Forgets the client secret so the form unmounts. The saved command (and Session) remain. */
+	function discardEmbedded() {
+		launch = null;
 	}
 
 	/** The confirmation a finished checkout supports, judged only from the authoritative summary. */
@@ -247,13 +303,22 @@ export function createPaymentController(deps: ControllerDeps) {
 		} else if (stored?.phase === 'redirected') {
 			if (summary.paymentInProgress) {
 				pending = pendingOf(stored, false);
-				derived = returned === 'cancelled' ? 'checkout-cancelled-open' : 'confirming';
+				derived = launch
+					? null // The customer is still in Stripe's form on this page.
+					: returned === 'cancelled'
+						? 'checkout-cancelled-open'
+						: returned === 'returned' || stored.completing || stored.uiMode !== 'EMBEDDED'
+							? 'confirming'
+							: 'embedded-closed';
 			} else {
 				// The attempt is no longer active: commerce has settled, expired or failed it.
 				derived = outcomeNotice(stored, summary);
 				store.forgetCheckout();
 			}
 		}
+		// The embedded form stays only while commerce still shows this tab's attempt underway: a
+		// settled, expired, superseded or staff-changed authorization is never left mounted.
+		if (launch && (view.kind !== 'in-progress' || !store.checkout())) discardEmbedded();
 		// An action's own result wins; a background read keeps the current notice unless the stored
 		// checkout says something newer. In-flight wording never outlives the payment it describes.
 		let notice = explicit !== undefined ? (explicit ?? derived) : (derived ?? state.notice);
@@ -263,7 +328,15 @@ export function createPaymentController(deps: ControllerDeps) {
 		// Once a summary has resolved this tab's checkout, the return marker has been accounted for.
 		if (!store.checkout()) returned = null;
 		loadedAt = now();
-		emit({ phase: 'ready', summary, view, notice, pending, summaryFresh: true });
+		emit({
+			phase: 'ready',
+			summary,
+			view,
+			notice,
+			pending,
+			embedded: launch?.public ?? null,
+			summaryFresh: true
+		});
 		if (view.kind === 'in-progress') startPolling();
 		else stopPolling('idle');
 	}
@@ -344,6 +417,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		token = null;
 		store.forgetToken();
 		store.forgetCheckout();
+		discardEmbedded();
 		stopPolling('idle');
 		emit({
 			phase: 'link-unavailable',
@@ -351,13 +425,21 @@ export function createPaymentController(deps: ControllerDeps) {
 			view: null,
 			notice: null,
 			pending: null,
+			embedded: null,
 			summaryFresh: false
 		});
 	}
 
 	function paymentsDisabled() {
 		stopPolling('idle');
-		emit({ phase: 'payments-disabled', notice: null, busy: null, summaryFresh: false });
+		discardEmbedded();
+		emit({
+			phase: 'payments-disabled',
+			notice: null,
+			busy: null,
+			embedded: null,
+			summaryFresh: false
+		});
 	}
 
 	// Polling: bounded backoff, only while the page is visible, only while a payment is underway.
@@ -463,9 +545,15 @@ export function createPaymentController(deps: ControllerDeps) {
 
 	/** Sends one stored command, retrying only the identical key/body after an ambiguous result. */
 	async function send(stored: StoredCheckout, fresh = false) {
-		if (sending || disposed || !token) return;
+		// An open embedded form already holds this tab's only authorization.
+		if (sending || disposed || !token || launch) return;
 		sending = true;
-		const sendingCommand: StoredCheckout = { ...stored, phase: 'sending', blocked: undefined };
+		const sendingCommand: StoredCheckout = {
+			...stored,
+			phase: 'sending',
+			blocked: undefined,
+			completing: undefined
+		};
 		// Persisted before transmission: a lost response or closed tab can only resend this.
 		store.saveCheckout(sendingCommand);
 		emit({ busy: 'submitting', pending: pendingOf(sendingCommand, false), notice: null });
@@ -498,12 +586,26 @@ export function createPaymentController(deps: ControllerDeps) {
 		sending = false;
 		if (result.ok) {
 			const response = readCheckoutResponse(result.body);
-			const redirect = response && checkoutRedirect(response);
-			if (response && redirect) {
-				store.saveCheckout({ ...sendingCommand, phase: 'redirected' });
+			// Each attempt names its own immutable mode: one opened before a configuration change
+			// keeps launching the way it was created.
+			const launchable = response && checkoutLaunch(response);
+			const opened: StoredCheckout = {
+				...sendingCommand,
+				phase: 'redirected',
+				...(response?.uiMode && { uiMode: response.uiMode })
+			};
+			if (launchable?.mode === 'HOSTED') {
+				store.saveCheckout(opened);
 				emit({ busy: 'redirecting' });
-				deps.navigate(redirect);
+				deps.navigate(launchable.url);
 				return;
+			}
+			if (response && launchable?.mode === 'EMBEDDED') {
+				// The customer stays here. Only nonsecret metadata is saved; the secret stays in memory.
+				store.saveCheckout(opened);
+				const embedded = openEmbedded(opened, response.attemptId, launchable.clientSecret);
+				emit({ busy: null, notice: null, embedded, pending: pendingOf(opened, false) });
+				return refresh(null);
 			}
 			emit({ busy: null });
 			if (!response) return refresh('ambiguous');
@@ -512,7 +614,7 @@ export function createPaymentController(deps: ControllerDeps) {
 				store.forgetCheckout();
 				return refresh('checkout-expired');
 			}
-			store.saveCheckout({ ...sendingCommand, phase: 'redirected' });
+			store.saveCheckout(opened);
 			return refresh(response.state === 'OPEN' ? 'checkout-open' : undefined);
 		}
 		emit({ busy: null });
@@ -546,7 +648,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		},
 		/** A deliberate payment of the reviewed terms. Ignored while anything is in flight. */
 		async pay(choice: AmountChoice) {
-			if (sending || preparing || isBusy() || store.checkout()) return;
+			if (sending || preparing || isBusy() || launch || store.checkout()) return;
 			const terms = await currentTerms((view) =>
 				view?.kind === 'deposit-due' || view?.kind === 'balance-due' ? view.terms : null
 			);
@@ -560,7 +662,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		 * conflicts claim no key and are never followed by another automatic attempt.
 		 */
 		async recover(choice: AmountChoice) {
-			if (sending || preparing || isBusy()) return;
+			if (sending || preparing || isBusy() || launch) return;
 			const stored = store.checkout();
 			// This tab's own command: resending it is always safe (same key, same authorization).
 			if (stored && !stored.blocked) return send(stored);
@@ -575,8 +677,33 @@ export function createPaymentController(deps: ControllerDeps) {
 		/** Resends the identical stored command after an ambiguous outcome. */
 		async retry() {
 			const stored = store.checkout();
-			if (!stored || stored.blocked || sending || isBusy()) return;
+			if (!stored || stored.blocked || sending || isBusy() || launch) return;
 			await send(stored);
+		},
+		/**
+		 * Stripe.js reported that the embedded Checkout completed. That never proves payment: the
+		 * form is removed, new payments stay closed, and the page waits (with fresh bounded
+		 * polling) until commerce's summary shows the applied payment.
+		 */
+		embeddedComplete(id: number) {
+			if (disposed || launch?.public.id !== id) return;
+			discardEmbedded();
+			const stored = store.checkout();
+			if (stored) store.saveCheckout({ ...stored, completing: true });
+			stopPolling('idle');
+			emit({ embedded: null, notice: 'confirming', pending: pendingOf(store.checkout(), false) });
+			void refresh('confirming');
+		},
+		/**
+		 * Back to the booking overview. Closing the form neither cancels nor expires the Session
+		 * and proves nothing about money: the saved command stays, and continuing resends that
+		 * same key and body to reach the same Session.
+		 */
+		closeEmbedded() {
+			if (disposed || !launch) return;
+			discardEmbedded();
+			emit({ embedded: null });
+			void refresh(null);
 		},
 		/** Deliberately abandons a blocked command and reviews the current terms again. */
 		async startOver() {
@@ -593,6 +720,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		},
 		dispose() {
 			disposed = true;
+			discardEmbedded();
 			abort.abort();
 			if (pollTimer !== null) clearTimer(pollTimer);
 			unsubscribe?.();

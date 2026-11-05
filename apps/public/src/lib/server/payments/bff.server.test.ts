@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
-import { openCheckout, publicId, quotedSummary, token } from '$lib/payments/testing/fixtures.js';
+import {
+	embeddedCheckout,
+	embeddedSecret,
+	openCheckout,
+	publicId,
+	quotedSummary,
+	token
+} from '$lib/payments/testing/fixtures.js';
 
 const env: Record<string, string | undefined> = {
 	COMMERCE_API_URL: 'http://commerce.internal:8080'
 };
 vi.mock('$env/dynamic/private', () => ({ env }));
 
-const { createCheckout, paymentSummary, isPaymentPath } = await import('./bff.server.js');
+const { createCheckout, paymentSummary, isPaymentPath, PAYMENT_CSP } =
+	await import('./bff.server.js');
 
 const origin = 'https://www.fionasicecream.com';
 type Sent = { url: string; init: RequestInit };
@@ -184,6 +192,45 @@ describe('checkout BFF', () => {
 		});
 	});
 
+	it('relays an embedded client secret only in the checkout answer, no-store, never logged', async () => {
+		reply = () => Response.json({ ...embeddedCheckout, debug: 'internal', customerEmail: 'x@y.z' });
+		const response = await createCheckout(checkoutEvent());
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual(embeddedCheckout);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+		const logged = JSON.stringify([
+			vi.mocked(console.error).mock.calls,
+			vi.mocked(console.warn).mock.calls
+		]);
+		expect(logged).not.toContain(embeddedSecret);
+	});
+
+	it('never lets a launch credential through a payment summary', async () => {
+		reply = () =>
+			Response.json({ ...quotedSummary(), clientSecret: embeddedSecret, url: openCheckout.url });
+		const response = await paymentSummary(summaryEvent());
+		expect(response.status).toBe(200);
+		const text = await response.text();
+		expect(text).not.toContain(embeddedSecret);
+		expect(text).not.toContain('checkout.stripe.com');
+	});
+
+	it('answers an unknown or contradictory checkout mode as an invalid response', async () => {
+		for (const body of [
+			{ ...embeddedCheckout, uiMode: 'POPUP' },
+			{ ...embeddedCheckout, url: openCheckout.url },
+			{ ...embeddedCheckout, clientSecret: undefined }
+		]) {
+			reply = () => Response.json(body);
+			const response = await createCheckout(checkoutEvent());
+			expect(response.status).toBe(502);
+			const text = await response.text();
+			expect(JSON.parse(text)).toEqual({ code: 'invalid_response' });
+			expect(text).not.toContain(embeddedSecret);
+		}
+	});
+
 	it('refuses cross-origin and cross-site POSTs', async () => {
 		const refused: Record<string, string>[] = [
 			{ origin: 'https://evil.example' },
@@ -256,4 +303,21 @@ it('covers the payment page, its data and the BFF only', () => {
 	expect(isPaymentPath(`/api/payments/${publicId}`)).toBe(true);
 	expect(isPaymentPath('/payments')).toBe(false);
 	expect(isPaymentPath('/book')).toBe(false);
+});
+
+it('keeps frame-ancestors none and frames only official Stripe origins', () => {
+	const directives = Object.fromEntries(
+		PAYMENT_CSP.split(';').map((part) => {
+			const [name, ...values] = part.trim().split(/\s+/);
+			return [name, values];
+		})
+	);
+	expect(directives['frame-ancestors']).toEqual(["'none'"]);
+	expect(directives['frame-src']).toEqual([
+		'https://js.stripe.com',
+		'https://*.js.stripe.com',
+		'https://checkout.stripe.com',
+		'https://hooks.stripe.com'
+	]);
+	expect(PAYMENT_CSP).not.toMatch(/unsafe|\s\*(\s|;|$)|http:|data:/);
 });
