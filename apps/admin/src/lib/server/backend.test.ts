@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { request, type BackendConfig } from './backend.js';
+import { forwardedCookie, request, type BackendConfig } from './backend.js';
 
 const respond = (init: { status: number; body?: unknown; headers?: HeadersInit }) =>
 	new Response(init.body === undefined ? null : JSON.stringify(init.body), {
@@ -121,5 +121,70 @@ describe('request', () => {
 		expect(logged).not.toContain('hunter2');
 		expect(logged).not.toContain('secret');
 		spy.mockRestore();
+	});
+
+	it('allows an Idempotency-Key only on the two named send routes, with their long timeout', async () => {
+		const fetch = vi.fn(async () => respond({ status: 201, body: {} }));
+		const timeout = vi.spyOn(AbortSignal, 'timeout');
+		await request(config(fetch), '/staff/requests/abc/financial-emails', {
+			method: 'POST',
+			json: {},
+			idempotencyKey: 'key_1-A',
+			capability: 'financialEmailSend'
+		});
+		const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect(init.headers).toMatchObject({ 'idempotency-key': 'key_1-A' });
+		expect(timeout).toHaveBeenLastCalledWith(100000);
+		await request(config(fetch), '/staff/requests/abc/financial-emails/preview', {
+			method: 'POST',
+			json: {},
+			capability: 'financialEmailPreview'
+		});
+		expect(timeout).toHaveBeenLastCalledWith(30000);
+		timeout.mockRestore();
+		const refused = [
+			// A key on the preview, or on any other route, or a send without one.
+			{
+				path: '/staff/requests/abc/financial-emails/preview',
+				capability: 'financialEmailPreview',
+				idempotencyKey: 'k'
+			},
+			{
+				path: '/staff/requests/abc/payment-access',
+				capability: 'financialEmailSend',
+				idempotencyKey: 'k'
+			},
+			{ path: '/staff/requests/abc/financial-emails', idempotencyKey: 'k' },
+			{ path: '/staff/requests/abc/financial-emails', capability: 'financialEmailSend' },
+			{
+				path: '/staff/requests/abc/financial-emails',
+				capability: 'financialEmailSend',
+				idempotencyKey: 'bad key'
+			}
+		] as const;
+		for (const { path, ...options } of refused)
+			await expect(request(config(fetch), path, { method: 'POST', ...options })).rejects.toThrow(
+				TypeError
+			);
+		await expect(
+			request(config(fetch), '/staff/requests/abc/financial-emails', {
+				method: 'GET',
+				capability: 'financialEmailSend',
+				idempotencyKey: 'k'
+			})
+		).rejects.toThrow(TypeError);
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('forwards the staff session but never admin-local recovery cookies', async () => {
+		const fetch = vi.fn(async () => respond({ status: 204 }));
+		await request(config(fetch), '/auth/me', {
+			cookie:
+				'fionas_fe0=sealed0; __Host-fionas_session="token"; fionas_fe1=sealed1; fionas_reply_intent=ptr'
+		});
+		const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect((init.headers as Record<string, string>).cookie).toBe('__Host-fionas_session="token"');
+		expect(forwardedCookie('fionas_fe0=x')).toBeNull();
+		expect(forwardedCookie(null)).toBeNull();
 	});
 });

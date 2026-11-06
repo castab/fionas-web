@@ -120,11 +120,14 @@ export function paymentView(summary: CustomerPaymentSummary): PaymentView {
 		: { kind: 'balance-due', terms };
 }
 
-/** "Quote v4" / "Invoice v6", from the customer-facing business revision only. */
+/**
+ * "Quote" / "Invoice". Customers never see generated version labels: the ledger version and the
+ * business revision stay internal, used only for checkout concurrency (`payableTerms`).
+ */
 export function documentLabel(summary: CustomerPaymentSummary): string | null {
 	const { stage, businessRevision } = summary.document;
 	const name = stage === 'QUOTE' ? 'Quote' : stage === 'INVOICE' ? 'Invoice' : null;
-	return name && businessRevision >= 1 ? `${name} v${businessRevision}` : null;
+	return name && businessRevision >= 1 ? name : null;
 }
 
 /** The booking-stage label for the page header. */

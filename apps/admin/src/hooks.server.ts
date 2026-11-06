@@ -27,7 +27,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
 	// Includes enhanced action responses (which do not run page load). Reply bodies and recovery
 	// keys must never enter a browser/shared cache, including on validation or UNKNOWN outcomes.
-	if (event.url.pathname.startsWith('/requests/'))
+	if (event.url.pathname.startsWith('/requests/')) {
 		response.headers.set('cache-control', 'no-store');
+		// The only frame here is the sandboxed srcdoc email preview: it may never navigate anywhere.
+		response.headers.set('content-security-policy', "frame-src 'none'");
+	}
 	return response;
 };

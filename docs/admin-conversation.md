@@ -24,11 +24,19 @@ only a fixed technical description, never returned content. The list accepts abs
 during overlap and labels that state unavailable rather than treating it as false.
 
 Items retain backend order and stable IDs. Messages use escaped plain text, preserved whitespace,
-native disclosures and Pacific timestamps. Null text explicitly means unavailable plain text.
+native disclosures and Pacific timestamps. `textVisibility` (fionas-commerce PR #39) is READABLE
+(complete provider text, possibly empty, including financial emails, customer replies, staff
+replies, payment links and quoted history) or PROVIDER_CONTENT_UNAVAILABLE (no text; shown as
+unavailable, never as an empty customer message). Older commerce omits it, and null text then means
+unavailable. `textOmittedForPaymentSecurity` is deprecated, always false and ignored; there are no
+protected/unverified states. Text is always rendered escaped, never as HTML. Only staff with
+`fionas.communications.read` receive provider content (others get FORBIDDEN, with commerce and
+financial-email history still shown).
 Quoted history a mail client appends below a reply (`On … wrote:` over `>` lines, two or more bare
 `>` lines, or an Outlook header block) is folded behind a native Show quoted text disclosure by
-`splitQuotedTrail`. It is display only: the text is never altered, inline replies and fully quoted
-messages stay whole, and the collapsed preview uses the reply's own words. A customer email's
+`splitQuotedTrail`. It is display only, not a security filter: the text is never altered or removed
+from the data model, inline replies and fully quoted messages stay whole, and the collapsed preview
+uses the reply's own words. A customer email's
 recipient is the per-conversation reply-routing address, an internal identifier, so its header
 reads "To Fiona's Ice Cream"; staff replies show the customer address they went to. For debugging,
 a collapsed Message details disclosure lists the exact From and To addresses and the message ID.
@@ -41,6 +49,21 @@ when the backend returns them alongside unavailable email. READY with zero messa
 EMPTY but uses the same empty send expectation, as supported by the backend topic lookup. Missing
 established conversations never offer replacement. Send acceptance/pending and delivery are separate
 labels; failed, delayed, bounced, complained, suppressed and indeterminate states remain visible.
+
+## Financial emails in Activity
+
+The timeline's `financialEmails` command history and an outbound MESSAGE's matching `financialEmail`
+metadata are validated with the rest of the read (unique send IDs; metadata only on outbound
+messages and only for that message ID). Such a message is labelled **Quote emailed** /
+**Invoice emailed** with the staff-only document version and business revision, Current/Earlier
+(commerce's `current`) and sender; it is the provider message itself, never an extra band. UNKNOWN
+and REJECTED commands without a message appear in Right now's **Customer email** block. A financial
+email never acknowledges correspondence: Needs reply and the watermark are unchanged, and the reply
+composer, its key and expectation are untouched. Financial-email commands are excluded from the
+`financialHistory` comparison (a send changes no staff request), while `onrefreshed` passes the
+applied timeline so the workspace updates email status. After an enhanced send the workspace bumps
+`refreshSignal` for one targeted Activity read instead of invalidating the page. See
+[admin-financial-emails.md](admin-financial-emails.md).
 
 ## Permissions and acknowledgement
 
@@ -131,8 +154,9 @@ not something this frontend fabricates.
 
 ## Timeout and deployment
 
-Only the reply transport accepts a validated `Idempotency-Key` (ASCII letters/digits/underscore/hyphen,
-1–128 characters); it cannot override Cookie, Authorization, Origin or Host. Its timeout is 100 seconds.
+Only the reply and financial-email send transports accept a validated `Idempotency-Key` (ASCII
+letters/digits/underscore/hyphen, 1–128 characters), each bound to its own route; it cannot override
+Cookie, Authorization, Origin or Host. Their timeout is 100 seconds.
 The verified backend send timeout defaults to 10 seconds per provider request and is configurable up
 to 30 seconds. A lookup plus two bounded send attempts can therefore take 90 seconds, before local
 transaction overhead. Other commerce calls retain the existing eight-second timeout. Configure
@@ -142,7 +166,8 @@ timeout remains ambiguous and uses the same recovery flow; no timeout proves a s
 Deploy the commerce migrations/configuration and role grants from its email-conversations runbook.
 Existing roles do not acquire read/send permissions automatically. Verify provider read/send flags,
 recipient allowlist, trusted origins and optional inbound event intake before production use. This
-frontend adds no automatic inquiry, Quote or Invoice emails and no provider configuration.
+frontend adds no automatic inquiry, Quote or Invoice emails and no provider configuration; Quote
+and Invoice emails are staff-initiated only ([admin-financial-emails.md](admin-financial-emails.md)).
 
 ## Refresh and notifications
 

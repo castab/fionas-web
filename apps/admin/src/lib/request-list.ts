@@ -189,7 +189,7 @@ export function readReturnContext(params: URLSearchParams): RequestListQuery | n
  * `?payment`, `?decline`, `?history`). Each is a bare flag, so reloads, Back and no-JavaScript work.
  */
 export type WorkspacePanel =
-	'quote' | 'quote-revision' | 'invoice-revision' | 'payment' | 'decline' | 'history';
+	'quote' | 'quote-revision' | 'invoice-revision' | 'payment' | 'decline' | 'history' | 'email';
 
 /**
  * A workspace query string: an optional panel flag, then the return context. Without either it is

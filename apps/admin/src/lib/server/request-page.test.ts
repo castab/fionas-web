@@ -71,7 +71,7 @@ function event(
 			headers: { cookie: '__Host-fionas_session=staff' },
 			body: f
 		}),
-		cookies: { set: vi.fn() },
+		cookies: { get: () => undefined, set: vi.fn(), delete: vi.fn() },
 		setHeaders: vi.fn()
 	} as never;
 }

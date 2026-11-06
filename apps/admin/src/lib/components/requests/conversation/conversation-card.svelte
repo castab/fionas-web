@@ -40,7 +40,8 @@
 		endpoint,
 		returnContext,
 		result,
-		onrefreshed
+		onrefreshed,
+		refreshSignal = 0
 	}: {
 		inquiry: InquiryResponse;
 		timeline: StaffTimeline | null;
@@ -60,9 +61,13 @@
 		/**
 		 * After each applied authoritative timeline read (live hint or manual refresh).
 		 * `historyChanged`: non-communication history (payments, publications, lifecycle) differs
-		 * from the previous read. When given, the page owns the "details changed" notice.
+		 * from the previous read. When given, the page owns the "details changed" notice. `timeline`
+		 * is the applied read, so the workspace can show current financial-email status.
+		 * Financial-email commands are deliberately not history: a send changes no staff request.
 		 */
-		onrefreshed?: (detail: { historyChanged: boolean }) => void;
+		onrefreshed?: (detail: { historyChanged: boolean; timeline: StaffTimeline }) => void;
+		/** Bumped by the workspace after its own send (a financial email): one targeted read. */
+		refreshSignal?: number;
 	} = $props();
 	let timeline = $state(untrack(() => initialTimeline));
 	let refreshing = $state(false);
@@ -185,7 +190,7 @@
 					// Without a page handler the card keeps flagging the rest of the workspace as stale.
 					if (history !== historyBaseline && !onrefreshed) detailsChanged = true;
 					timeline = next;
-					onrefreshed?.({ historyChanged });
+					onrefreshed?.({ historyChanged, timeline: next });
 				},
 				busy(value) {
 					refreshing = value;
@@ -225,6 +230,13 @@
 				window.removeEventListener('offline', visibility);
 			};
 		});
+	});
+	let appliedSignal = untrack(() => refreshSignal);
+	$effect(() => {
+		const signal = refreshSignal;
+		if (signal === appliedSignal) return;
+		appliedSignal = signal;
+		untrack(() => void coordinator?.request());
 	});
 	async function refresh(event: SubmitEvent) {
 		event.preventDefault();
@@ -368,6 +380,7 @@
 						</p>{/if}
 					{#if item.kind === 'MESSAGE'}<ConversationMessage
 							message={item}
+							{userId}
 							newest={item.messageId === timeline.conversation.latestMessageId}
 						/>{:else}<ConversationMilestone
 							{item}

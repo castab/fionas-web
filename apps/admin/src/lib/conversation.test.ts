@@ -152,6 +152,86 @@ describe('conversation boundary', () => {
 	});
 });
 
+describe('financial email timeline', () => {
+	const email = (): Record<string, unknown> => ({
+		sendId: '40000000-0000-4000-8000-000000000001',
+		kind: 'QUOTE',
+		documentId: '10000000-0000-0000-0000-000000000003',
+		documentVersion: 2,
+		businessRevision: 2,
+		proposalId: '30000000-0000-0000-0000-000000000003',
+		current: true,
+		outcome: 'ACCEPTED',
+		requestedAt: '2026-07-17T18:00:00Z',
+		acceptedAt: '2026-07-17T18:00:01Z',
+		actor: { principalKind: 'USER', principalId: '00000000-0000-0000-0000-000000000001' }
+	});
+	function withEmail() {
+		const value = conversationFixture() as unknown as {
+			items: unknown[];
+			financialEmails?: Record<string, unknown>[];
+		};
+		const outbound: Record<string, unknown> = {
+			kind: 'MESSAGE',
+			id: 'message:50000000-0000-4000-8000-000000000001',
+			messageId: '50000000-0000-4000-8000-000000000001',
+			occurredAt: '2026-10-28T19:00:00Z',
+			direction: 'outbound',
+			senderAddress: 'bookings@fionas.example',
+			recipient: 'maya@example.com',
+			text: 'Hi Maya, here’s your quote',
+			sendState: 'accepted'
+		};
+		value.items.splice(1, 0, outbound);
+		outbound.financialEmail = { ...email(), messageId: outbound.messageId };
+		outbound.textVisibility = 'READABLE';
+		outbound.textOmittedForPaymentSecurity = false;
+		value.financialEmails = [
+			{ ...email(), messageId: outbound.messageId },
+			{
+				...email(),
+				sendId: '40000000-0000-4000-8000-000000000002',
+				outcome: 'UNKNOWN',
+				acceptedAt: undefined
+			}
+		];
+		return { value, outbound };
+	}
+
+	it('accepts command history and the matching MESSAGE metadata, with full readable text', () => {
+		const { value, outbound } = withEmail();
+		outbound.text = 'Pay here: https://pay.example/pay/abc#secret\n\n> On Mon, you wrote:';
+		expect(isStaffTimeline(value, mayaId)).toBe(true);
+		// Backward compatible: older commerce sends neither field.
+		expect(isStaffTimeline(conversationFixture(), mayaId)).toBe(true);
+	});
+
+	it('handles empty readable text and provider-unavailable content distinctly', () => {
+		const { value, outbound } = withEmail();
+		outbound.text = '';
+		expect(isStaffTimeline(value, mayaId)).toBe(true);
+		outbound.textVisibility = 'PROVIDER_CONTENT_UNAVAILABLE';
+		expect(isStaffTimeline(value, mayaId)).toBe(false);
+		delete outbound.text;
+		expect(isStaffTimeline(value, mayaId)).toBe(true);
+		outbound.textVisibility = 'FINANCIAL_EMAIL_PROTECTED';
+		expect(isStaffTimeline(value, mayaId)).toBe(false);
+	});
+
+	it('rejects metadata for another message, duplicate commands and malformed history', () => {
+		const mismatch = withEmail();
+		(mismatch.outbound.financialEmail as Record<string, unknown>).messageId =
+			'50000000-0000-4000-8000-00000000000f';
+		expect(isStaffTimeline(mismatch.value, mayaId)).toBe(false);
+		const duplicate = withEmail();
+		duplicate.value.financialEmails!.push(duplicate.value.financialEmails![0]);
+		expect(isStaffTimeline(duplicate.value, mayaId)).toBe(false);
+		const malformed = withEmail();
+		malformed.value.financialEmails = [{ ...email(), outcome: 'DELIVERED' }];
+		expect(isStaffTimeline(malformed.value, mayaId)).toBe(false);
+	});
+});
+
 describe('quoted reply history', () => {
 	it('folds a wrapped Gmail attribution and its nested quotes', () => {
 		const text = [
