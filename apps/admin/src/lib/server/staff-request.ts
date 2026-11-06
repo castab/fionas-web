@@ -2,6 +2,7 @@ import type {
 	DeclineInquiryRequest,
 	DepositRequirementHistoryResponse,
 	FinancialDocumentHistoryResponse,
+	InquiryInvoiceAmendmentResponse,
 	InquiryLifecycle,
 	StaffRequestResponse,
 	DepositTermsRequest,
@@ -165,11 +166,11 @@ export function reviseInquiryInvoice(
 	json: InvoiceRevisionRequest,
 	cookie: string | null
 ) {
-	return request<{ financial: FinancialDocumentResponse; servicePlan?: ServicePlanResponse }>(
-		config,
-		staffPath(inquiryId, 'invoice-revisions'),
-		{ method: 'POST', json, cookie }
-	);
+	return request<{
+		financial: FinancialDocumentResponse;
+		servicePlan?: ServicePlanResponse;
+		amendment: InquiryInvoiceAmendmentResponse;
+	}>(config, staffPath(inquiryId, 'invoice-revisions'), { method: 'POST', json, cookie });
 }
 
 /** Every immutable financial snapshot, oldest first. Optional detail: its failure never hides the booking. */

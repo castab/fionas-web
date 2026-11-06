@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { isCurrentStaffRequest } from './request-workspace.js';
-import { approvalSource, isApprovedServicePlan, serviceCommitment } from './service-plan.js';
+import {
+	approvalPublicationLabel,
+	isApprovedServicePlan,
+	serviceCommitment
+} from './service-plan.js';
 import { mayaId, requestFixtures } from '../../e2e/request-fixture.mjs';
 import { revisionFixture, type RevisionState } from '../../e2e/revision-fixture.mjs';
 
@@ -57,8 +61,12 @@ describe('current, retained and cleared approvals', () => {
 		expect(data.effectiveServicePlan?.revision).toBe(2);
 		expect(data.servicePlan?.revision).toBe(1);
 		expect(data.proposalHistory).toHaveLength(1);
-		expect(approvalSource(data.effectiveServicePlan!, data)).toBe('Invoice');
-		expect(approvalSource(data.acceptedServicePlan!, data)).toBe('Quote');
+		expect(approvalPublicationLabel(data.effectiveServicePlan!, data)).toBe(
+			'Approved with Invoice v4'
+		);
+		expect(approvalPublicationLabel(data.acceptedServicePlan!, data)).toBe(
+			'Approved with Quote v2'
+		);
 	});
 	it('treats an intentional clearing as its own state, not as never approved', () => {
 		const cleared = valid('plan-cleared').data;

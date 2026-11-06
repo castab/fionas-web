@@ -128,6 +128,7 @@ describe('contract helpers', () => {
 	it('validates attempt diagnostics', () => {
 		expect(readPaymentAttempts({ items: [attempt] })).toHaveLength(1);
 		expect(readPaymentAttempts({ items: [{ ...attempt, authorizedMinor: '100' }] })).toBeNull();
+		expect(readPaymentAttempts({ items: [{ ...attempt, businessRevision: 0 }] })).toBeNull();
 	});
 
 	it('limits stages', () => {

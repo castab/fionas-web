@@ -354,6 +354,7 @@ describe('preview validation', () => {
 		expect(result.status).toBe(200);
 		const preview = result.body;
 		expect(preview.quote.quoteVersion).toBe(2);
+		expect(preview.resultingQuoteRevision).toBe(3);
 		expect(preview.quote.financialChange).toBe(false);
 		expect(preview.servicePlanChange).toBe(true);
 		expect(preview.resultingServicePlanRevision).toBe(2);
@@ -385,6 +386,11 @@ describe('preview validation', () => {
 		expect(isQuoteRevisionPreview(noProposal, scope(data.inquiry.id, data.financial.id))).toBe(
 			false
 		);
+		const noRevision = structuredClone(result.body);
+		delete noRevision.resultingQuoteRevision;
+		expect(isQuoteRevisionPreview(noRevision, scope(data.inquiry.id, data.financial.id))).toBe(
+			false
+		);
 	});
 	it('validates invoice reconciliation, settlement and the version it would create', () => {
 		const data = revisionFixture('booked');
@@ -412,6 +418,8 @@ describe('preview validation', () => {
 			(p: Record<string, unknown>) => (p.settlement = 'REFUNDED'),
 			(p: Record<string, unknown>) => (p.balance = 'many'),
 			(p: Record<string, unknown>) => (p.resultingDocumentVersion = 99),
+			(p: Record<string, unknown>) => delete p.resultingInvoiceRevision,
+			(p: Record<string, unknown>) => (p.resultingInvoiceRevision = p.currentInvoiceRevision),
 			(p: Record<string, unknown>) => (p.reviewToken = 'abc'),
 			(p: Record<string, unknown>) => (p.currency = 'EUR'),
 			(p: Record<string, unknown>) => (p.documentId = 'other')
@@ -433,6 +441,7 @@ describe('preview validation', () => {
 			financialChange: false,
 			servicePlanChange: true,
 			resultingDocumentVersion: data.financial.version,
+			resultingInvoiceRevision: 4,
 			resultingServicePlanRevision: 2
 		});
 		const over = previewInvoiceRevision({}, data, {
@@ -501,9 +510,13 @@ describe('revision history presentation', () => {
 		expect(entries[0]).toMatchObject({
 			label: 'Service plan removed',
 			current: true,
-			source: 'Invoice'
+			publicationLabel: 'Approved with Invoice v4'
 		});
-		expect(entries[1]).toMatchObject({ accepted: true, current: false, source: 'Quote' });
+		expect(entries[1]).toMatchObject({
+			accepted: true,
+			current: false,
+			publicationLabel: 'Approved with Quote v2'
+		});
 	});
 	it('validates the optional financial and deposit histories', () => {
 		const data = revisionFixture('quote-financial-revision');

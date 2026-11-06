@@ -548,7 +548,7 @@ describe('invoice amendment', () => {
 		);
 		expect(unchanged).toMatchObject({ status: 422, data: { notices: { noChange: true } } });
 		const values = amend();
-		current.financial.version++;
+		Object.assign(current, revisionFixture('invoice-financial-amendment'));
 		expect(await actions!.previewInvoiceRevision!(event(values, options))).toMatchObject({
 			status: 409,
 			data: { reviewRequired: true }

@@ -56,12 +56,14 @@
 >
 	<div class="flex flex-col gap-1">
 		<h2 id="revision-history-title" class={caps}>
-			{showPublications ? 'Revision history' : 'Financial versions'}
+			{showPublications || request.invoiceAmendmentHistory.length
+				? 'Revision history'
+				: 'Financial versions'}
 		</h2>
 		<p class="m-0 text-[11.5px] text-(--text-muted)">
 			{showPublications
-				? 'Read only. Activity is unavailable, so the quote publications behind this booking are listed here.'
-				: 'Read only. Every immutable financial version and deposit revision behind this booking.'}
+				? 'Read only. Activity is unavailable, so the Quote publications and Invoice revisions behind this booking are listed here.'
+				: 'Read only. Invoice revisions, financial snapshots and deposit terms behind this booking.'}
 		</p>
 	</div>
 
@@ -74,13 +76,14 @@
 						<div class="flex flex-wrap items-center gap-2">
 							<span class="font-semibold">{entry.kind}</span>
 							<span class={pill}>{entry.status}</span>
-							<span class="text-(--text-muted)">Quote v{entry.proposal.documentVersion}</span>
+							<span class="text-(--text-muted)">Quote v{entry.proposal.quoteRevision}</span>
 						</div>
 						<p class="m-0 text-[11.5px] text-(--text-muted)">
 							<time datetime={entry.proposal.issuedAt}
 								>{receivedTimeLabel(entry.proposal.issuedAt)}</time
 							>
 							· {who(entry.proposal.issuedBy)}
+							· Financial snapshot v{entry.proposal.documentVersion}
 							· Deposit terms revision {entry.proposal.depositRequirementRevision}{entry.proposal
 								.servicePlanRevision
 								? ` · Service plan revision ${entry.proposal.servicePlanRevision}`
@@ -89,6 +92,41 @@
 						{#if entry.changes.length}<p class="m-0 text-[11.5px]">
 								Changed: {entry.changes.join(', ')}
 							</p>{/if}
+					</li>
+				{/each}
+			</ol>
+		</section>
+	{/if}
+
+	{#if request.invoiceAmendmentHistory.length && (open || showPublications)}
+		<section class="flex flex-col gap-2" aria-labelledby="history-invoices">
+			<h3 id="history-invoices" class={micro}>Invoice revisions</h3>
+			<ol class="m-0 flex list-none flex-col gap-2 p-0" data-testid="history-invoices">
+				{#each [...request.invoiceAmendmentHistory].reverse() as amendment (amendment.id)}
+					<li class="flex flex-col gap-1 rounded-input bg-cream-200 px-3 py-2.5 text-[13px]">
+						<div class="flex flex-wrap items-center gap-2">
+							<span class="font-semibold">Invoice v{amendment.invoiceRevision}</span>
+							<span>{amendment.kind === 'INITIAL' ? 'Issued' : 'Amended'}</span>
+							{#if amendment.id === request.invoiceAmendmentHistory.at(-1)?.id}
+								<span class={pill}>Current</span>
+							{/if}
+						</div>
+						<p class="m-0 text-[11.5px] text-(--text-muted)">
+							<time datetime={amendment.approvedAt}>{receivedTimeLabel(amendment.approvedAt)}</time>
+							{#if amendment.approvedBy}· {who(amendment.approvedBy)}{/if}
+							· Financial snapshot v{amendment.documentVersion}
+							{#if amendment.servicePlanRevision}· Service plan revision {amendment.servicePlanRevision}{/if}
+						</p>
+						{#if amendment.kind === 'AMENDED'}
+							<p class="m-0 text-[11.5px]">
+								Changed: {[
+									amendment.financialChange ? 'Pricing' : null,
+									amendment.servicePlanChange ? 'Service plan' : null
+								]
+									.filter(Boolean)
+									.join(', ')}
+							</p>
+						{/if}
 					</li>
 				{/each}
 			</ol>
@@ -115,7 +153,7 @@
 					<li class="flex flex-col gap-1 rounded-input bg-cream-200 px-3 py-2.5 text-[13px]">
 						<div class="flex flex-wrap items-center justify-between gap-2">
 							<span class="font-semibold"
-								>{financialStageLabel(version.stage)} v{version.version}</span
+								>{financialStageLabel(version.stage)} financial snapshot v{version.version}</span
 							>
 							<span class="font-semibold">{formatMoney(version.total, version.currency)}</span>
 						</div>

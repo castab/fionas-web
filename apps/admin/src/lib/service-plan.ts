@@ -1,3 +1,4 @@
+import { isBusinessRevision } from './financial-revisions.js';
 import { isServicePlanItems } from './service-selections.js';
 import type { CurrentStaffRequest, InquiryProposalResponse } from './request-contract.js';
 import type { ServicePlanResponse } from './quote-contract.js';
@@ -75,6 +76,7 @@ function isProposal(value: unknown, data: CurrentStaffRequest): value is Inquiry
 		text(p.id) &&
 		p.inquiryId === data.inquiry.id &&
 		p.documentId === data.financial.id &&
+		isBusinessRevision(p.quoteRevision) &&
 		version(p.documentVersion) &&
 		p.documentVersion <= data.financial.version &&
 		version(p.depositRequirementRevision) &&
@@ -132,11 +134,20 @@ export function isCoherentServicePlanState(data: CurrentStaffRequest): boolean {
 	const stage = inquiry.lifecycle.stage;
 	if (stage === 'REQUESTED' || stage === 'DECLINED')
 		return !proposal && !proposals.length && !history.length && plans.every((p) => p == null);
-	if (!proposal || !proposals.length || proposals.at(-1)!.id !== proposal.id) return false;
-	if (!proposals.every((p) => isProposal(p, data))) return false;
+	if (!isProposal(proposal, data) || !proposals.every((p) => isProposal(p, data))) return false;
+	const latest = proposals.at(-1);
+	if (
+		latest?.id !== proposal.id ||
+		latest.quoteRevision !== proposal.quoteRevision ||
+		latest.documentVersion !== proposal.documentVersion ||
+		latest.depositRequirementRevision !== proposal.depositRequirementRevision ||
+		(latest.servicePlanRevision ?? null) !== (proposal.servicePlanRevision ?? null)
+	)
+		return false;
 	if (new Set(proposals.map((p) => p.id)).size !== proposals.length) return false;
 	for (let i = 1; i < proposals.length; i++)
 		if (
+			proposals[i].quoteRevision !== proposals[i - 1].quoteRevision + 1 ||
 			proposals[i].documentVersion < proposals[i - 1].documentVersion ||
 			proposals[i].depositRequirementRevision < proposals[i - 1].depositRequirementRevision ||
 			(proposals[i].servicePlanRevision ?? 0) < (proposals[i - 1].servicePlanRevision ?? 0) ||
@@ -177,17 +188,13 @@ export function serviceCommitment(
 			: { state: 'APPROVED', plan };
 }
 
-/**
- * Which financial document an approval was made against. After booking the accepted Quote is the
- * last proposal's version; any later version is an Invoice.
- */
-export function approvalSource(
+/** The first publication that carried this approval, including approvals retained later. */
+export function approvalPublicationLabel(
 	plan: ServicePlanResponse,
-	data: Pick<CurrentStaffRequest, 'proposal' | 'inquiry'>
-): 'Quote' | 'Invoice' {
-	const booked =
-		data.inquiry.lifecycle.stage !== 'QUOTED' && data.inquiry.lifecycle.stage !== 'REQUESTED';
-	return booked && data.proposal && plan.documentVersion > data.proposal.documentVersion
-		? 'Invoice'
-		: 'Quote';
+	data: Pick<CurrentStaffRequest, 'proposalHistory' | 'invoiceAmendmentHistory'>
+): string | null {
+	const quote = data.proposalHistory.find((p) => p.servicePlanRevision === plan.revision);
+	if (quote) return `Approved with Quote v${quote.quoteRevision}`;
+	const invoice = data.invoiceAmendmentHistory.find((a) => a.servicePlanRevision === plan.revision);
+	return invoice ? `Approved with Invoice v${invoice.invoiceRevision}` : null;
 }

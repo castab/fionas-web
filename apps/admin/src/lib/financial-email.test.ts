@@ -266,8 +266,10 @@ describe('financial email status', () => {
 		expect(emailedVersionLabel(record())).toBe('Quote v2');
 	});
 
-	it('shows one staff label, the document version, and keeps the revision in the identity', () => {
-		expect(emailedVersionLabel(record({ kind: 'INVOICE', documentVersion: 4 }))).toBe('Invoice v4');
+	it('labels staff emails with the business revision', () => {
+		expect(
+			emailedVersionLabel(record({ kind: 'INVOICE', documentVersion: 3, businessRevision: 4 }))
+		).toBe('Invoice v4');
 		const intent = {
 			kind: 'QUOTE' as const,
 			documentId: mayaDocumentId,
@@ -276,9 +278,8 @@ describe('financial email status', () => {
 			proposalId,
 			expectedDepositRequirementRevision: 1
 		};
-		expect(intentVersionLabel(intent)).toBe('Quote v2');
-		// Accepted limitation: a new business revision on the same ledger version shares the label,
-		// but never the identity a preview, send or recovery compares.
+		expect(intentVersionLabel(intent)).toBe('Quote v3');
+		expect(emailedVersionLabel(record({ businessRevision: 3 }))).toBe('Quote v3');
 		expect(sameIntent(intent, { ...intent, expectedBusinessRevision: 2 })).toBe(false);
 		expect(intentWithMessage(intent, '').expectedBusinessRevision).toBe(3);
 	});

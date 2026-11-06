@@ -7,6 +7,7 @@
  * The usable link is a bearer credential: workspace reads expose only its status and nonsecret
  * publicId; the URL is read only on a deliberate staff action and never stored in page data.
  */
+import { isBusinessRevision } from './financial-revisions.js';
 import type { InquiryStage } from './request-contract.js';
 
 /** All three are required by commerce; the first is granted to no role automatically. */
@@ -118,7 +119,7 @@ function readAttempt(value: unknown): PaymentAttempt | null {
 		!ENUM.test(v.purpose) ||
 		!Number.isSafeInteger(v.authorizedMinor) ||
 		!Number.isSafeInteger(v.documentVersion) ||
-		!Number.isSafeInteger(v.businessRevision) ||
+		!isBusinessRevision(v.businessRevision) ||
 		typeof v.state !== 'string' ||
 		!ENUM.test(v.state) ||
 		typeof v.outcome !== 'string' ||
@@ -144,7 +145,7 @@ function readAttempt(value: unknown): PaymentAttempt | null {
 		purpose: v.purpose,
 		authorizedMinor: v.authorizedMinor as number,
 		documentVersion: v.documentVersion as number,
-		businessRevision: v.businessRevision as number,
+		businessRevision: v.businessRevision,
 		state: v.state,
 		outcome: v.outcome,
 		createdAt: v.createdAt,

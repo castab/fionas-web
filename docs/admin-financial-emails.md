@@ -86,20 +86,10 @@ of every state is unchanged; only the words changed.
 
 ### One staff version label
 
-Staff see only `{Kind} v{documentVersion}` ("Quote v2", "Invoice v4") in the panel, the status
-block and Activity's meta line ("Quote v2 (staff only) · Current Quote · Sent by you"), matching
-the rest of the console (`emailedVersionLabel`, `intentVersionLabel`). Customers never see it.
-`businessRevision` / `expectedBusinessRevision` stay in the data, hidden fields, sealed commands,
-recovery matching and validation; only the visible text dropped them.
-
-**Accepted limitation.** Commerce can publish two business revisions on one ledger version, so two
-emails can carry the same label. A Quote deposit-terms revision (`ReviseInquiryProposalDeposit`, or
-a revision with no line change) keeps `current.document` and records a new `quote_revision`
-(`inquiry_proposals` is unique on document, version and deposit revision, not on version alone). An
-Invoice amendment that changes only the service plan keeps the document version and records a new
-`invoice_revision`. Whether an email is the **Current** or an **Earlier** one always comes from
-commerce's `current` flag, never from the label. To tell such emails apart, use their send IDs
-(Message details) or Financial versions.
+The email panel labels its target with `expectedBusinessRevision`. The earlier-email status and
+Activity details label each send with `businessRevision`. A service-only change can yield
+Quote v2 and Quote v3 emails that both refer to financial snapshot v2. Commerce's `current` flag
+determines **Current** and **Earlier**. Customers see versionless subjects and bodies.
 
 1. **Preview email** posts the identity the page shows plus the conversation expectation the
    Activity column currently shows. The action re-reads the staff request and timeline and refuses

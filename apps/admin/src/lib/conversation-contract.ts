@@ -3,6 +3,7 @@ import type {
 	FinancialDocumentResponse,
 	HistoricalDepositRequirement,
 	InquiryMilestone,
+	InquiryInvoiceAmendmentResponse,
 	InquiryProposalResponse
 } from './request-contract.js';
 
@@ -70,7 +71,12 @@ export type TimelineItem =
 			depositRequirement: HistoricalDepositRequirement;
 			actor: TimelineActor;
 	  })
-	| (Entry & { kind: 'INVOICE_AMENDED'; financial: FinancialDocumentResponse })
+	| (Entry & {
+			kind: 'INVOICE_AMENDED';
+			financial: FinancialDocumentResponse;
+			amendment: InquiryInvoiceAmendmentResponse;
+			actor: TimelineActor;
+	  })
 	| (Entry &
 			Receipt & {
 				kind: 'PAYMENT_RECORDED';

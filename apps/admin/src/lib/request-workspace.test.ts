@@ -8,7 +8,9 @@ import {
 	PROPOSAL_PERMISSIONS,
 	quoteErrorMessage,
 	requestErrorKind,
-	requestSummary
+	requestSummary,
+	currentDocumentLabel,
+	requestSummaryDescription
 } from './request-workspace.js';
 import {
 	businessDate,
@@ -19,7 +21,14 @@ import {
 	guestCountLabel,
 	submittedDateLabel
 } from './presentation.js';
-import { mayaId, requestFixtures, withServicePlan } from '../../e2e/request-fixture.mjs';
+import {
+	mayaId,
+	recordInitialInvoice,
+	requestFixtures,
+	withServicePlan
+} from '../../e2e/request-fixture.mjs';
+
+import { revisionFixture } from '../../e2e/revision-fixture.mjs';
 
 function quotedWithPlan() {
 	const data = requestFixtures()['00000000-0000-0000-0000-000000000001'];
@@ -64,6 +73,7 @@ describe('approved service plans', () => {
 		data.financial.version = 3;
 		data.financial.lines = data.financial.lines.map((l) => ({ ...l, id: `9${l.id.substring(1)}` }));
 		data.acceptedServicePlan = data.servicePlan;
+		recordInitialInvoice(data);
 		expect(isCurrentStaffRequest(data, data.inquiry.id)).toBe(true);
 	});
 });
@@ -137,6 +147,7 @@ describe('request workspace presentation', () => {
 		booked.inquiry.lifecycle.stage = 'BOOKED';
 		booked.financial.stage = 'INVOICE';
 		booked.financial.version = 3;
+		recordInitialInvoice(booked);
 		if (booked.depositRequirement.state === 'ACTIVE') booked.depositRequirement.satisfied = false;
 		expect(isCurrentStaffRequest(booked, booked.inquiry.id)).toBe(true);
 		expect(canIssueQuote(booked, [...PROPOSAL_PERMISSIONS])).toBe(false);
@@ -323,5 +334,38 @@ describe('E2E request fixtures', () => {
 		]);
 		for (const request of fixtures)
 			expect(isCurrentStaffRequest(request, request.inquiry.id), request.inquiry.name).toBe(true);
+	});
+});
+
+describe('business revision labels', () => {
+	it('uses independent revisions in the card and Right now', () => {
+		const quote = revisionFixture('quote-service-revision');
+		expect(quote.financial.version).toBe(2);
+		expect(currentDocumentLabel(quote)).toBe('Quote v3');
+		expect(requestSummaryDescription(quote, '2026-07-01')).toContain('Quote v3 issued');
+		const invoice = revisionFixture('invoice-service-amendment');
+		expect(invoice.financial.version).toBe(3);
+		expect(currentDocumentLabel(invoice)).toBe('Invoice v4');
+	});
+
+	it('rejects missing, repeated, invalid and contradictory revision data', () => {
+		for (const corrupt of [
+			(data: ReturnType<typeof revisionFixture>) =>
+				Reflect.deleteProperty(data.proposal!, 'quoteRevision'),
+			(data: ReturnType<typeof revisionFixture>) => Reflect.set(data.proposalHistory, '1', null),
+			(data: ReturnType<typeof revisionFixture>) => (data.proposalHistory[1].quoteRevision = 2),
+			(data: ReturnType<typeof revisionFixture>) => (data.currentQuoteRevision = 2),
+			(data: ReturnType<typeof revisionFixture>) => (data.proposal!.quoteRevision = 3.5)
+		]) {
+			const quote = revisionFixture('quote-service-revision');
+			corrupt(quote);
+			expect(isCurrentStaffRequest(quote, mayaId)).toBe(false);
+		}
+		const invoice = revisionFixture('invoice-service-amendment');
+		invoice.currentInvoiceRevision = 3;
+		expect(isCurrentStaffRequest(invoice, mayaId)).toBe(false);
+		invoice.currentInvoiceRevision = 4;
+		Reflect.deleteProperty(invoice.invoiceAmendmentHistory[1], 'invoiceRevision');
+		expect(isCurrentStaffRequest(invoice, mayaId)).toBe(false);
 	});
 });

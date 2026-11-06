@@ -63,7 +63,10 @@ export function conversationFixture() {
  * @returns {import('../src/lib/conversation-contract.js').StaffTimeline} */
 export function milestoneFixture() {
 	const timeline = conversationFixture();
-	const financial = revisionFixture('invoice-financial-amendment').financial;
+	const request = revisionFixture('invoice-financial-amendment');
+	const financial = request.financial;
+	const amendment = request.invoiceAmendmentHistory.at(-1);
+	if (!amendment) throw new Error('Missing Invoice amendment fixture');
 	const occurredAt = '2026-10-28T21:00:00Z';
 	const allocation = {
 		documentId: financial.id,
@@ -73,7 +76,14 @@ export function milestoneFixture() {
 		allocatedAt: occurredAt
 	};
 	timeline.items.push(
-		{ kind: 'INVOICE_AMENDED', id: 'invoice:4', occurredAt, financial },
+		{
+			kind: 'INVOICE_AMENDED',
+			id: amendment.id,
+			occurredAt: amendment.approvedAt,
+			financial,
+			amendment,
+			actor
+		},
 		{
 			kind: 'PAYMENT_RECORDED',
 			id: 'payment:deposit',

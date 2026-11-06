@@ -370,19 +370,12 @@ export const acceptedNoticeCopy = (kind: FinancialEmailKind, replayed: boolean) 
 		? `This ${kindLabel(kind)} email already went out earlier, so nothing new was sent.`
 		: 'Sent just now.';
 
-/**
- * The one staff-only label, "Quote v2": the ledger version, as everywhere else in the console.
- * Customers never see it. The business revision stays in the data, hidden fields and commands
- * (recovery and validation depend on it) but is not shown. Known, accepted limitation: commerce can
- * publish a new business revision on the same ledger version (a Quote deposit-terms revision, an
- * Invoice service-plan-only amendment), so two emails can share one label; Current/Earlier comes
- * from commerce's `current`, never from this label.
- */
-export const emailedVersionLabel = (r: { kind: FinancialEmailKind; documentVersion: number }) =>
-	`${kindLabel(r.kind)} v${r.documentVersion}`;
+/** Staff-only business revision label. Currentness comes from commerce's current flag. */
+export const emailedVersionLabel = (r: { kind: FinancialEmailKind; businessRevision: number }) =>
+	`${kindLabel(r.kind)} v${r.businessRevision}`;
 
 export const intentVersionLabel = (i: Omit<FinancialEmailIntent, 'message'>) =>
-	emailedVersionLabel({ kind: i.kind, documentVersion: i.expectedDocumentVersion });
+	emailedVersionLabel({ kind: i.kind, businessRevision: i.expectedBusinessRevision });
 
 export const unavailableCopy: Record<FinancialEmailUnavailable, string> = {
 	no_balance: 'It’s paid in full, so there’s nothing to collect by email.',

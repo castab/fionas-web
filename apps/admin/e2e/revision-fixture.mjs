@@ -6,6 +6,7 @@ import {
 	declinedFixture,
 	mayaId,
 	paymentFixture,
+	recordInitialInvoice,
 	requestFixtures,
 	withServicePlan
 } from './request-fixture.mjs';
@@ -53,7 +54,7 @@ export function negotiatedQuote() {
 
 /**
  * @typedef {'unquoted' | 'quoted' | 'quote-financial-revision' | 'quote-deposit-revision' |
- *  'quote-service-revision' | 'booked' | 'booked-additional' | 'invoice-financial-amendment' |
+ *  'quote-with-almonds' | 'quote-service-revision' | 'booked' | 'booked-additional' | 'invoice-financial-amendment' |
  *  'invoice-service-amendment' | 'served' | 'closed' | 'declined' | 'plan-cleared' |
  *  'historical-plan' | 'overpaid'} RevisionState
  * @param {RevisionState} state @returns {Request}
@@ -61,7 +62,12 @@ export function negotiatedQuote() {
 export function revisionFixture(state) {
 	if (state === 'unquoted') return requestFixtures()[mayaId];
 	if (state === 'declined') return declinedFixture();
-	const quoted = quotedWithPlan();
+	const withAlmonds = state === 'quote-with-almonds' || state === 'quote-service-revision';
+	const quoted = withAlmonds
+		? withServicePlan(paymentFixture('quoted'), {
+				items: [{ label: 'Sliced almonds', group: 'Toppings', key: 'sliced-almonds' }]
+			})
+		: quotedWithPlan();
 	const quoteEdit = (/** @type {object} */ extra) => ({
 		expectedDocumentVersion: quoted.financial.version,
 		expectedDepositRequirementRevision: 1,
@@ -72,6 +78,7 @@ export function revisionFixture(state) {
 	});
 	switch (state) {
 		case 'quoted':
+		case 'quote-with-almonds':
 			return quoted;
 		// A repriced line with the plan retained: the plan keeps its original snapshot reference.
 		case 'quote-financial-revision':
@@ -85,10 +92,10 @@ export function revisionFixture(state) {
 				quoteEdit({
 					servicePlanAction: 'REPLACE',
 					servicePlan: {
-						description: 'Chocolate service for the larger party',
-						guestCount: 60,
-						items: [{ label: 'Chocolate', group: 'Soft serve', key: null }],
-						lineNotes: []
+						description: 'Churro catering for an evening reception',
+						guestCount: 40,
+						items: [{ label: 'Chopped peanuts', group: 'Toppings', key: null }],
+						lineNotes: quoted.servicePlan?.lineNotes ?? []
 					}
 				})
 			);
@@ -177,5 +184,6 @@ function bookedFrom(request) {
 	request.financial.stage = 'INVOICE';
 	request.inquiry.lifecycle.stage = 'BOOKED';
 	request.acceptedServicePlan = request.servicePlan ?? undefined;
+	recordInitialInvoice(request);
 	return request;
 }

@@ -63,7 +63,7 @@ for (const native of [false, true]) {
 			page,
 			context
 		}, testInfo) => {
-			await open(page, context, 'quoted');
+			await open(page, context, 'quote-service-revision');
 			const before = (await session(context)).requests[mayaId].proposal.id;
 			await expect(page.getByTestId('revise-quote')).toHaveText('Revise quote');
 			await expect(page.getByTestId('build-quote')).toHaveCount(0);
@@ -84,6 +84,7 @@ for (const native of [false, true]) {
 			await expect(page.getByLabel('Deposit amount (USD)')).toHaveValue('300.00');
 			await addCharge(page, native, 'Extra hour', '50.00');
 			await review(page, REVISE);
+			await expect(page.getByTestId('quote-preview')).toContainText('Quote v4');
 			await expect(compare(page, 'compare-current-total')).toContainText('$415');
 			await expect(compare(page, 'quote-total')).toContainText('$465');
 			await expect(compare(page, 'compare-difference')).toContainText('+$50');
@@ -98,23 +99,30 @@ for (const native of [false, true]) {
 			await button(page, REVISE).click();
 			await expect(page).toHaveURL(route);
 			await expect(headline(page)).toContainText('Quote issued');
-			await expect(page.getByTestId('financial-version')).toContainText('Quote v3');
+			await expect(page.getByTestId('financial-version')).toContainText('Quote v4');
 			await expect(page.getByTestId('financial-document')).toContainText('Extra hour');
 			const state = (await session(context)).requests[mayaId];
 			expect(state.proposal.id).not.toBe(before);
-			expect(state.proposalHistory.map((p: { id: string }) => p.id)).toEqual([
+			expect(state.proposalHistory.slice(-2).map((p: { id: string }) => p.id)).toEqual([
 				before,
 				state.proposal.id
 			]);
 			expect(
 				(await session(context)).revisionAttempts.map((a: { operation: string }) => a.operation)
 			).toEqual(['quote-revision-preview', 'proposals/quote-revisions']);
+			expect(state.proposal.quoteRevision).toBe(4);
+			expect(state.financial.version).toBe(3);
+			await page.getByTestId('history-open').click();
+			await expect(
+				page.getByTestId('history-versions').getByRole('listitem').first()
+			).toContainText('Quote financial snapshot v3');
 			// Payment uses the newest proposal; a stale id could never be recorded.
 			await page.getByTestId('open-payment').click();
 			await page.getByRole('button', { name: 'Record $300 deposit' }).click();
 			await expect(headline(page)).toContainText('On the calendar');
 			const attempt = (await session(context)).paymentAttempts[0].body;
 			expect(attempt.expectedProposalId).toBe(state.proposal.id);
+			expect(attempt.documentVersion).toBe(3);
 			expect(attempt.expectedProposalId).not.toBe(before);
 			// Booking is the one transition revising a quote can never make.
 			await expect(page.getByTestId('revise-quote')).toHaveCount(0);
@@ -137,7 +145,7 @@ for (const native of [false, true]) {
 			await button(page, REVISE).click();
 			await expect(page).toHaveURL(route);
 			// No new financial version was invented; the deposit to hold the date changed.
-			await expect(page.getByTestId('financial-version')).toContainText('Quote v2');
+			await expect(page.getByTestId('financial-version')).toContainText('Quote v3');
 			await expect(page.getByTestId('deposit-summary')).toContainText('$145.25');
 			const state = (await session(context)).requests[mayaId];
 			expect(state.financial.version).toBe(2);
@@ -149,27 +157,45 @@ for (const native of [false, true]) {
 			page,
 			context
 		}) => {
-			await open(page, context, 'quoted', '?quote-revision');
-			await page.getByLabel('Approved service description').fill('Chocolate service, larger party');
-			await page.getByLabel('Guests', { exact: true }).fill('60');
+			await open(page, context, 'quote-with-almonds', '?quote-revision');
+			if (native) {
+				await page.getByTestId('selection-row').locator('summary').click();
+				const topping = page.getByLabel('Selection 1 label', { exact: true });
+				await expect(topping).toHaveValue('Sliced almonds');
+				await topping.fill('Chopped peanuts');
+			} else {
+				await page.getByRole('button', { name: 'Add selection to Toppings' }).click();
+				const topping = page.getByLabel('New selection in Toppings');
+				await topping.fill('Chopped peanuts');
+				await topping.press('Enter');
+				await page.getByRole('button', { name: 'Remove Sliced almonds' }).click();
+			}
 			await review(page, REVISE);
 			await expect(page.getByTestId('no-financial-change')).toBeVisible();
 			await expect(page.getByTestId('preview-service-plan')).toContainText('will change');
-			await expect(page.getByTestId('preview-service-plan')).toContainText('Chocolate service');
+			await expect(page.getByTestId('quote-preview')).toContainText('Quote v3');
+			await expect(page.getByTestId('preview-service-plan')).toContainText('Chopped peanuts');
 			// No dummy $0 line or price adjustment was made to allow it.
 			await button(page, REVISE).click();
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('financial-version')).toContainText('Quote v2');
-			await expect(page.getByTestId('service-plan')).toContainText(
-				'Chocolate service, larger party'
-			);
-			await expect(page.getByTestId('service-plan')).toContainText('60 guests');
+			await expect(page.getByTestId('financial-version')).toContainText('Quote v3');
+			await expect(page.getByTestId('request-summary')).toContainText('Quote v3 issued');
+			const publications = page.getByTestId('history-publications').getByRole('listitem');
+			await expect(publications).toHaveCount(2);
+			await expect(publications.first()).toContainText(/Current Quote v3/);
+			await expect(publications.last()).toContainText(/Superseded Quote v2/);
+			for (const publication of await publications.all())
+				await expect(publication).toContainText('Financial snapshot v2');
 			const state = (await session(context)).requests[mayaId];
 			expect(state.financial.lines).toHaveLength(3);
 			expect(state.servicePlanHistory.map((p: { revision: number }) => p.revision)).toEqual([1, 2]);
 			const sent = (await session(context)).revisionAttempts.at(-1).body;
 			expect(sent.servicePlanAction).toBe('REPLACE');
-			expect(sent.servicePlan.description).toBe('Chocolate service, larger party');
+			expect(sent.servicePlan.items).toEqual([
+				{ label: 'Chopped peanuts', group: 'Toppings', key: null }
+			]);
+			expect(sent.expectedDocumentVersion).toBe(2);
+			expect(state.financial.total).toBe('415.00');
 		});
 
 		test('an untouched or reverted draft is a friendly no-op, never a publication', async ({
@@ -310,17 +336,18 @@ for (const native of [false, true]) {
 			await open(page, context, 'booked', '?invoice-revision');
 			await page.getByLabel('Approved service description').fill('Chocolate topping, not vanilla');
 			await review(page, AMEND);
+			await expect(page.getByTestId('quote-preview')).toContainText('Invoice v4');
 			await expect(page.getByTestId('no-financial-change')).toContainText(
 				'service plan is amended'
 			);
 			await expect(compare(page, 'compare-difference')).toContainText('No change');
 			await button(page, AMEND).click();
 			await expect(page).toHaveURL(route);
-			await expect(page.getByTestId('financial-version')).toContainText('Invoice v3');
+			await expect(page.getByTestId('financial-version')).toContainText('Invoice v4');
 			const plan = page.getByTestId('service-plan');
 			await expect(plan).toContainText('Chocolate topping, not vanilla');
 			await expect(page.getByTestId('service-plan-provenance')).toContainText(
-				'Approved with Invoice v3'
+				'Approved with Invoice v4'
 			);
 			await expect(page.getByTestId('service-plan-provenance')).toContainText('plan revision 2');
 			// The plan that booked the event is still there to inspect, and cannot be edited from it.
@@ -328,8 +355,7 @@ for (const native of [false, true]) {
 			await expect(page.getByTestId('accepted-plan')).toContainText(
 				'Churro catering for an evening'
 			);
-			// Approvals live with the plan (Activity never shows a service-only change); without a
-			// timeline, the publications stay listed in Revision history.
+			// Without Activity, the business revisions stay listed in Revision history.
 			const card = page.getByTestId('financial-document');
 			await card.getByText('Plan approvals (2)', { exact: true }).click();
 			await expect(card.getByTestId('history-approvals').getByRole('listitem')).toHaveCount(2);
@@ -340,6 +366,12 @@ for (const native of [false, true]) {
 			await expect(history.getByTestId('history-publications').getByRole('listitem')).toHaveCount(
 				1
 			);
+			const invoices = history.getByTestId('history-invoices').getByRole('listitem');
+			await expect(invoices).toHaveCount(2);
+			await expect(invoices.nth(0)).toContainText('Invoice v4');
+			await expect(invoices.nth(1)).toContainText('Invoice v3');
+			for (const invoice of await invoices.all())
+				await expect(invoice).toContainText('Financial snapshot v3');
 			await expect(history).not.toContainText('Republish');
 			await expect(card).not.toContainText('Republish');
 		});
@@ -572,7 +604,7 @@ test.describe('what the workspace shows', () => {
 		await history.getByTestId('history-open').click();
 		await expect(page).toHaveURL(`${route}?history`);
 		const versions = history.getByTestId('history-versions').getByRole('listitem');
-		await expect(versions.first()).toContainText('Invoice v4');
+		await expect(versions.first()).toContainText('Invoice financial snapshot v4');
 		await expect(versions.first()).toContainText('Current');
 		await expect(history.getByTestId('history-deposits')).toContainText('Deposit terms revision 1');
 		// Inspecting a historical version offers no editing or republish control.

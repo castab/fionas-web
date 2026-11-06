@@ -722,6 +722,7 @@
 						forbidden={data.conversation?.forbidden}
 						userId={data.user.id}
 						{publications}
+						servicePlanHistory={request.servicePlanHistory}
 						permissions={data.user.permissions}
 						{route}
 						endpoint={workspacePath + '/conversation'}

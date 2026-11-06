@@ -13,7 +13,7 @@
 				const amount = formatMoney(allocation.amount, allocation.currency);
 				const whole = amount === formatMoney(payment.amount, payment.currency);
 				const document = deposit(allocation.documentVersion) ? 'Quote' : 'Invoice';
-				return ` · ${whole ? '' : `${amount} `}applied to ${document} v${allocation.documentVersion}`;
+				return ` · ${whole ? '' : `${amount} `}applied to ${document} financial snapshot v${allocation.documentVersion}`;
 			})
 			.join('');
 	}

@@ -3,24 +3,28 @@
 	import { actorLabel, timelineTimeLabel } from '$lib/conversation.js';
 	import { receivedTimeLabel, paymentMethodLabel } from '$lib/payments.js';
 	import { formatMoney } from '$lib/presentation.js';
+	import CategorizedSelections from '../categorized-selections.svelte';
+	import type { ServicePlanResponse } from '$lib/quote-contract.js';
 	import type { PublicationEntry } from '$lib/revision-history.js';
 	import { cn, focusRing } from '@fionas/ui';
 	let {
 		item,
 		userId,
-		publication
+		publication,
+		plan
 	}: {
 		item: Exclude<TimelineItem, { kind: 'MESSAGE' }>;
 		userId: string;
 		/** The current request's record of this Quote publication: its status and what changed. */
 		publication?: PublicationEntry;
+		plan?: ServicePlanResponse;
 	} = $props();
 	const label = $derived.by(() => {
 		switch (item.kind) {
 			case 'QUOTE_PUBLISHED':
-				return `Quote v${item.financial.version} published`;
+				return `Quote v${item.proposal.quoteRevision} published`;
 			case 'INVOICE_AMENDED':
-				return `Invoice v${item.financial.version} amended`;
+				return `Invoice v${item.amendment.invoiceRevision} amended`;
 			case 'PAYMENT_RECORDED':
 				return item.classification === 'DEPOSIT'
 					? 'Deposit received'
@@ -121,6 +125,24 @@
 		</summary>
 		<div class="flex flex-col gap-3 pt-1 pr-[18px] pb-4 pl-9 text-[13px] wrap-anywhere">
 			{#if 'financial' in item}
+				{@const planRevision =
+					item.kind === 'QUOTE_PUBLISHED'
+						? item.proposal.servicePlanRevision
+						: item.amendment.servicePlanRevision}
+				<p class="m-0 text-xs text-(--text-muted)">Financial snapshot v{item.financial.version}</p>
+				{#if planRevision != null}
+					<div class="flex flex-col gap-1">
+						<p class={micro}>Service plan revision {planRevision}</p>
+						{#if plan?.cleared}
+							<p class="m-0">Service plan removed</p>
+						{:else if plan}
+							<p class="m-0 whitespace-pre-wrap">{plan.description}</p>
+							<CategorizedSelections items={plan.items} headingLevel={4} inset />
+						{:else}
+							<p class="m-0 text-(--text-muted)">Service plan details unavailable.</p>
+						{/if}
+					</div>
+				{/if}
 				<dl class="m-0 flex flex-col">
 					{#each item.financial.lines as line (line.id)}<div
 							class="flex items-start justify-between gap-3 border-b border-(--border-soft) py-1.5"
@@ -190,7 +212,7 @@
 						>
 							{formatMoney(allocation.amount, allocation.currency)} applied to {allocation.canonical
 								? (allocation.documentStage ?? 'document')
-								: 'related document'} v{allocation.documentVersion}<span
+								: 'related document'} financial snapshot v{allocation.documentVersion}<span
 								class="block text-xs text-(--text-muted)"
 								>{allocation.documentId} · {receivedTimeLabel(allocation.allocatedAt)} Pacific</span
 							>
@@ -210,7 +232,7 @@
 					{#each item.unwound as allocation (allocation.refundAllocationId)}<li
 							class="border-b border-(--border-soft) py-1.5"
 						>
-							{formatMoney(allocation.amount, allocation.currency)} unwound from document v{allocation.documentVersion}<span
+							{formatMoney(allocation.amount, allocation.currency)} unwound from financial snapshot v{allocation.documentVersion}<span
 								class="block text-xs text-(--text-muted)"
 								>{allocation.documentId} · Allocation {allocation.paymentAllocationId}</span
 							>

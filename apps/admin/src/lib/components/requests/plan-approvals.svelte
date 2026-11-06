@@ -9,8 +9,7 @@
 	const pill = `rounded-full border border-olive-300 px-2 py-0.5 whitespace-nowrap ${micro}`;
 </script>
 
-<!-- Service approvals advance on their own revision counter, and a service-only change never
-     appears in Activity, so this list is the one place they are all shown. Newest first. -->
+<!-- Service approvals advance on their own revision counter. Newest first. -->
 <ol class="m-0 flex list-none flex-col gap-2 p-0" data-testid="history-approvals">
 	{#each approvals as entry (entry.plan.revision)}
 		<li class="flex flex-col gap-1 rounded-input bg-cream-200 px-3 py-2.5 text-[13px]">
@@ -23,8 +22,9 @@
 			<p class="m-0 text-[11.5px] text-(--text-muted)">
 				<time datetime={entry.plan.approvedAt}>{receivedTimeLabel(entry.plan.approvedAt)}</time>
 				· {who(entry.plan.approvedBy)}
-				· Reviewed v{entry.plan.reviewedDocumentVersion}, recorded on {entry.source} v{entry.plan
-					.documentVersion}
+				· Reviewed financial snapshot v{entry.plan.reviewedDocumentVersion}
+				· Recorded on financial snapshot v{entry.plan.documentVersion}
+				{#if entry.publicationLabel}· {entry.publicationLabel}{/if}
 			</p>
 			{#if !entry.plan.cleared}
 				<details class="text-[12.5px]">

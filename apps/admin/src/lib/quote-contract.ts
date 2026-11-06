@@ -78,6 +78,7 @@ export type InquiryQuotePreviewResponse = {
 	reviewedDocumentVersion: number;
 	estimateTotal: string;
 	financialChange: boolean;
+	/** Resulting ledger snapshot version. */
 	quoteVersion: number;
 	lines: QuotePreviewLine[];
 	subtotal: string;
@@ -101,6 +102,8 @@ export type QuoteRevisionPreviewResponse = {
 	/** `quote.estimateTotal` is the reviewed *current* Quote total on this endpoint. */
 	quote: InquiryQuotePreviewResponse;
 	currentProposalId: string;
+	currentQuoteRevision: number;
+	resultingQuoteRevision: number;
 	reviewedDepositRequirementRevision: number;
 	currentServicePlanRevision?: number | null;
 	resultingServicePlanRevision?: number | null;
@@ -116,6 +119,8 @@ export type InvoiceRevisionPreviewResponse = {
 	documentId: string;
 	reviewedDocumentVersion: number;
 	resultingDocumentVersion: number;
+	currentInvoiceRevision: number;
+	resultingInvoiceRevision: number;
 	currentTotal: string;
 	total: string;
 	subtotal: string;

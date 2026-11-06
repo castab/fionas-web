@@ -151,10 +151,21 @@ for renewed human review and never resubmits a new token. `422 NO_MATERIAL_CHANG
 ("Nothing has changed…") and is not a publication. An uncertain publication response blocks every mutation
 until a reload. Nothing is retried, and no approver is ever sent: the backend derives it from the session.
 
+**Staff version labels.** A published Quote uses `proposal.quoteRevision`. The current Invoice uses
+`currentInvoiceRevision` or the latest validated entry in `invoiceAmendmentHistory` if Commerce omits
+the redundant current field. These revisions can advance without new pricing. The Serving plan card,
+Right now's Quote summary, payment panel and Activity use business revisions when they name the
+customer commitment. Payment allocations, Financial versions, and the service approval's reviewed and
+recorded snapshot references retain their ledger versions. The backend still receives the ledger
+expected version, proposal ID and other existing guards on mutations.
+
 **Preview content.** A Quote revision shows the **Current total** (on the revision endpoint `estimateTotal` is
 the current Quote total), the proposed total, the difference, the current and proposed deposit, whether the
 service commitment changes and whether a new financial version is created at all. A service-only or
-deposit-only revision publishes a new proposal while `quote.quoteVersion` stays. An Invoice amendment shows the
+deposit-only revision publishes a new proposal while `quote.quoteVersion` stays. Quote revision and
+Invoice amendment previews display Commerce's `resultingQuoteRevision` and `resultingInvoiceRevision`,
+with the supplied current business revisions in the comparisons. The initial Quote preview has no
+business revision field, so it shows “Quote” until publication. An Invoice amendment shows the
 current and revised invoice, the change, what is already paid, the remaining balance and the settlement
 (`UNDERPAID`, `SETTLED`, `OVERPAID`), all from the backend. Only the presentational difference is computed
 locally (`decimalDifference`, exact `BigInt`, no floating point). An overpaid invoice is legitimate: it is
@@ -164,20 +175,19 @@ marks the event served or closed.
 **Service approvals.** `servicePlan` is the approval bound to the latest proposal; `effectiveServicePlan` is
 the latest approval, which governs fulfillment; `acceptedServicePlan` is the proposal's approval once
 booked. They can differ after an Invoice amendment, and a retained approval can reference an older financial
-snapshot, which is valid. The Serving plan card shows the effective plan, labelled with the document it was
-approved against ("Approved with Quote v2" or "Invoice v3", plus the plan's own revision), a deliberate
+snapshot, which is valid. The Serving plan card shows the effective plan, labelled with the first publication that
+carried it (“Approved with Quote v2” or “Approved with Invoice v4”, plus the plan's own revision), a deliberate
 "Service plan removed" state for a clearing, and the plan that booked the event separately when an
 amendment replaced it. `service-plan.ts` validates each approval (positive revision, provenance, document
 references, content unless `cleared`) and the joins between `servicePlanHistory`, `proposalHistory` and the
 three plans. Missing histories fail the request closed rather than reading as empty.
 
-**Revision history.** `proposalHistory` (Quote publications, with what changed against the previous one,
-and whether it is current or the accepted Quote) and `servicePlanHistory` (approvals, including clearings,
-each plan viewable but never editable) stay separate lists because financial versions, deposit revisions and
-service revisions do not advance together. Activity's quote bands carry each publication's status and
-changes (joined by proposal ID, display only); the publications list itself renders only when Activity
-could not load. Approvals render in the Serving plan's **Plan approvals** disclosure (`plan-approvals.svelte`).
-**Financial versions** (`?history`) opens the Revision history card in the main column and additionally reads
+**Revision history.** `proposalHistory` preserves each Quote publication and `invoiceAmendmentHistory`
+preserves initial Invoice issuance and each amendment, even when they share a financial snapshot.
+Activity's Quote bands carry status and changes joined by proposal ID. The fallback history lists Quote
+publications when Activity is unavailable. Invoice revisions are available in the fallback and under
+`?history`. Approvals render in the Serving plan's **Plan approvals** disclosure
+(`plan-approvals.svelte`). **Financial versions** opens the Revision history card and additionally reads
 `GET /financial-documents/{id}/history` and `…/deposit-requirement/history`; a failed or malformed read shows
 "unavailable" for that section only, and the rest of the booking stays usable.
 
@@ -443,7 +453,7 @@ for what rendering needs, because the inquiry contract sets no length or count l
 
 **Original intent and the approved commitment are independent.** "What they asked for" renders
 `inquiry.requestedService.items` exactly as recorded and stays visible at every stage and for every
-financial document version (Estimate, Quote, Invoice, declined), even where the approved plan or
+Estimate snapshot or current Quote or Invoice business revision, even where the approved plan or
 priced lines no longer match it; once a plan exists the card says so and starts folded. The serving plan renders only the
 backend's approved `servicePlan.items`, including an accepted Quote's plan after promotion to
 Invoice; it is never rebuilt from Invoice lines. Neither reads a catalog or the public menu.

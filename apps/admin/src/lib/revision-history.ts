@@ -1,6 +1,6 @@
 import { isDepositTerms } from './deposit.js';
 import { isCurrentStaffRequest } from './request-workspace.js';
-import { approvalSource } from './service-plan.js';
+import { approvalPublicationLabel } from './service-plan.js';
 import type {
 	CurrentStaffRequest,
 	DepositRequirementHistoryResponse,
@@ -10,10 +10,8 @@ import type {
 import type { ServicePlanResponse } from './quote-contract.js';
 
 /*
- * Revision history composes three independent facts: Quote/deposit publications (`proposalHistory`),
- * service approvals (`servicePlanHistory`, its own revision numbers) and, on request, the immutable
- * financial snapshots and deposit revisions. They are never merged into a single counter: a
- * service-only change advances only the approval sequence, a financial change only the document's.
+ * Quote and Invoice business revisions, service approvals, financial snapshots and deposit terms
+ * each have their own revision sequence. Several publications may refer to the same snapshot.
  */
 
 const money = (v: unknown) => typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v);
@@ -137,7 +135,7 @@ export function publicationEntries(data: CurrentStaffRequest): PublicationEntry[
 export type ApprovalEntry = {
 	plan: ServicePlanResponse;
 	label: string;
-	source: 'Quote' | 'Invoice';
+	publicationLabel: string | null;
 	current: boolean;
 	accepted: boolean;
 };
@@ -151,7 +149,7 @@ export function approvalEntries(data: CurrentStaffRequest): ApprovalEntry[] {
 				: plan.revision === 1
 					? 'Service plan approved'
 					: 'Service plan updated',
-			source: approvalSource(plan, data),
+			publicationLabel: approvalPublicationLabel(plan, data),
 			current: plan.revision === data.effectiveServicePlan?.revision,
 			accepted: plan.revision === data.acceptedServicePlan?.revision
 		}))

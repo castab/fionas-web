@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { mayaId, requestFixtures } from './request-fixture.mjs';
+import { mayaId, recordInitialInvoice, requestFixtures } from './request-fixture.mjs';
 import {
 	issueButton,
 	openBuilder,
@@ -454,6 +454,7 @@ test('booked Invoice shows total, paid and balance in place of the deposit tile'
 	data.inquiry.lifecycle.stage = 'BOOKED';
 	data.financial.stage = 'INVOICE';
 	data.financial.version = 3;
+	recordInitialInvoice(data);
 	if (data.depositRequirement.state === 'ACTIVE') data.depositRequirement.satisfied = false;
 	await session(context, { request: data });
 	await page.goto(`/requests/${data.inquiry.id}`);

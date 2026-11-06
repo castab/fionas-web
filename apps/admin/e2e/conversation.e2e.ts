@@ -370,8 +370,12 @@ test('conversation milestone bands expose historical allocations and internal pr
 		await card.getByText(label, { exact: true }).first().click();
 	}
 	await expect(card.getByText('Internal reason:', { exact: true })).toBeVisible();
-	await expect(card.getByText('$10 unwound from document v3', { exact: false })).toBeVisible();
-	await expect(card.getByText('$83 applied to QUOTE v2', { exact: false })).toBeVisible();
+	await expect(
+		card.getByText('$10 unwound from financial snapshot v3', { exact: false })
+	).toBeVisible();
+	await expect(
+		card.getByText('$83 applied to QUOTE financial snapshot v2', { exact: false })
+	).toBeVisible();
 	await expect(card.getByText('Historical total', { exact: true })).toHaveCount(2);
 });
 
