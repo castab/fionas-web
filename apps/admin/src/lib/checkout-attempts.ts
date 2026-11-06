@@ -117,16 +117,49 @@ function classifyOpen(
 	return { status: comparable ? 'open_current' : 'open_unverified', reasons: [] };
 }
 
+/**
+ * The state/outcome pairs commerce produces (`CustomerPayments.reconcile` in fionas-commerce): an
+ * outcome other than PENDING is set only together with SUCCEEDED and a ledger payment; every
+ * other state stays PENDING. SUCCEEDED + PENDING is not produced today but is accepted as "paid at
+ * Stripe, not applied yet", the conservative reading. Anything else is syntactically valid but
+ * semantically unsupported, and fails closed as unconfirmed.
+ */
+const SUPPORTED_OUTCOMES: Readonly<Record<string, readonly string[]>> = {
+	CREATING: ['PENDING'],
+	OPEN: ['PENDING'],
+	PROCESSING: ['PENDING'],
+	EXPIRED: ['PENDING'],
+	FAILED: ['PENDING'],
+	SUCCEEDED: ['PENDING', 'APPLIED', 'RECONCILIATION_REQUIRED']
+};
+
+/** Whether commerce's contract allows this state with this outcome. */
+export function supportedAttemptState(state: string, outcome: string): boolean {
+	return Object.hasOwn(SUPPORTED_OUTCOMES, state) && SUPPORTED_OUTCOMES[state].includes(outcome);
+}
+
+/**
+ * A listed attempt is coherent when its pair is supported and its ledger payment matches the
+ * outcome: APPLIED and RECONCILIATION_REQUIRED always carry one, PENDING never does.
+ */
+export function coherentAttempt(attempt: PaymentAttempt): boolean {
+	return (
+		supportedAttemptState(attempt.state, attempt.outcome) &&
+		(attempt.outcome === 'PENDING') === !attempt.ledgerPaymentId
+	);
+}
+
 /** One attempt's presentation status. Attempts are provider diagnostics, never ledger facts. */
 export function classifyAttempt(
 	attempt: PaymentAttempt,
 	terms: CurrentPaymentTerms | null
 ): AttemptClassification {
 	const none = (status: AttemptStatus): AttemptClassification => ({ status, reasons: [] });
+	// An incoherent pair is never read as paid, applied or released.
+	if (!coherentAttempt(attempt)) return none('unrecognized');
 	// Money at Stripe or in the ledger outranks every checkout state.
 	if (attempt.outcome === 'RECONCILIATION_REQUIRED') return none('reconciliation_required');
 	if (attempt.outcome === 'APPLIED') return none('applied');
-	if (attempt.outcome !== 'PENDING') return none('unrecognized');
 	switch (attempt.state) {
 		case 'OPEN':
 			return classifyOpen(attempt, terms);
@@ -148,12 +181,13 @@ export function classifyAttempt(
 /**
  * Attempts that need a staff decision in the card's main area, newest first: superseded open
  * checkouts (Release previous checkout), payments being confirmed, and unconfirmed checkouts
- * (Check payment status). A current open checkout, settled and released attempts stay in the
- * diagnostics list; RECONCILIATION_REQUIRED keeps its own card-level warning.
+ * (Check payment status), plus incoherent attempts (`uncertain`: reload or investigate, no
+ * action). A current open checkout, settled and released attempts stay in the diagnostics list;
+ * RECONCILIATION_REQUIRED keeps its own card-level warning.
  */
 export type AttemptAttention = {
 	attempt: PaymentAttempt;
-	kind: 'release' | 'confirming' | 'unconfirmed';
+	kind: 'release' | 'confirming' | 'unconfirmed' | 'uncertain';
 	status: AttemptStatus;
 	reasons: SupersededReason[];
 };
@@ -172,7 +206,9 @@ export function attemptsNeedingAttention(
 					? 'confirming'
 					: status === 'creating' || status === 'open_unverified'
 						? 'unconfirmed'
-						: null;
+						: status === 'unrecognized'
+							? 'uncertain'
+							: null;
 		if (kind) result.push({ attempt, kind, status, reasons });
 	}
 	return result.sort((a, b) => Date.parse(b.attempt.createdAt) - Date.parse(a.attempt.createdAt));
@@ -222,6 +258,8 @@ export function reconcileFeedback(result: { state: string; outcome: string }): {
 	settlement: boolean;
 	unconfirmed?: true;
 } {
+	// Pair first: OPEN + APPLIED is never a payment success, EXPIRED + APPLIED never a release.
+	if (!supportedAttemptState(result.state, result.outcome)) return unconfirmedFeedback;
 	if (result.outcome === 'RECONCILIATION_REQUIRED')
 		return {
 			text: 'Stripe received this payment, but it needs staff reconciliation before it counts toward the booking. Review unapplied payments; don’t collect it again.',

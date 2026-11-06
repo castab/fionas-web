@@ -80,6 +80,7 @@ beforeEach(() => {
 			})
 	};
 	vi.spyOn(console, 'error').mockImplementation(() => undefined);
+	vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
 function actionEvent(entries: [string, string][], permissions = permitted) {
@@ -352,6 +353,22 @@ describe('customer payments action', () => {
 		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
 			Response.json({ attemptId: attempt.id, state: 'PAUSED', outcome: 'PENDING' });
 		expect(await submit()).toMatchObject({ reviewRequired: true });
+		// Well-formed but semantically unsupported pairs are never a payment success or release.
+		for (const [state, outcome] of [
+			['OPEN', 'APPLIED'],
+			['EXPIRED', 'APPLIED'],
+			['PROCESSING', 'RECONCILIATION_REQUIRED']
+		]) {
+			routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+				Response.json({ attemptId: attempt.id, state, outcome });
+			const answer = await submit();
+			expect(answer).toMatchObject({ reviewRequired: true, settlement: true });
+			expect(answer.reconciled).toBeUndefined();
+			expect(answer.message).toBeUndefined();
+			expect(answer.error).toBe(
+				"We couldn't confirm what Stripe did. Don't assume the checkout was released or paid: reload to see the current status before another action."
+			);
+		}
 		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
 			Response.json({ code: 'stripe_unavailable', message: 'PRIVATE' }, { status: 502 });
 		const failed = await submit();
@@ -364,9 +381,43 @@ describe('customer payments action', () => {
 				{ status: 409 }
 			);
 		const conflict = await submit();
-		expect(conflict).toMatchObject({ reviewRequired: false });
-		expect(conflict.error).toContain('nothing was released or settled');
-		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(4);
+		// A conflict proves only that no confirmed outcome came back: reload before anything else.
+		expect(conflict).toMatchObject({ reviewRequired: true });
+		expect(conflict.error).toBe(
+			"We couldn't reconcile this checkout, and no release was confirmed. Reload to check its latest status before doing anything else with it."
+		);
+		expect(conflict.error).not.toMatch(/nothing was|no payment|settled|cancel/i);
+		expect(JSON.stringify(conflict)).not.toMatch(/PRIVATE|CHECKOUT_CREATION/);
+		// Its static code is kept for operators in the server log only.
+		expect(console.warn).toHaveBeenCalledWith(
+			expect.stringContaining('reconcile 409 CHECKOUT_CREATION_UNKNOWN_REQUIRES_RECONCILIATION')
+		);
+		// One POST per submission; nothing was retried.
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(7);
+	});
+
+	it('keeps payment-link conflicts definite (no reload lock)', async () => {
+		for (const intent of ['rotate', 'revoke'] as const) {
+			routes[`POST ${base}/payment-access/${intent}`] = () =>
+				Response.json({ code: 'illegal_transition', message: 'PRIVATE' }, { status: 409 });
+			const refused = data(
+				await customerPaymentsAction(
+					actionEvent([
+						['intent', intent],
+						['confirm', intent]
+					])
+				)
+			);
+			expect(refused.reviewRequired).toBe(false);
+		}
+		routes[`POST ${base}/payment-access`] = () =>
+			Response.json({ code: 'illegal_transition', message: 'PRIVATE' }, { status: 409 });
+		const issue = data(await customerPaymentsAction(actionEvent([['intent', 'issue']])));
+		expect(issue).toMatchObject({
+			reviewRequired: false,
+			error:
+				'Payment links can be created or rotated only while a request is quoted, booked or served.'
+		});
 	});
 
 	it('maps CLOSED issuance refusals and ambiguous failures to safe copy', async () => {

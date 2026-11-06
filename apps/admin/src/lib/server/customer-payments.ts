@@ -182,9 +182,18 @@ export async function customerPaymentsAction({
 				: await managePaymentAccess(config, inquiryId, intent, cookie);
 	if (!result.ok) {
 		if (result.error.status === 401) redirect(303, '/login');
+		// A reconcile conflict proves only that no confirmed outcome came back: Stripe may still have
+		// changed the session or captured money. It needs an authoritative reload, like a 5xx.
+		const conflict = intent === 'reconcile' && result.error.status === 409;
 		const definite =
-			[400, 403, 404, 409, 422].includes(result.error.status) ||
-			result.error.code === 'stripe_disabled';
+			!conflict &&
+			([400, 403, 404, 409, 422].includes(result.error.status) ||
+				result.error.code === 'stripe_disabled');
+		// The static code stays server-side for operators; staff see only fixed copy.
+		if (intent === 'reconcile')
+			console.warn(
+				`[customer-payments] ${inquiryId} reconcile ${result.error.status} ${result.error.code}`
+			);
 		// Never retried. A 5xx or lost response after a mutation may have committed.
 		return failure(result.error.status, result.error.code, mutation && !definite);
 	}

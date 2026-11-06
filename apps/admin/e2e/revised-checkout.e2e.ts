@@ -61,9 +61,26 @@ async function setup(
 	});
 	await conversation(context, { reset: true, ...(live && { updates: 'live' }) });
 	await stub(context, '/__test/financial-email', { mode: 'accepted' });
-	await payments(context, { inquiryId: mayaId, access: {}, attempts, reconcile: null, mode: null });
+	await payments(context, {
+		inquiryId: mayaId,
+		access: {},
+		attempts,
+		reconcile: null,
+		mode: null,
+		attemptsUnavailable: false
+	});
 	return { request, attempts };
 }
+/** What commerce now lists for the attempts: the same ids, new provider state. */
+const listAttempts = (context: BrowserContext, attempts: unknown[]) =>
+	payments(context, { inquiryId: mayaId, attempts });
+/** One live timeline notification (SSE), as commerce sends after a change. */
+const notify = (context: BrowserContext) => conversation(context, { notify: true });
+const attemptReads = async (context: BrowserContext) =>
+	(await payments(context)).calls.filter(
+		(c: { method: string; path: string }) =>
+			c.method === 'GET' && c.path.endsWith('/payment-attempts')
+	).length;
 const card = (page: Page) => page.getByTestId('customer-payments');
 const previous = (page: Page) => card(page).getByTestId('previous-checkout');
 const release = (page: Page) => card(page).getByTestId('release-previous-checkout');
@@ -231,16 +248,24 @@ test('a refused or unconfirmed release never claims the checkout was released', 
 	);
 	await expect(previous(page)).toBeVisible();
 
-	// A definite refusal is not ambiguous: explained, never retried, card stays usable.
+	// A conflict proves only that no confirmed outcome came back: reload before anything else.
 	await payments(context, {
 		reconcile: { status: 409, code: 'CHECKOUT_CREATION_UNKNOWN_REQUIRES_RECONCILIATION' }
 	});
 	await release(page).click();
-	await expect(card(page).getByTestId('customer-payments-error')).toContainText(
-		'nothing was released or settled'
+	const conflict = card(page).getByTestId('customer-payments-error');
+	await expect(conflict).toContainText(
+		"We couldn't reconcile this checkout, and no release was confirmed."
 	);
-	await expect(release(page)).toBeEnabled();
+	await expect(conflict).not.toContainText(/nothing was|settled|cancel/i);
+	await expect(conflict.getByRole('link', { name: 'Reload to review' })).toBeVisible();
+	await expect(release(page)).toBeDisabled();
+	await expect(card(page)).not.toContainText('CHECKOUT_CREATION');
+	await expect(card(page)).not.toContainText('it’s released');
+	// Never retried, and the email workflow stays available.
+	await page.waitForTimeout(300);
 	expect(await reconcileCalls(context)).toHaveLength(3);
+	await expect(page.getByTestId('open-financial-email')).toBeEnabled();
 });
 
 test('a release that finds a payment in flight or captured reports that, never a release', async ({
@@ -364,6 +389,155 @@ test('keyboard: Release previous checkout is reachable and announces its result'
 	await page.keyboard.press('Enter');
 	await expect(card(page).getByRole('status')).toContainText('released');
 	expect(await reconcileCalls(context)).toHaveLength(1);
+});
+
+test.describe('live updates keep the checkout notices accurate with diagnostics closed', () => {
+	test('an expiry removes the Release notice; the email preview and reply draft stay', async ({
+		page,
+		context
+	}) => {
+		const { attempts } = await setup(page, context, { live: true });
+		await page.goto(route);
+		await expect(page.getByTestId('live-status')).toHaveText('Live');
+		await preview(page);
+		await expect(page.getByTestId('live-status')).toHaveText('Live');
+		await page.getByLabel('Message', { exact: true }).fill('Unsent reply draft');
+		await expect(release(page)).toBeVisible();
+		await expect(card(page).getByTestId('payment-attempts')).not.toHaveAttribute('open', '');
+
+		// Stripe expired it on its own (or another staff member released it).
+		await listAttempts(context, [{ ...attempts[0], state: 'EXPIRED' }]);
+		await notify(context);
+		await expect(previous(page)).toHaveCount(0);
+		await expect(card(page).getByTestId('payment-attempts')).not.toHaveAttribute('open', '');
+		// A refresh reports nothing on its own: only a deliberate check words an outcome.
+		await expect(card(page).getByTestId('customer-payments-status')).toHaveText('');
+		await expect(page.getByRole('button', { name: 'Send quote', exact: true })).toBeEnabled();
+		await expect(panel(page)).not.toContainText('changed since this preview');
+		await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Unsent reply draft');
+		expect(await reconcileCalls(context)).toHaveLength(0);
+	});
+
+	test('OPEN → PROCESSING → SUCCEEDED/APPLIED replaces the notice, never claiming a release', async ({
+		page,
+		context
+	}) => {
+		const { attempts } = await setup(page, context, { live: true });
+		await page.goto(route);
+		await expect(page.getByTestId('live-status')).toHaveText('Live');
+		await expect(release(page)).toBeVisible();
+
+		await listAttempts(context, [{ ...attempts[0], state: 'PROCESSING' }]);
+		await notify(context);
+		const confirming = card(page).getByTestId('checkout-status');
+		await expect(confirming).toHaveAttribute('data-status', 'processing');
+		await expect(confirming).toContainText('A payment is being confirmed');
+		await expect(release(page)).toHaveCount(0);
+
+		await listAttempts(context, [
+			{
+				...attempts[0],
+				state: 'SUCCEEDED',
+				outcome: 'APPLIED',
+				ledgerPaymentId: '40000000-0000-0000-0000-000000000097'
+			}
+		]);
+		await notify(context);
+		await expect(confirming).toHaveCount(0);
+		await expect(previous(page)).toHaveCount(0);
+		await expect(card(page)).not.toContainText(/cancel|released/i);
+		await card(page)
+			.getByText(/Online payment attempts \(1\)/)
+			.click();
+		await expect(card(page).getByTestId('payment-attempt')).toContainText('Paid at Stripe');
+		await expect(card(page).getByTestId('payment-attempt')).toContainText('Applied to the booking');
+	});
+
+	test('rapid notifications settle on the newest state', async ({ page, context }) => {
+		const { attempts } = await setup(page, context, { live: true });
+		await page.goto(route);
+		await expect(page.getByTestId('live-status')).toHaveText('Live');
+		await expect(release(page)).toBeVisible();
+		const before = await attemptReads(context);
+		await listAttempts(context, [{ ...attempts[0], state: 'PROCESSING' }]);
+		await notify(context);
+		await listAttempts(context, [{ ...attempts[0], state: 'EXPIRED' }]);
+		await notify(context);
+		await notify(context);
+		await expect(card(page).getByTestId('checkout-status')).toHaveCount(0);
+		await expect(previous(page)).toHaveCount(0);
+		// Still the newest state once every read has drained.
+		await page.waitForTimeout(500);
+		await expect(card(page).getByTestId('checkout-status')).toHaveCount(0);
+		await expect(previous(page)).toHaveCount(0);
+		// Reads are serialized and coalesced, never one per notification and never a polling loop.
+		const reads = (await attemptReads(context)) - before;
+		expect(reads).toBeGreaterThanOrEqual(1);
+		expect(reads).toBeLessThanOrEqual(4);
+		await page.waitForTimeout(500);
+		expect((await attemptReads(context)) - before).toBe(reads);
+	});
+
+	test('a failed refresh keeps the last known state, unconfirmed, until a read succeeds', async ({
+		page,
+		context
+	}) => {
+		const { attempts } = await setup(page, context, { live: true });
+		await page.goto(route);
+		await expect(page.getByTestId('live-status')).toHaveText('Live');
+		await expect(release(page)).toBeVisible();
+
+		await payments(context, { attemptsUnavailable: true });
+		await listAttempts(context, [{ ...attempts[0], state: 'EXPIRED' }]);
+		await notify(context);
+		const stale = card(page).getByTestId('checkout-status-stale');
+		await expect(stale).toContainText('We couldn’t refresh the checkout status');
+		await expect(stale.getByRole('link', { name: 'Reload to review' })).toBeVisible();
+		// Last known, not confirmed: no conclusive "still open" and no release offer.
+		await expect(previous(page)).toHaveAttribute('data-confirmed', 'false');
+		await expect(previous(page)).toContainText('Previous checkout may still be open');
+		await expect(release(page)).toHaveCount(0);
+		await expect(previous(page).getByTestId('check-payment-status')).toBeVisible();
+		await expect(card(page)).not.toContainText(/released|expired/i);
+
+		await payments(context, { attemptsUnavailable: false });
+		await notify(context);
+		await expect(stale).toHaveCount(0);
+		await expect(previous(page)).toHaveCount(0);
+	});
+
+	test('an unsupported state/outcome pair is investigated, never shown as paid or released', async ({
+		page,
+		context
+	}) => {
+		await setup(page, context, {
+			attempts: [
+				{
+					...quoteV2Checkout(),
+					state: 'OPEN',
+					outcome: 'APPLIED',
+					ledgerPaymentId: '40000000-0000-0000-0000-000000000096'
+				}
+			]
+		});
+		await page.goto(route);
+		const notice = card(page).getByTestId('checkout-status');
+		await expect(notice).toHaveAttribute('data-status', 'unrecognized');
+		await expect(notice).toContainText('Checkout status needs investigation');
+		await expect(notice).toContainText('isn’t shown as paid, applied or released');
+		await expect(notice.getByTestId('reload-checkout-status')).toBeVisible();
+		await expect(notice.getByTestId('check-payment-status')).toHaveCount(0);
+		await expect(release(page)).toHaveCount(0);
+		await expect(card(page).getByTestId('reconciliation-warning')).toHaveCount(0);
+		await card(page)
+			.getByText(/Online payment attempts \(1\)/)
+			.click();
+		const row = card(page).getByTestId('payment-attempt');
+		await expect(row).toContainText('Status unclear');
+		await expect(row).toContainText('Outcome not confirmed');
+		await expect(row).not.toContainText('Applied to the booking');
+		await expect(row.getByTestId('reconcile-attempt')).toHaveCount(0);
+	});
 });
 
 test.describe('without JavaScript', () => {

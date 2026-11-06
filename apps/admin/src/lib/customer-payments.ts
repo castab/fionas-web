@@ -206,9 +206,11 @@ export function attemptPurposeLabel(purpose: string): string {
 
 /** Attempts a staff check could still change: active ones, or paid but not yet applied. */
 export function canReconcileAttempt(attempt: PaymentAttempt): boolean {
+	// Only coherent unresolved pairs (see `coherentAttempt`): an incoherent one is investigated.
 	return (
-		['CREATING', 'OPEN', 'PROCESSING'].includes(attempt.state) ||
-		(attempt.state === 'SUCCEEDED' && attempt.outcome === 'PENDING')
+		attempt.outcome === 'PENDING' &&
+		!attempt.ledgerPaymentId &&
+		['CREATING', 'OPEN', 'PROCESSING', 'SUCCEEDED'].includes(attempt.state)
 	);
 }
 
@@ -236,7 +238,7 @@ export function customerPaymentsErrorMessage(
 			: 'This request has no payment link to change.';
 	if (status === 409)
 		return intent === 'reconcile'
-			? "Stripe couldn't confirm this attempt's status yet, so nothing was released or settled. Check again later, or investigate it in the Stripe Dashboard."
+			? "We couldn't reconcile this checkout, and no release was confirmed. Reload to check its latest status before doing anything else with it."
 			: intent === 'issue' || intent === 'rotate'
 				? 'Payment links can be created or rotated only while a request is quoted, booked or served.'
 				: 'The payment link changed. Reload to see its current status.';

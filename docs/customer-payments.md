@@ -469,6 +469,33 @@ revision, no active deposit, an unknown purpose), `creating`, `processing`, `pai
 (SUCCEEDED, not yet applied), `applied`, `reconciliation_required` (outranks every state),
 `expired`, `failed` and `unrecognized`.
 
+**State/outcome contract.** A response can be well-formed (enum-shaped strings) yet describe a pair
+commerce never produces. `supportedAttemptState` accepts exactly the pairs `CustomerPayments`
+writes: commerce sets `APPLIED` or `RECONCILIATION_REQUIRED` only together with `SUCCEEDED` and a
+ledger payment, and leaves every other state `PENDING`.
+
+| State         | Outcome                   | Reading                                                |
+| ------------- | ------------------------- | ------------------------------------------------------ |
+| `OPEN`        | `PENDING`                 | open (current, superseded or unverified); not released |
+| `CREATING`    | `PENDING`                 | unconfirmed                                            |
+| `PROCESSING`  | `PENDING`                 | a payment is being confirmed                           |
+| `EXPIRED`     | `PENDING`                 | provider-confirmed release                             |
+| `FAILED`      | `PENDING`                 | failed                                                 |
+| `SUCCEEDED`   | `PENDING`                 | paid at Stripe, application not confirmed (\*)         |
+| `SUCCEEDED`   | `APPLIED`                 | applied to the booking                                 |
+| `SUCCEEDED`   | `RECONCILIATION_REQUIRED` | captured; staff reconciliation required                |
+| anything else |                           | `unrecognized`: fails closed                           |
+
+(\*) Commerce doesn't write this pair today; it is accepted as the conservative reading (never a
+success) that the earlier diagnostics already used. A listed attempt must also carry a
+`ledgerPaymentId` exactly when its outcome is `APPLIED` or `RECONCILIATION_REQUIRED`
+(`coherentAttempt`). The same validation drives the reconcile feedback and the attempt list: an
+unsupported answer is unconfirmed (**Reload to review**, card blocked), and an incoherent listed
+attempt shows **Checkout status needs investigation** with only **Reload to review** (no Stripe
+check, no release), a rust **Status unclear** badge and "Outcome not confirmed" in place of its
+outcome label. It never reads as paid, applied or released, and never counts toward the
+reconciliation warning.
+
 The main card area shows only attempts that need a decision, newest first:
 
 | Status                            | Card                                                                  | Action                             |
@@ -476,6 +503,7 @@ The main card area shows only attempts that need a decision, newest first:
 | `open_superseded`                 | **Previous checkout is still open**                                   | **Release previous checkout**      |
 | `processing`, `paid_pending`      | **A payment is being confirmed** (rust)                               | **Check payment status**           |
 | `creating`, `open_unverified`     | **Checkout status isn't confirmed**                                   | **Check payment status**           |
+| `unrecognized`                    | **Checkout status needs investigation** (rust)                        | **Reload to review** only          |
 | `reconciliation_required`         | the existing card-level warning                                       | none (unapplied-payment review)    |
 | `open_current`, settled, released | nothing (diagnostics only; the row says "Matches the current terms.") | the row's **Check payment status** |
 
@@ -490,18 +518,24 @@ other card action is disabled, and the answer is reported by its validated state
 The action accepts the answer only for the submitted `attemptId`, re-lists the attempts from
 commerce, and words the result by `reconcileFeedback`:
 
-| Answer                            | Staff message                                                                                   |
-| --------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `EXPIRED`                         | released; the customer can start a new payment from the same link if the current terms allow it |
-| `FAILED`                          | the attempt failed; review the current payment status                                           |
-| `OPEN`                            | still open, so it wasn't released (commerce found its terms current)                            |
-| `CREATING`                        | not confirmed yet; check again shortly                                                          |
-| `PROCESSING`                      | a payment is being confirmed; don't start or record another                                     |
-| `SUCCEEDED` + `PENDING`           | paid at Stripe, not applied yet                                                                 |
-| `SUCCEEDED` + `APPLIED`           | payment applied; Right now shows the updated balance                                            |
-| `RECONCILIATION_REQUIRED`         | received but needs staff reconciliation; don't collect it again                                 |
-| other attempt, unknown state, 5xx | couldn't confirm what Stripe did; **Reload to review** blocks the card                          |
-| 409 (a definite refusal)          | nothing was released or settled; check again later or in the Stripe Dashboard                   |
+| Answer                               | Staff message                                                                                   |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `EXPIRED`                            | released; the customer can start a new payment from the same link if the current terms allow it |
+| `FAILED`                             | the attempt failed; review the current payment status                                           |
+| `OPEN`                               | still open, so it wasn't released (commerce found its terms current)                            |
+| `CREATING`                           | not confirmed yet; check again shortly                                                          |
+| `PROCESSING`                         | a payment is being confirmed; don't start or record another                                     |
+| `SUCCEEDED` + `PENDING`              | paid at Stripe, not applied yet                                                                 |
+| `SUCCEEDED` + `APPLIED`              | payment applied; Right now shows the updated balance                                            |
+| `RECONCILIATION_REQUIRED`            | received but needs staff reconciliation; don't collect it again                                 |
+| other attempt, unsupported pair, 5xx | couldn't confirm what Stripe did; **Reload to review** blocks the card                          |
+| 409                                  | couldn't reconcile, no release was confirmed; **Reload to review** blocks the card              |
+
+A reconcile 409 proves only that no confirmed outcome reached this caller: Stripe may still have
+changed the session or captured money. So it never says nothing settled, nothing was cancelled or
+a new checkout is safe; it locks the card behind **Reload to review** like an ambiguous answer, and
+its static code is logged server-side only (`[customer-payments] {id} reconcile 409 {code}`).
+Payment-link 409s (issue, rotate, revoke) stay definite and unchanged.
 
 Only EXPIRED and FAILED are released; EXPIRED never promises that the booking is payable (other
 restrictions may apply, and the public page enforces them). Nothing is retried, no replacement
@@ -530,9 +564,28 @@ and the card says so. Attempt reads are optional; without them none of this rend
 link management works as before.
 
 **Live updates.** The existing timeline SSE is unchanged. After each authoritative Activity read
-(`onrefreshed` on the Conversation card), Customer payments refreshes its diagnostics through
-`GET /requests/{id}/customer-payments` if the attempts disclosure is open, or marks them stale for
-when it opens. When the Activity history changed, the workspace also re-reads the authoritative
+(`onrefreshed` on the Conversation card), Customer payments refreshes its attempts through
+`GET /requests/{id}/customer-payments` (the admin's read-only endpoint; never a Stripe call) when
+attempt data is on screen: the diagnostics disclosure is open, or a checkout notice or the
+reconciliation warning is showing. Otherwise it marks them stale for when the disclosure opens. So
+an old checkout that expires, starts processing or settles updates or removes its notice without
+anyone expanding the diagnostics; a refresh never words an outcome itself (only a deliberate check
+does).
+
+Reads run through `$lib/attempt-refresh.ts`, the timeline's serialized `timelineRefresh` loop:
+a burst of notifications coalesces, one arriving mid-read schedules another pass rather than being
+dropped, and a read that started before a reconcile answer was applied is discarded and read again,
+so older data never overwrites newer. A failed read (or one that returns no attempts) keeps the last
+known attempts and says **We couldn't refresh the checkout status… Reload to review**; while it
+stands, a superseded notice reads **Previous checkout may still be open** and offers only **Check
+payment status**. The attempt list and the staff request also move at different moments: each read
+records the staff-request snapshot it started against, and when a newer projection arrives (a
+settled payment, a booking, a revision) the card refreshes its attempts. Until the two pair up again,
+or after a failed read, **Release previous checkout** is replaced by **Check payment status**, so a
+mismatched pair of snapshots never reads as proof that a checkout can be released. Provider-side
+changes that send no SSE notification still need a manual check or reload; there is no polling.
+
+When the Activity history changed, the workspace also re-reads the authoritative
 staff request and refreshes Right now in place (an online deposit shows BOOKED, the Invoice and
 the new balance without a reload); an open review panel keeps its snapshot and says it is stale.
 See [Live staff financial state](admin-request-workspace.md#live-staff-financial-state). Nothing
@@ -653,14 +706,19 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
   mode switches and legacy hosted answers, delayed reconciliation, partial Invoice payments,
   keyboard focus and mobile width. Set `PAYMENTS_SCREENSHOTS=<dir>` to save panel screenshots.
 - Admin unit: `customer-payments.test.ts` (including reconcile answers for exactly the submitted
-  attempt, one POST each, ambiguous and definite refusals) and `checkout-attempts.test.ts` (exact
-  amount comparison, current terms, every status, release only for demonstrable supersession,
-  feedback wording). Admin E2E: `customer-payments.e2e.ts` (permission gating, stable copy,
+  attempt, one POST each, unsupported pairs, ambiguous refusals, a reconcile 409 locking for review
+  while link conflicts stay definite), `checkout-attempts.test.ts` (exact amount comparison,
+  current terms, every status, the state/outcome matrix and ledger coherence, release only for
+  demonstrable supersession, feedback wording) and `attempt-refresh.test.ts` (coalesced bursts, a
+  hint during a read, an older read never overwriting a local answer, failures, dispose). Admin E2E: `customer-payments.e2e.ts` (permission gating, stable copy,
   rotate/revoke, CLOSED and REQUESTED/DECLINED limits, no URL in HTML, clipboard fallback, attempt
   diagnostics and reconcile feedback, live refresh with the composer draft preserved, disabled and
   ambiguous outcomes) and `revised-checkout.e2e.ts` (Quote v3 emailed while Quote v2's checkout is
   open, then released; a matching checkout keeps only the status check; release keeps an open
-  preview reviewable while a new Quote still invalidates it; 502/OPEN/409 never claim release;
+  preview reviewable while a new Quote still invalidates it; 502/OPEN/409 never claim release
+  (409 locks for review); live SSE updates with diagnostics closed (EXPIRED removes the notice
+  with the preview and reply draft intact, PROCESSING then APPLIED, rapid notifications, a failed
+  read kept unconfirmed); an incoherent OPEN+APPLIED attempt is investigated;
   PROCESSING, RECONCILIATION_REQUIRED and APPLIED answers; CREATING/PROCESSING get no release;
   keyboard, phone width and the no-JavaScript form). The stub's `reconcile` control sets the next
   answer (`{ result }` with an optional new `request`, or `{ status, code }`).

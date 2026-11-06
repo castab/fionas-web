@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
 	attemptsNeedingAttention,
 	classifyAttempt,
+	coherentAttempt,
 	compareMinor,
 	currentPaymentTerms,
 	reconcileFeedback,
-	supersededCopy
+	supersededCopy,
+	supportedAttemptState
 } from './checkout-attempts.js';
 import type { PaymentAttempt } from './customer-payments.js';
 import type { CurrentStaffRequest } from './request-contract.js';
+
+const ledger = '40000000-0000-4000-8000-000000000001';
 
 /** Only the fields the classifier reads; the rest of the projection is irrelevant here. */
 function quoted(overrides: { version?: number; revision?: number | null; deposit?: string } = {}) {
@@ -160,16 +164,65 @@ describe('classifyAttempt', () => {
 		expect(status({ state: 'SUCCEEDED' })).toBe('paid_pending');
 		expect(status({ state: 'EXPIRED' })).toBe('expired');
 		expect(status({ state: 'FAILED' })).toBe('failed');
-		expect(status({ state: 'SUCCEEDED', outcome: 'APPLIED' })).toBe('applied');
+		expect(status({ state: 'SUCCEEDED', outcome: 'APPLIED', ledgerPaymentId: ledger })).toBe(
+			'applied'
+		);
 		// Money captured against obsolete terms is reconciliation, never "superseded" or cancelled.
-		expect(status({ state: 'SUCCEEDED', outcome: 'RECONCILIATION_REQUIRED' })).toBe(
-			'reconciliation_required'
-		);
-		expect(status({ state: 'OPEN', outcome: 'RECONCILIATION_REQUIRED' })).toBe(
-			'reconciliation_required'
-		);
+		expect(
+			status({ state: 'SUCCEEDED', outcome: 'RECONCILIATION_REQUIRED', ledgerPaymentId: ledger })
+		).toBe('reconciliation_required');
 		expect(status({ state: 'PAUSED' })).toBe('unrecognized');
 		expect(status({ outcome: 'REFUNDED' })).toBe('unrecognized');
+	});
+
+	it('fails closed on pairs commerce never produces', () => {
+		const status = (overrides: Partial<PaymentAttempt>) =>
+			classifyAttempt(attempt(overrides), terms).status;
+		for (const [state, outcome] of [
+			['OPEN', 'APPLIED'],
+			['EXPIRED', 'APPLIED'],
+			['PROCESSING', 'RECONCILIATION_REQUIRED'],
+			['OPEN', 'RECONCILIATION_REQUIRED'],
+			['FAILED', 'APPLIED'],
+			['CREATING', 'RECONCILIATION_REQUIRED']
+		])
+			expect(status({ state, outcome, ledgerPaymentId: ledger })).toBe('unrecognized');
+		// A ledger payment must match the outcome: present for APPLIED/RECONCILIATION_REQUIRED only.
+		expect(status({ state: 'SUCCEEDED', outcome: 'APPLIED' })).toBe('unrecognized');
+		expect(status({ state: 'OPEN', ledgerPaymentId: ledger })).toBe('unrecognized');
+		expect(status({ state: 'SUCCEEDED', ledgerPaymentId: ledger })).toBe('unrecognized');
+	});
+});
+
+describe('supportedAttemptState', () => {
+	it('accepts exactly the contract matrix', () => {
+		const states = ['CREATING', 'OPEN', 'PROCESSING', 'EXPIRED', 'FAILED', 'SUCCEEDED', 'PAUSED'];
+		const outcomes = ['PENDING', 'APPLIED', 'RECONCILIATION_REQUIRED', 'REFUNDED'];
+		const accepted = states.flatMap((state) =>
+			outcomes
+				.filter((outcome) => supportedAttemptState(state, outcome))
+				.map((o) => `${state}+${o}`)
+		);
+		expect(accepted).toEqual([
+			'CREATING+PENDING',
+			'OPEN+PENDING',
+			'PROCESSING+PENDING',
+			'EXPIRED+PENDING',
+			'FAILED+PENDING',
+			'SUCCEEDED+PENDING',
+			'SUCCEEDED+APPLIED',
+			'SUCCEEDED+RECONCILIATION_REQUIRED'
+		]);
+		expect(supportedAttemptState('constructor', 'PENDING')).toBe(false);
+		expect(supportedAttemptState('__proto__', 'PENDING')).toBe(false);
+	});
+
+	it('requires a ledger payment exactly when the outcome names one', () => {
+		expect(coherentAttempt(attempt())).toBe(true);
+		expect(
+			coherentAttempt(attempt({ state: 'SUCCEEDED', outcome: 'APPLIED', ledgerPaymentId: ledger }))
+		).toBe(true);
+		expect(coherentAttempt(attempt({ state: 'SUCCEEDED', outcome: 'APPLIED' }))).toBe(false);
 	});
 });
 
@@ -181,14 +234,21 @@ describe('attemptsNeedingAttention', () => {
 		const creating = attempt({ state: 'CREATING' });
 		const processing = attempt({ state: 'PROCESSING' });
 		const expired = attempt({ state: 'EXPIRED', documentVersion: 1, businessRevision: 1 });
-		const applied = attempt({ state: 'SUCCEEDED', outcome: 'APPLIED' });
-		const stuck = attempt({ state: 'SUCCEEDED', outcome: 'RECONCILIATION_REQUIRED' });
+		const applied = attempt({ state: 'SUCCEEDED', outcome: 'APPLIED', ledgerPaymentId: ledger });
+		const stuck = attempt({
+			state: 'SUCCEEDED',
+			outcome: 'RECONCILIATION_REQUIRED',
+			ledgerPaymentId: ledger
+		});
+		const incoherent = attempt({ state: 'OPEN', outcome: 'APPLIED', ledgerPaymentId: ledger });
 		const items = attemptsNeedingAttention(
-			[old, current, creating, processing, expired, applied, stuck],
+			[old, current, creating, processing, expired, applied, stuck, incoherent],
 			terms
 		);
 		// Newest first; current, settled, released and reconciliation attempts are not repeated.
+		// An incoherent pair is investigated, never released or shown as paid.
 		expect(items.map((item) => [item.attempt.id, item.kind])).toEqual([
+			[incoherent.id, 'uncertain'],
 			[processing.id, 'confirming'],
 			[creating.id, 'unconfirmed'],
 			[old.id, 'release']
@@ -242,5 +302,38 @@ describe('reconcileFeedback', () => {
 		expect(feedback('PAUSED')).toMatchObject({ unconfirmed: true, settlement: true });
 		expect(feedback('OPEN', 'MYSTERY')).toMatchObject({ unconfirmed: true });
 		expect(feedback('EXPIRED').unconfirmed).toBeUndefined();
+	});
+
+	it('interprets each supported pair once, and fails closed on every other pair', () => {
+		const supported: [string, string, string][] = [
+			['OPEN', 'PENDING', 'wasn’t released'],
+			['CREATING', 'PENDING', 'hasn’t confirmed'],
+			['PROCESSING', 'PENDING', 'confirming a payment'],
+			['EXPIRED', 'PENDING', 'it’s released'],
+			['FAILED', 'PENDING', 'failed'],
+			['SUCCEEDED', 'PENDING', 'isn’t applied to the booking yet'],
+			['SUCCEEDED', 'APPLIED', 'applied to this booking'],
+			['SUCCEEDED', 'RECONCILIATION_REQUIRED', 'needs staff reconciliation']
+		];
+		for (const [state, outcome, text] of supported) {
+			const answer = feedback(state, outcome);
+			expect(answer.unconfirmed).toBeUndefined();
+			expect(answer.text).toContain(text);
+		}
+		for (const [state, outcome] of [
+			['OPEN', 'APPLIED'],
+			['EXPIRED', 'APPLIED'],
+			['PROCESSING', 'RECONCILIATION_REQUIRED'],
+			['FAILED', 'RECONCILIATION_REQUIRED'],
+			['EXPIRED', 'RECONCILIATION_REQUIRED'],
+			['CREATING', 'APPLIED'],
+			['MYSTERY', 'PENDING'],
+			['SUCCEEDED', 'MYSTERY']
+		]) {
+			const answer = feedback(state, outcome);
+			expect(answer).toMatchObject({ unconfirmed: true, tone: 'warning' });
+			// Never a release or payment success.
+			expect(answer.text).not.toMatch(/released|applied|received|succeeded/i);
+		}
 	});
 });
