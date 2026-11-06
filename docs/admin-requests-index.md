@@ -45,6 +45,42 @@ integer `totalCount` no smaller than the page; and an absent, null or non-empty 
 refused page is **unavailable**, never empty results or a zero balance; the operator log carries
 only shapes and counts (`describeRejectedRequestList`), never customer values.
 
+## Filter layout
+
+Below 1440px the filters are caps pills that wrap above the search. From 1440px they move into a
+sticky 280px rail as a plain list: rows at least 44px tall, 10px radius, 10px × 14px padding,
+sentence-case 13.5px semibold labels, a cream-300/60 hover tint, the current filter filled
+olive-700 with cream text, and 2px between rows. Search stays below the list. Both are the same
+native links.
+
+### Per-filter counts: blocked on commerce
+
+The design shows each filter's count for the current search ("Quoted 2", accessible name "Quoted,
+2 requests", the current one in cream at 80% opacity). They are **not shown yet**:
+`GET /staff/requests` returns only `totalCount` for the requested filter, and the admin must not
+page through every request or call the endpoint once per filter to count them.
+
+The smallest contract addition that would provide them is one additive, required-once-deployed
+field on `StaffRequestListResponse`, computed in the same REPEATABLE READ snapshot as `items` and
+`totalCount`, with the same `q` and without pagination:
+
+```json
+"filterCounts": {
+	"all": 8,
+	"new": 2,
+	"quoted": 2,
+	"booked": 3,
+	"needs-closing": 1,
+	"closed": 1,
+	"declined": 1
+}
+```
+
+Keys are exactly the filter values (`REQUEST_FILTERS`); each value is a non-negative integer and
+`filterCounts[filter]` equals `totalCount`. Booked and Needs closing keep overlapping. The admin
+would validate it in `isStaffRequestList` (absent means "counts unavailable", rendered as no count,
+never zero) and render `{label} {count}` with `aria-label="{label}, {n} request(s)"`.
+
 ## URL state
 
 The URL is the only state, so every view is bookmarkable, reloadable and works with Back/Forward:

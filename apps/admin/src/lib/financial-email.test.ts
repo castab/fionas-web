@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+	acceptedNoticeCopy,
+	customerFirstName,
+	emailCopy,
 	emailDeliveryLabels,
 	emailedVersionLabel,
+	financialEmailError,
+	missingEmailPermissionCopy,
+	pacificTimeLabel,
+	unavailableCopy,
 	financialEmailMessage,
 	financialEmailStatus,
 	financialEmailTarget,
 	hasFinancialEmailPermissions,
+	intentVersionLabel,
 	intentWithMessage,
 	isFinancialEmailHistory,
 	isFinancialEmailPreview,
@@ -255,7 +263,113 @@ describe('financial email status', () => {
 		expect(emailDeliveryLabels(record({ sendState: 'pending' }))[0]).toBe(
 			'Queued with email provider'
 		);
-		expect(emailedVersionLabel(record())).toBe('Quote v2 · revision 2');
+		expect(emailedVersionLabel(record())).toBe('Quote v2');
+	});
+
+	it('shows one staff label, the document version, and keeps the revision in the identity', () => {
+		expect(emailedVersionLabel(record({ kind: 'INVOICE', documentVersion: 4 }))).toBe('Invoice v4');
+		const intent = {
+			kind: 'QUOTE' as const,
+			documentId: mayaDocumentId,
+			expectedDocumentVersion: 2,
+			expectedBusinessRevision: 3,
+			proposalId,
+			expectedDepositRequirementRevision: 1
+		};
+		expect(intentVersionLabel(intent)).toBe('Quote v2');
+		// Accepted limitation: a new business revision on the same ledger version shares the label,
+		// but never the identity a preview, send or recovery compares.
+		expect(sameIntent(intent, { ...intent, expectedBusinessRevision: 2 })).toBe(false);
+		expect(intentWithMessage(intent, '').expectedBusinessRevision).toBe(3);
+	});
+});
+
+describe('staff copy', () => {
+	it('names the customer by first name, with a neutral fallback', () => {
+		expect(customerFirstName('  Maya   Torres ')).toBe('Maya');
+		expect(customerFirstName('Cher')).toBe('Cher');
+		expect(customerFirstName('   ')).toBe('the customer');
+	});
+
+	it('names the business time zone after the received-time label', () => {
+		expect(pacificTimeLabel('2026-10-20T21:05:00Z')).toBe('Oct 20, 2026, 2:05 PM Pacific');
+	});
+
+	it('asks for access without listing permission names', () => {
+		expect(missingEmailPermissionCopy).toBe(
+			'Ask an administrator to turn on emailing for you. It needs access to send email and to manage payment links.'
+		);
+		expect(financialEmailError('forbidden')).toBe(missingEmailPermissionCopy);
+		expect(missingEmailPermissionCopy).not.toMatch(/fionas\.|commerce\.|financial-document/);
+	});
+
+	it('words each panel and status sentence plainly', () => {
+		const when = 'Oct 20, 2026, 2:05 PM Pacific';
+		expect(emailCopy.intro('QUOTE', 'Maya')).toBe(
+			'Sends the current Quote to Maya in this booking’s email thread, with their payment link. Nothing goes out until you press Send quote.'
+		);
+		expect(emailCopy.intro('INVOICE', 'Maya')).toBe(
+			'Sends the current Invoice and what’s still owed to Maya in this booking’s email thread, with their payment link. Nothing goes out until you press Send invoice.'
+		);
+		expect(emailCopy.already('QUOTE', 'Maya', when)).toBe(
+			'Maya already got this Quote on Oct 20, 2026, 2:05 PM Pacific. Sending again emails them another copy.'
+		);
+		expect(emailCopy.current('INVOICE', 'Maya', when, 'staff')).toBe(
+			'This Invoice was emailed to Maya Oct 20, 2026, 2:05 PM Pacific by staff.'
+		);
+		expect(emailCopy.never('QUOTE')).toBe(
+			'This Quote hasn’t been emailed. Publishing it didn’t send anything.'
+		);
+		expect(emailCopy.never('INVOICE')).toBe(
+			'This Invoice hasn’t been emailed. Marking it served didn’t send anything.'
+		);
+		expect(emailCopy.earlier('QUOTE', 'Quote v1', when)).toBe(
+			'Only an earlier Quote was emailed (Quote v1, Oct 20, 2026, 2:05 PM Pacific). The current one hasn’t been sent.'
+		);
+		expect(emailCopy.unknown('QUOTE', when)).toBe(
+			'We can’t tell if the Quote email from Oct 20, 2026, 2:05 PM Pacific went out.'
+		);
+		expect(emailCopy.unknownNext(true)).toBe('You can check it again in the email panel.');
+		expect(emailCopy.unknownNext(false)).toBe(
+			'Only the original send can be checked. Don’t send another.'
+		);
+		expect(emailCopy.rejected(when)).toBe(
+			'The last attempt (Oct 20, 2026, 2:05 PM Pacific) was refused by the email provider, so it wasn’t sent.'
+		);
+		expect(emailCopy.lost('7f3c9e21-5b4a-4d0e-9a61-0c2e8f4b13d7')).toBe(
+			'This browser doesn’t have the original email, so it can’t check it. Don’t send a new one. Ask an administrator to look into send ID 7f3c9e21-5b4a-4d0e-9a61-0c2e8f4b13d7.'
+		);
+		expect(emailCopy.footnote(when, 'abc', true)).toBe(
+			'Previewed Oct 20, 2026, 2:05 PM Pacific · Send ID abc. This browser keeps the previewed email for 30 days so it can be checked; check again before then.'
+		);
+		expect(emailCopy.footnote(when, undefined, false)).toBe(
+			'Previewed Oct 20, 2026, 2:05 PM Pacific.'
+		);
+	});
+
+	it('confirms a send once, distinguishing a replay', () => {
+		expect(acceptedNoticeCopy('QUOTE', false)).toBe('Sent just now.');
+		expect(acceptedNoticeCopy('INVOICE', true)).toBe(
+			'This Invoice email already went out earlier, so nothing new was sent.'
+		);
+	});
+
+	it('explains settled and overpaid Invoices plainly', () => {
+		expect(unavailableCopy.no_balance).toBe(
+			'It’s paid in full, so there’s nothing to collect by email.'
+		);
+		expect(unavailableCopy.credit).toBe(
+			'It’s overpaid, so there’s nothing to collect by email. Sort out the credit outside this workflow.'
+		);
+	});
+
+	it('points every uncertain outcome at Check again, never at a new send', () => {
+		expect(financialEmailError('anything_else', true)).toBe(
+			'We can’t tell if this email went out. Use Check again: it repeats the original send exactly and never sends a second copy.'
+		);
+		expect(financialEmailError('email_send_rejected')).toContain('nothing went out');
+		for (const code of ['anything_else', 'financial_email_reconciliation_required'])
+			expect(financialEmailError(code, true)).not.toMatch(/Reconcile/);
 	});
 });
 

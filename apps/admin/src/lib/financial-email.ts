@@ -10,6 +10,7 @@ import {
 	type FinancialEmailUnavailable
 } from './financial-email-contract.js';
 import type { CurrentStaffRequest, FinancialDocumentResponse } from './request-contract.js';
+import { receivedTimeLabel } from './payments.js';
 
 /*
  * Client-safe financial-email rules: target resolution from the authoritative staff request,
@@ -320,25 +321,73 @@ export function emailDeliveryLabels(record: FinancialEmailHistory): string[] {
 
 export const kindLabel = (kind: FinancialEmailKind) => (kind === 'QUOTE' ? 'Quote' : 'Invoice');
 
-/** Staff-only identity: ledger version and business revision. Customers never see these. */
-export const emailedVersionLabel = (r: {
-	kind: FinancialEmailKind;
-	documentVersion: number;
-	businessRevision: number;
-}) => `${kindLabel(r.kind)} v${r.documentVersion} · revision ${r.businessRevision}`;
+/** The customer's first name for staff copy ("Sends the current Quote to Maya…"). */
+export const customerFirstName = (name: string) => name.trim().split(/\s+/)[0] || 'the customer';
+
+/** `receivedTimeLabel` in the business time zone, named: "Oct 20, 2026, 2:05 PM Pacific". */
+export const pacificTimeLabel = (instant: string) => `${receivedTimeLabel(instant)} Pacific`;
+
+/** Asking for the five financial-email permissions, without listing their names. */
+export const missingEmailPermissionCopy =
+	'Ask an administrator to turn on emailing for you. It needs access to send email and to manage payment links.';
+
+/**
+ * Staff copy for the panel and the Customer email block, built here so each sentence is one clean
+ * string. `first` is the customer's first name; `when` is a `pacificTimeLabel`.
+ */
+export const emailCopy = {
+	intro: (kind: FinancialEmailKind, first: string) =>
+		kind === 'QUOTE'
+			? `Sends the current Quote to ${first} in this booking’s email thread, with their payment link. Nothing goes out until you press Send quote.`
+			: `Sends the current Invoice and what’s still owed to ${first} in this booking’s email thread, with their payment link. Nothing goes out until you press Send invoice.`,
+	already: (kind: FinancialEmailKind, first: string, when: string) =>
+		`${first} already got this ${kindLabel(kind)} on ${when}. Sending again emails them another copy.`,
+	current: (kind: FinancialEmailKind, first: string, when: string, who: 'you' | 'staff') =>
+		`This ${kindLabel(kind)} was emailed to ${first} ${when} by ${who}.`,
+	never: (kind: FinancialEmailKind) =>
+		kind === 'QUOTE'
+			? 'This Quote hasn’t been emailed. Publishing it didn’t send anything.'
+			: 'This Invoice hasn’t been emailed. Marking it served didn’t send anything.',
+	earlier: (kind: FinancialEmailKind, label: string, when: string) =>
+		`Only an earlier ${kindLabel(kind)} was emailed (${label}, ${when}). The current one hasn’t been sent.`,
+	unknown: (kind: FinancialEmailKind, when: string) =>
+		`We can’t tell if the ${kindLabel(kind)} email from ${when} went out.`,
+	unknownNext: (checkableHere: boolean) =>
+		checkableHere
+			? 'You can check it again in the email panel.'
+			: 'Only the original send can be checked. Don’t send another.',
+	rejected: (when: string) =>
+		`The last attempt (${when}) was refused by the email provider, so it wasn’t sent.`,
+	lost: (sendId: string | null) =>
+		`This browser doesn’t have the original email, so it can’t check it. Don’t send a new one. Ask an administrator to look into ${sendId ? `send ID ${sendId}` : 'the send ID shown under Customer email'}.`,
+	footnote: (when: string, sendId: string | undefined, checkable: boolean) =>
+		`Previewed ${when}${sendId ? ` · Send ID ${sendId}` : ''}.${checkable ? ' This browser keeps the previewed email for 30 days so it can be checked; check again before then.' : ''}`
+};
+
+/** The one-time notice after an accepted (201) or replayed (200) send, in the Customer email block. */
+export const acceptedNoticeCopy = (kind: FinancialEmailKind, replayed: boolean) =>
+	replayed
+		? `This ${kindLabel(kind)} email already went out earlier, so nothing new was sent.`
+		: 'Sent just now.';
+
+/**
+ * The one staff-only label, "Quote v2": the ledger version, as everywhere else in the console.
+ * Customers never see it. The business revision stays in the data, hidden fields and commands
+ * (recovery and validation depend on it) but is not shown. Known, accepted limitation: commerce can
+ * publish a new business revision on the same ledger version (a Quote deposit-terms revision, an
+ * Invoice service-plan-only amendment), so two emails can share one label; Current/Earlier comes
+ * from commerce's `current`, never from this label.
+ */
+export const emailedVersionLabel = (r: { kind: FinancialEmailKind; documentVersion: number }) =>
+	`${kindLabel(r.kind)} v${r.documentVersion}`;
 
 export const intentVersionLabel = (i: Omit<FinancialEmailIntent, 'message'>) =>
-	emailedVersionLabel({
-		kind: i.kind,
-		documentVersion: i.expectedDocumentVersion,
-		businessRevision: i.expectedBusinessRevision
-	});
+	emailedVersionLabel({ kind: i.kind, documentVersion: i.expectedDocumentVersion });
 
 export const unavailableCopy: Record<FinancialEmailUnavailable, string> = {
-	no_balance:
-		'This Invoice has no remaining balance, so there is nothing to collect by email. Collection email is only available while a positive balance is due.',
+	no_balance: 'It’s paid in full, so there’s nothing to collect by email.',
 	credit:
-		'This Invoice is overpaid, so a collection email is not available. Resolve the credit outside this workflow.',
+		'It’s overpaid, so there’s nothing to collect by email. Sort out the credit outside this workflow.',
 	not_current:
 		'The current published document cannot be identified from this view, so it cannot be emailed. Reload to review.',
 	revision_unavailable:
@@ -386,9 +435,9 @@ export function financialEmailError(code: string, attempted = false): string {
 		financial_email_in_progress:
 			'An earlier financial email for this request has an unknown outcome. It must be reconciled with its original command before another can be sent.',
 		financial_email_reconciliation_required:
-			'Commerce cannot reconstruct the original email, so it will not dispatch it. The customer may or may not have received it. Investigate with the send ID before doing anything else.',
+			'We couldn’t confirm whether this email went out, and it can’t be sent again automatically. Ask an administrator to check its send ID before doing anything else.',
 		email_send_rejected:
-			'The email provider definitively rejected this email. Nothing is pending under it; you can start a new review.',
+			'The email provider refused this email, so nothing went out. Preview again to start a new one.',
 		email_sending_disabled: 'Outgoing email is not enabled. The reviewed email has been kept.',
 		email_provider_unavailable:
 			'The email service could not be reached. The reviewed email has been kept; try again shortly.',
@@ -400,13 +449,12 @@ export function financialEmailError(code: string, attempted = false): string {
 			'Commerce refused the email details. Reload, check the message, then preview again.',
 		malformed_request: 'The email request was refused as malformed. Reload, then preview again.',
 		not_found: 'This request no longer exists. Reload the page.',
-		forbidden:
-			'Emailing a Quote or Invoice requires inquiry read, financial-document read, communications read and send, and payment-access manage permissions.',
+		forbidden: missingEmailPermissionCopy,
 		unauthenticated: 'Your session ended. Sign in again; the reviewed email has been kept.'
 	};
 	if (Object.hasOwn(copy, code)) return copy[code];
 	return attempted
-		? 'The send could not be confirmed. The email may or may not have been sent. Use Reconcile original send, which repeats the exact original command and cannot create a duplicate.'
+		? 'We can’t tell if this email went out. Use Check again: it repeats the original send exactly and never sends a second copy.'
 		: 'The email preview is unavailable right now. Try again shortly.';
 }
 

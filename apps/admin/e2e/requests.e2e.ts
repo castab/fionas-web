@@ -540,6 +540,61 @@ test('the index fits narrow and wide viewports with long names, emails and amoun
 	await noOverflow(page);
 });
 
+test('wide screens list the filters plainly; narrower ones keep the pills', async ({
+	page,
+	isMobile
+}) => {
+	const look = (link: Locator) =>
+		link.evaluate((a) => {
+			const s = getComputedStyle(a);
+			return {
+				transform: s.textTransform,
+				size: s.fontSize,
+				weight: s.fontWeight,
+				radius: s.borderTopLeftRadius,
+				padding: `${s.paddingTop} ${s.paddingLeft}`,
+				background: s.backgroundColor,
+				color: s.color
+			};
+		});
+	const current = () => filters(page).getByRole('link', { name: 'Quoted' });
+	const other = () => filters(page).getByRole('link', { name: 'Needs closing' });
+	if (!isMobile) {
+		await page.setViewportSize({ width: 1440, height: 1000 });
+		await page.goto('/requests?filter=quoted');
+		const row = await look(other());
+		expect(row).toMatchObject({
+			transform: 'none',
+			size: '13.5px',
+			weight: '600',
+			radius: '10px',
+			padding: '10px 14px',
+			background: 'rgba(0, 0, 0, 0)'
+		});
+		const box = (await other().boundingBox())!;
+		expect(box.height).toBeGreaterThanOrEqual(44);
+		const selected = await look(current());
+		expect(selected.background).not.toBe('rgba(0, 0, 0, 0)');
+		expect(selected.color).not.toBe(row.color);
+		// 2px between rows, and search stays below the list.
+		const links = await filters(page).getByRole('link').all();
+		const [a, b] = await Promise.all([links[0].boundingBox(), links[1].boundingBox()]);
+		expect(Math.round(b!.y - (a!.y + a!.height))).toBe(2);
+		expect((await searchBox(page).boundingBox())!.y).toBeGreaterThan(
+			(await links.at(-1)!.boundingBox())!.y
+		);
+		await other().hover();
+		await expect.poll(async () => (await look(other())).background).not.toBe('rgba(0, 0, 0, 0)');
+		await page.setViewportSize({ width: 1439, height: 1000 });
+	} else await page.goto('/requests?filter=quoted');
+	// Below 1440px: the caps pills, as before.
+	const pill = await look(other());
+	expect(pill.transform).toBe('uppercase');
+	expect(pill.radius).not.toBe('10px');
+	// Per-filter counts need commerce to return them; nothing is derived in the browser.
+	await expect(filters(page).getByRole('link', { name: 'Quoted', exact: true })).toBeVisible();
+});
+
 test.describe('without JavaScript', () => {
 	test.use({ javaScriptEnabled: false });
 	test('filters, search, pagination, opening a request and returning all work natively', async ({

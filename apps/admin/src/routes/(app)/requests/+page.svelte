@@ -57,9 +57,13 @@
 	>
 		{#if rail}
 			<div class="flex flex-col gap-5 min-[1440px]:sticky min-[1440px]:top-6">
-				<!-- Plain links: each filter is its own URL; the search is kept and paging starts over. -->
+				<!-- Plain links: each filter is its own URL; the search is kept and paging starts over.
+				     Narrow screens show pills; the wide rail shows a plain list. Per-filter counts need
+				     commerce to return them with the page (docs/admin-requests-index.md); none are derived here. -->
 				<nav aria-label="Request filters">
-					<ul class="m-0 flex list-none flex-wrap gap-2 p-0 min-[1440px]:flex-col">
+					<ul
+						class="m-0 flex list-none flex-wrap gap-2 p-0 min-[1440px]:flex-col min-[1440px]:gap-0.5"
+					>
 						{#each REQUEST_FILTERS as filter (filter)}
 							{@const current = filter === query.filter}
 							<li>
@@ -69,10 +73,12 @@
 									aria-current={current ? 'page' : undefined}
 									data-testid="request-filter"
 									class={[
-										'inline-flex min-h-11 items-center rounded-full border-[1.5px] px-4 py-2 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) whitespace-nowrap uppercase no-underline transition-colors duration-(--dur-fast) ease-(--ease-out) min-[1440px]:w-full',
+										'inline-flex min-h-11 items-center rounded-full border-[1.5px] px-4 py-2 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) whitespace-nowrap uppercase no-underline transition-colors duration-(--dur-fast) ease-(--ease-out)',
+										// Wide rail: a 44px list row, 10px radius, 10px × 14px, sentence case 13.5px.
+										'min-[1440px]:w-full min-[1440px]:justify-between min-[1440px]:rounded-input min-[1440px]:border-0 min-[1440px]:px-3.5 min-[1440px]:py-2.5 min-[1440px]:text-[13.5px] min-[1440px]:tracking-normal min-[1440px]:normal-case',
 										current
 											? 'border-olive-700 bg-olive-700 text-cream-200 hover:text-cream-200'
-											: 'border-(--border-soft) bg-(--surface-card) text-olive-800 hover:bg-cream-300/60 hover:text-olive-800',
+											: 'border-(--border-soft) bg-(--surface-card) text-olive-800 hover:bg-cream-300/60 hover:text-olive-800 min-[1440px]:bg-transparent min-[1440px]:text-(--text-body) min-[1440px]:hover:bg-cream-300/60 min-[1440px]:hover:text-(--text-body)',
 										focusRing
 									]}>{requestFilterLabels[filter]}</a
 								>
