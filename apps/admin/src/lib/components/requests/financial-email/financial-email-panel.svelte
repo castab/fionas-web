@@ -120,7 +120,7 @@
 		!draft || draft.state !== 'reviewed' || locked
 			? null
 			: changedDocument || detailsChanged || serverStale
-				? `The ${name} or its payment details changed since this preview. Preview again before sending.`
+				? `The ${name} or its recorded payments changed since this preview. Preview again before sending.`
 				: changedConversation
 					? 'New messages arrived since this preview. Check Activity, then preview again.'
 					: changedMessage

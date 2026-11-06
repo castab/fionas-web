@@ -115,6 +115,19 @@ describe('financial email target', () => {
 		}
 	});
 
+	it('is independent of Stripe Checkout: the email identity has no attempt input', () => {
+		// fionas-commerce PR #41: an OPEN, CREATING or PROCESSING checkout never makes the current
+		// document ineligible for communication. The target reads the staff request only.
+		const request = quoted();
+		const before = financialEmailTarget(request);
+		const withAttempts = {
+			...request,
+			paymentAttempts: [{ state: 'OPEN' }, { state: 'PROCESSING' }]
+		};
+		expect(financialEmailTarget(withAttempts as CurrentStaffRequest)).toEqual(before);
+		expect(before).toHaveProperty('intent');
+	});
+
 	it('compares every reviewed identity', () => {
 		const a = intentOf(quoted());
 		expect(sameIntent(a, { ...a, expectedBusinessRevision: 3 })).toBe(false);
@@ -362,6 +375,12 @@ describe('staff copy', () => {
 		expect(unavailableCopy.credit).toBe(
 			'It’s overpaid, so there’s nothing to collect by email. Sort out the credit outside this workflow.'
 		);
+	});
+
+	it('never blames an active checkout for an email refusal (PR #41)', () => {
+		for (const code of ['financial_email_ineligible', 'financial_email_review_stale'])
+			expect(financialEmailError(code)).not.toMatch(/in progress|checkout|payment state/i);
+		expect(financialEmailError('financial_email_review_stale')).toContain('recorded payments');
 	});
 
 	it('points every uncertain outcome at Check again, never at a new send', () => {

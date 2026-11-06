@@ -83,18 +83,29 @@ function render(request, email, nonce) {
 	const required = quote ? deposit : request.financial.reconciliation.balance;
 	const paid = request.financial.reconciliation.netApplied ?? '0.00';
 	const message = email.message ? escape(email.message).replace(/\n/g, '<br>') : '';
+	// fionas-commerce PR #41: neutral review wording, accurate in every checkout state.
+	const revised = quote && (request.proposalHistory?.length ?? 0) > 1;
+	const action = quote
+		? revised
+			? 'Review your updated quote'
+			: 'Review your quote'
+		: 'Review your invoice';
+	const lines = request.financial.lines
+		.map((line) => `<tr data-line><td>${escape(line.description)}</td><td>$${line.total}</td></tr>`)
+		.join('');
 	const html = `<!doctype html><html><head><meta charset="utf-8"><title>${quote ? 'Your quote' : 'Your invoice'}</title><meta http-equiv="refresh" content="5;url=https://example.invalid/payment-preview"></head><body style="font-family:sans-serif;margin:0;padding:24px;background:#fffaf0">
 <img src="http://127.0.0.1:${port}/__test/pixel?n=${nonce}" alt="Fiona's Ice Cream" width="150" height="80">
 <h1 style="font-size:22px">${escape(greeting)}</h1>
 ${message ? `<p data-message>${message}</p>` : ''}
 <h2>${quote ? 'Your quote' : 'Your invoice'}</h2>
+<table>${lines}</table>
 <p>Total $${request.financial.total}</p>
 <p>${quote ? 'Deposit' : 'Amount due'} $${required}</p>
-<a id="pay" href="https://example.invalid/payment-preview" style="display:inline-block;padding:12px 20px;background:#5f5b40;color:#fff">Pay now</a>
+<a id="pay" href="https://example.invalid/payment-preview" style="display:inline-block;padding:12px 20px;background:#5f5b40;color:#fff">${action}</a>
 <a id="self" target="_self" href="https://example.invalid/payment-preview">Open</a>
 <script>document.body.dataset.scripted = 'yes'; parent.postMessage('escaped', '*');</script>
 </body></html>`;
-	const text = `${greeting}\n\n${email.message ? `${email.message}\n\n` : ''}${quote ? 'Your quote' : 'Your invoice'}\nTotal $${request.financial.total}\n\nPay: https://example.invalid/payment-preview`;
+	const text = `${greeting}\n\n${email.message ? `${email.message}\n\n` : ''}${quote ? 'Your quote' : 'Your invoice'}\nTotal $${request.financial.total}\n\n${action}: https://example.invalid/payment-preview`;
 	return {
 		html,
 		text,

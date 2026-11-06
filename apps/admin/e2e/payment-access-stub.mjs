@@ -58,6 +58,9 @@ export async function paymentAccessRoute(
 		}
 		const update = (await readJson(req)) ?? {};
 		if ('mode' in update) session.payments.mode = update.mode;
+		// What later reconciles answer: { result: { state, outcome, ledgerPaymentId? } } applied to the
+		// attempt (plus an optional `request` commerce would then project), or { status, code }.
+		if ('reconcile' in update) session.payments.reconcile = update.reconcile;
 		if (update.attempts) session.payments.attempts[update.inquiryId] = update.attempts;
 		if (update.access === null) delete session.payments.access[update.inquiryId];
 		else if (update.access)
@@ -110,12 +113,26 @@ export async function paymentAccessRoute(
 			send(res, 404, { code: 'not_found', message: 'PRIVATE' }, headers);
 			return true;
 		}
-		if (state.mode === 'reconcile-expire' && attempt.state === 'OPEN') attempt.state = 'EXPIRED';
+		const plan = state.reconcile;
+		if (plan?.status) {
+			send(
+				res,
+				plan.status,
+				{ code: plan.code ?? 'internal_failure', message: 'PRIVATE' },
+				headers
+			);
+			return true;
+		}
+		if (plan?.result) Object.assign(attempt, plan.result);
+		else if (state.mode === 'reconcile-expire' && attempt.state === 'OPEN')
+			attempt.state = 'EXPIRED';
+		if (plan?.request) session.requests[inquiryId] = plan.request;
 		send(
 			res,
 			200,
 			{
 				attemptId: attempt.id,
+				uiMode: 'HOSTED',
 				url: 'https://checkout.stripe.com/c/pay/cs_test_private',
 				state: attempt.state,
 				outcome: attempt.outcome

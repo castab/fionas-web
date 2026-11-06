@@ -3,7 +3,15 @@
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { Badge, Button, Card } from '@fionas/ui';
-	import type { InquiryStage } from '$lib/request-contract.js';
+	import type { CurrentStaffRequest, InquiryStage } from '$lib/request-contract.js';
+	import {
+		attemptDocumentLabel,
+		attemptsNeedingAttention,
+		classifyAttempt,
+		currentPaymentTerms,
+		supersededCopy,
+		type AttemptAttention
+	} from '$lib/checkout-attempts.js';
 	import {
 		attemptOutcomeLabels,
 		attemptPurposeLabel,
@@ -22,14 +30,18 @@
 
 	let {
 		stage,
+		request,
 		view,
 		result = null,
 		endpoint,
 		route,
 		returnContext = null,
-		refreshSignal = 0
+		refreshSignal = 0,
+		onsettlement
 	}: {
 		stage: InquiryStage;
+		/** The live authoritative staff request: attempts are compared with its current terms. */
+		request: CurrentStaffRequest;
 		view: CustomerPaymentsView;
 		/** A native (no-JavaScript) action result; enhanced results stay local to this card. */
 		result?: CustomerPaymentsResult | null;
@@ -40,6 +52,8 @@
 		returnContext?: RequestListQuery | null;
 		/** Increments after each authoritative Activity refresh (live timeline updates). */
 		refreshSignal?: number;
+		/** An enhanced Stripe check may have changed settlement: re-read Right now and Activity. */
+		onsettlement?: () => void;
 	} = $props();
 
 	const initial = untrack(() => {
@@ -52,7 +66,10 @@
 	});
 	let current = $state<CustomerPaymentsView>(initial);
 	let busy = $state<PaymentLinkIntent | null>(null);
+	// The attempt a Stripe check is running for: every other check waits until it answers.
+	let busyAttempt = $state<string | null>(null);
 	let message = $state(untrack(() => result?.message ?? ''));
+	let messageTone = $state(untrack(() => result?.messageTone ?? 'positive'));
 	let error = $state(untrack(() => result?.error ?? ''));
 	let reviewRequired = $state(untrack(() => !!result?.reviewRequired));
 	// The usable link, shown only after a deliberate reveal when the clipboard is unavailable.
@@ -70,6 +87,9 @@
 	const needsReconciliation = $derived(
 		attempts?.some((attempt) => attempt.outcome === 'RECONCILIATION_REQUIRED') ?? false
 	);
+	// Presentation only: commerce alone decides whether a check expires a session.
+	const terms = $derived(currentPaymentTerms(request));
+	const attention = $derived(attemptsNeedingAttention(attempts, terms));
 
 	function hideRevealed() {
 		revealed = null;
@@ -142,17 +162,22 @@
 		}
 		error = next.error ?? '';
 		message = next.message ?? '';
+		messageTone = next.messageTone ?? 'positive';
 		if (next.reviewRequired) reviewRequired = true;
 		if (next.link && next.link.state !== 'active') hideRevealed();
+		// A captured or applied payment changes Right now and Activity, not just this card.
+		if (next.settlement && !next.reviewRequired) onsettlement?.();
 	}
 
-	function submitter(intent: PaymentLinkIntent): SubmitFunction {
+	function submitter(intent: PaymentLinkIntent, attemptId?: string): SubmitFunction {
 		return ({ cancel }) => {
+			// One deliberate submission, one request: duplicates and blocked states never post.
 			if (busy || reviewRequired) {
 				cancel();
 				return;
 			}
 			busy = intent;
+			busyAttempt = attemptId ?? null;
 			error = '';
 			message = '';
 			if (intent === 'rotate' || intent === 'revoke') hideRevealed();
@@ -180,6 +205,7 @@
 					}
 				} finally {
 					busy = null;
+					busyAttempt = null;
 				}
 			};
 		};
@@ -244,8 +270,53 @@
 			: attempt.outcome === 'APPLIED'
 				? 'moss'
 				: 'outline';
-	const documentOf = (attempt: PaymentAttempt) =>
-		`${attempt.purpose === 'DEPOSIT' ? 'Quote' : 'Invoice'} v${attempt.businessRevision}`;
+	const paymentOf = (attempt: PaymentAttempt) =>
+		`${attempt.purpose === 'DEPOSIT' ? 'deposit' : attempt.purpose === 'INVOICE' ? 'Invoice payment' : 'payment'} of ${formatMinor(attempt.authorizedMinor)}`;
+	const attentionHeading: Record<AttemptAttention['kind'], string> = {
+		release: 'Previous checkout is still open',
+		confirming: 'A payment is being confirmed',
+		unconfirmed: 'Checkout status isn’t confirmed'
+	};
+	function attentionCopy(item: AttemptAttention): string[] {
+		const payment = paymentOf(item.attempt);
+		const article = item.attempt.purpose === 'INVOICE' ? 'an' : 'a';
+		switch (item.status) {
+			case 'open_superseded':
+				return [
+					`The customer started ${article} ${payment} using an earlier version of this booking. ${supersededCopy(item.attempt, item.reasons, terms)}`,
+					'You can check with Stripe and request release of that checkout so they can pay against the updated terms from the same link. Emailing the updated document doesn’t depend on this.'
+				];
+			case 'processing':
+				return [
+					`Stripe is confirming the customer’s ${payment}. Don’t start or record another payment until it settles.`
+				];
+			case 'paid_pending':
+				return [
+					`Stripe reports the customer’s ${payment} succeeded, but it isn’t applied to the booking yet. Don’t collect it again.`
+				];
+			case 'creating':
+				return [
+					`Checkout for ${article} ${payment} was started, but commerce hasn’t confirmed it with Stripe yet. Checking never creates a second charge.`
+				];
+			default:
+				return [
+					`A checkout for ${article} ${payment} is open, and its terms can’t be compared from here. Checking lets commerce compare them: it releases a checkout only when its terms are out of date.`
+				];
+		}
+	}
+	const rowNote = (attempt: PaymentAttempt) => {
+		const { status, reasons } = classifyAttempt(attempt, terms);
+		return status === 'open_superseded'
+			? `Earlier terms. ${supersededCopy(attempt, reasons, terms)}`
+			: status === 'open_current'
+				? 'Matches the current terms.'
+				: null;
+	};
+	const toneClass = {
+		positive: 'text-moss-600',
+		neutral: 'text-(--text-body)',
+		warning: 'text-rust-600'
+	} as const;
 </script>
 
 <Card
@@ -414,6 +485,51 @@
 			</p>
 		{/if}
 
+		{#if attention.length}
+			<!-- Checkouts that need a staff decision, outside the diagnostics disclosure. Each posts the
+			     existing reconcile command for exactly its attempt; commerce decides what Stripe does. -->
+			<ul class="m-0 flex list-none flex-col gap-2 p-0">
+				{#each attention as item (item.attempt.id)}
+					<li
+						class={[
+							'flex flex-col gap-2 rounded-input border px-3 py-2.5',
+							item.kind === 'confirming'
+								? 'border-rust-600/40 bg-rust-600/5'
+								: 'border-olive-700/25 bg-olive-700/8'
+						]}
+						data-testid={item.kind === 'release' ? 'previous-checkout' : 'checkout-status'}
+						data-attempt-id={item.attempt.id}
+						data-status={item.status}
+					>
+						<p class="m-0 text-[13px] leading-[1.45] font-semibold text-(--text-body)">
+							{attentionHeading[item.kind]}
+						</p>
+						{#each attentionCopy(item) as paragraph, index (index)}
+							<p class="m-0 text-[12.5px] leading-[1.55] text-(--text-body)">{paragraph}</p>
+						{/each}
+						<form method="POST" {action} use:enhance={submitter('reconcile', item.attempt.id)}>
+							<input type="hidden" name="intent" value="reconcile" />
+							<input type="hidden" name="attemptId" value={item.attempt.id} />
+							<Button
+								type="submit"
+								variant="secondary"
+								class="min-h-11 w-full"
+								disabled={!!busy || reviewRequired}
+								data-testid={item.kind === 'release'
+									? 'release-previous-checkout'
+									: 'check-payment-status'}
+								>{busyAttempt === item.attempt.id
+									? 'Checking with Stripe…'
+									: item.kind === 'release'
+										? 'Release previous checkout'
+										: 'Check payment status'}</Button
+							>
+						</form>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
 		<details ontoggle={toggleAttempts} data-testid="payment-attempts">
 			<summary class={summaryClass}
 				>Online payment attempts{attempts ? ` (${attempts.length})` : ''}{refreshing
@@ -432,6 +548,7 @@
 				{:else}
 					<ul class="m-0 flex list-none flex-col gap-2 p-0">
 						{#each attempts as attempt (attempt.id)}
+							{@const termsNote = rowNote(attempt)}
 							<li
 								class={[
 									'flex flex-col gap-1 rounded-input border px-3 py-2.5',
@@ -454,11 +571,17 @@
 								</div>
 								<span class="text-[11.5px] leading-[1.5] text-(--text-muted)">
 									<time datetime={attempt.createdAt}>{receivedTimeLabel(attempt.createdAt)}</time>
-									· {documentOf(attempt)} · {attemptOutcomeLabels[attempt.outcome] ??
+									· {attemptDocumentLabel(attempt)} · {attemptOutcomeLabels[attempt.outcome] ??
 										attempt.outcome} · {attempt.ledgerPaymentId
 										? 'Ledger payment recorded'
 										: 'No ledger payment'}
 								</span>
+								{#if termsNote}
+									<span
+										class="text-[11.5px] leading-[1.5] text-(--text-muted)"
+										data-testid="payment-attempt-terms">{termsNote}</span
+									>
+								{/if}
 								{#if attempt.outcome === 'RECONCILIATION_REQUIRED'}
 									<span class="text-[11.5px] leading-[1.5] text-rust-600"
 										>Money reached the ledger but was not allocated automatically. Review unapplied
@@ -475,10 +598,11 @@
 										<summary class={summaryClass}>Check with Stripe…</summary>
 										<div class="mt-1.5 flex flex-col gap-1.5">
 											<p class={note}>
-												Asks Stripe for this attempt's latest status. It never creates a new charge,
+												Asks Stripe for this attempt's latest status. Commerce releases an open
+												checkout only when its terms are out of date. It never creates a new charge,
 												and it can't allocate an unapplied payment on its own.
 											</p>
-											<form method="POST" {action} use:enhance={submitter('reconcile')}>
+											<form method="POST" {action} use:enhance={submitter('reconcile', attempt.id)}>
 												<input type="hidden" name="intent" value="reconcile" />
 												<input type="hidden" name="attemptId" value={attempt.id} />
 												<Button
@@ -487,7 +611,9 @@
 													size="sm"
 													disabled={!!busy || reviewRequired}
 													data-testid="reconcile-attempt"
-													>{busy === 'reconcile' ? 'Checking…' : 'Check now'}</Button
+													>{busyAttempt === attempt.id
+														? 'Checking with Stripe…'
+														: 'Check payment status'}</Button
 												>
 											</form>
 										</div>
@@ -502,9 +628,10 @@
 	{/if}
 
 	<p
-		class="m-0 text-[12.5px] leading-[1.5] text-moss-600"
+		class={['m-0 text-[12.5px] leading-[1.5]', toneClass[messageTone]]}
 		role="status"
 		data-testid="customer-payments-status"
+		data-tone={message ? messageTone : undefined}
 	>
 		{message}
 	</p>

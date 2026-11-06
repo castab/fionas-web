@@ -107,9 +107,19 @@
 	}) {
 		liveTimeline = { base: data.conversation, timeline: next };
 		activityRefreshes++;
-		if (!historyChanged) return;
+		if (historyChanged) financialStateChanged();
+	}
+	// Right now follows changed money in place; an open review keeps its snapshot and says so.
+	function financialStateChanged() {
 		if (reviewSnapshotOpen) liveStale = true;
 		else void refreshLiveRequest();
+	}
+	// An enhanced Stripe check that may have captured or applied money: one targeted Activity read
+	// and one staff-request read. Checkout-only answers (released, still open) refresh neither, so an
+	// open email preview keeps its review.
+	function paymentSettlementChanged() {
+		activityRefresh++;
+		financialStateChanged();
 	}
 	const quoteResult = $derived(
 		form && ('quoteValues' in form || 'quoteError' in form) ? (form as QuoteActionResult) : null
@@ -244,15 +254,16 @@
 			: undefined;
 		return item && 'messageId' in item ? `#message-${item.messageId}` : '#conversation';
 	});
-	// Bumped after an enhanced financial email is accepted: one targeted Activity read.
-	let emailRefresh = $state(0);
+	// Bumped after an enhanced financial email is accepted, or a Stripe check that may have moved
+	// money: one targeted Activity read.
+	let activityRefresh = $state(0);
 	async function emailWasAccepted(accepted: {
 		sendId: string;
 		replayed: boolean;
 		kind: FinancialEmailKind;
 	}) {
 		emailSent = { base: data.financialEmail, accepted };
-		emailRefresh++;
+		activityRefresh++;
 		// Leave the ?email state without a new history entry or a reload: drafts, the reply composer
 		// and disclosures stay as they are.
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- route is resolve()d plus workspaceSearch
@@ -582,12 +593,14 @@
 				     the payment history; this card never repeats it. -->
 					<CustomerPayments
 						stage={request.inquiry.lifecycle.stage}
+						{request}
 						view={data.customerPayments}
 						result={customerPaymentsResult}
 						endpoint={workspacePath + '/customer-payments'}
 						{route}
 						returnContext={data.returnContext}
 						refreshSignal={activityRefreshes}
+						onsettlement={paymentSettlementChanged}
 					/>
 				{/if}
 			</div>
@@ -729,7 +742,7 @@
 						returnContext={data.returnContext}
 						result={form as ConversationActionResult | null}
 						onrefreshed={activityRefreshed}
-						refreshSignal={emailRefresh}
+						refreshSignal={activityRefresh}
 					/>
 				{/key}
 			</div>

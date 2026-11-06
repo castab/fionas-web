@@ -281,6 +281,94 @@ describe('customer payments action', () => {
 		expect(JSON.stringify(result)).not.toContain('checkout.stripe.com');
 	});
 
+	it('answers a release with the provider-confirmed status only, once per submission', async () => {
+		const reconcile = (state: string, outcome = 'PENDING', attemptId = attempt.id) => {
+			routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+				Response.json({ attemptId, uiMode: 'EMBEDDED', state, outcome });
+		};
+		const submit = async () =>
+			data(
+				await customerPaymentsAction(
+					actionEvent([
+						['intent', 'reconcile'],
+						['attemptId', attempt.id]
+					])
+				)
+			);
+		reconcile('EXPIRED');
+		expect(await submit()).toMatchObject({
+			reconciled: { state: 'EXPIRED' },
+			messageTone: 'positive',
+			settlement: false,
+			message: expect.stringContaining('released')
+		});
+		reconcile('OPEN');
+		const open = await submit();
+		expect(open).toMatchObject({ messageTone: 'neutral', settlement: false });
+		expect(open.message).toContain('wasn’t released');
+		reconcile('PROCESSING');
+		const processing = await submit();
+		expect(processing).toMatchObject({ messageTone: 'warning', settlement: false });
+		expect(String(processing.message)).not.toMatch(/it’s released|cancel/i);
+		reconcile('SUCCEEDED', 'APPLIED');
+		expect(await submit()).toMatchObject({ messageTone: 'positive', settlement: true });
+		reconcile('SUCCEEDED', 'RECONCILIATION_REQUIRED');
+		expect(await submit()).toMatchObject({
+			messageTone: 'warning',
+			settlement: true,
+			message: expect.stringContaining('needs staff reconciliation')
+		});
+		// One bodyless POST per submission, to exactly the submitted attempt, never retried.
+		const posts = calls.filter((c) => c.method === 'POST');
+		expect(posts).toHaveLength(5);
+		expect(new Set(posts.map((c) => c.url))).toEqual(
+			new Set([`${base}/payment-attempts/${attempt.id}/reconcile`])
+		);
+		expect(posts.every((c) => c.body === undefined || c.body === null)).toBe(true);
+		// Each answer re-reads the authoritative attempt list.
+		expect(calls.filter((c) => c.url === `${base}/payment-attempts`)).toHaveLength(5);
+	});
+
+	it('blocks for review when Stripe’s answer is ambiguous or about another attempt', async () => {
+		const submit = async () =>
+			data(
+				await customerPaymentsAction(
+					actionEvent([
+						['intent', 'reconcile'],
+						['attemptId', attempt.id]
+					])
+				)
+			);
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json({
+				attemptId: '00000000-0000-4000-8000-000000000999',
+				state: 'EXPIRED',
+				outcome: 'PENDING'
+			});
+		const other = await submit();
+		expect(other).toMatchObject({ reviewRequired: true });
+		expect(other.reconciled).toBeUndefined();
+		expect(other.message).toBeUndefined();
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json({ attemptId: attempt.id, state: 'PAUSED', outcome: 'PENDING' });
+		expect(await submit()).toMatchObject({ reviewRequired: true });
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json({ code: 'stripe_unavailable', message: 'PRIVATE' }, { status: 502 });
+		const failed = await submit();
+		expect(failed).toMatchObject({ reviewRequired: true });
+		expect(failed.error).toContain("Don't assume the checkout was released or paid");
+		expect(JSON.stringify(failed)).not.toContain('PRIVATE');
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json(
+				{ code: 'CHECKOUT_CREATION_UNKNOWN_REQUIRES_RECONCILIATION', message: 'PRIVATE' },
+				{ status: 409 }
+			);
+		const conflict = await submit();
+		expect(conflict).toMatchObject({ reviewRequired: false });
+		expect(conflict.error).toContain('nothing was released or settled');
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(4);
+	});
+
 	it('maps CLOSED issuance refusals and ambiguous failures to safe copy', async () => {
 		routes[`POST ${base}/payment-access/rotate`] = () =>
 			Response.json({ code: 'illegal_transition', message: 'PRIVATE' }, { status: 409 });

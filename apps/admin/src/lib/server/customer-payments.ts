@@ -14,6 +14,7 @@ import {
 	type CustomerPaymentsView,
 	type PaymentLinkIntent
 } from '../customer-payments.js';
+import { reconcileFeedback } from '../checkout-attempts.js';
 import type { InquiryStage } from '../request-contract.js';
 
 /**
@@ -189,16 +190,31 @@ export async function customerPaymentsAction({
 	}
 	applySetCookies(cookies, result.setCookies);
 	if (intent === 'reconcile') {
-		const reconciled = readReconcileResult(result.data);
+		// Answers only for the attempt that was submitted; anything else is not a result.
+		const answer = readReconcileResult(result.data);
+		const reconciled = answer?.attemptId === values.attemptId ? answer : null;
+		const feedback = reconciled ? reconcileFeedback(reconciled) : null;
+		// The authoritative list, never a local edit of the attempt.
 		const attempts = await listPaymentAttempts(config, inquiryId, cookie);
+		const listed = attempts.ok ? readPaymentAttempts(attempts.data) : null;
+		if (!feedback || feedback.unconfirmed)
+			return {
+				customerPayments: {
+					intent,
+					attempts: listed,
+					error: customerPaymentsErrorMessage(intent, 503),
+					reviewRequired: true,
+					settlement: true
+				} satisfies CustomerPaymentsResult
+			};
 		return {
 			customerPayments: {
 				intent,
-				reconciled: reconciled ?? undefined,
-				attempts: attempts.ok ? readPaymentAttempts(attempts.data) : null,
-				message: reconciled
-					? 'Checked with Stripe. The attempt list below shows the current result.'
-					: 'Checked with Stripe. Reload to review the current result.'
+				reconciled: reconciled!,
+				attempts: listed,
+				message: feedback.text,
+				messageTone: feedback.tone,
+				settlement: feedback.settlement
 			} satisfies CustomerPaymentsResult
 		};
 	}
