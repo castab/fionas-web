@@ -61,7 +61,8 @@
 	};
 </script>
 
-<!-- Rendered inside the Right now action row: the alert takes a full line, the form one button. -->
+<!-- Rendered as Right now's primary action row: the alert and the button each take a full line,
+     with the guidance under them. -->
 {#if message}
 	<div role="alert" class="flex basis-full flex-col items-start gap-3">
 		<p id="fulfillment-error" tabindex="-1" class="m-0 text-sm text-rust-600">{message}</p>
@@ -76,7 +77,7 @@
 		action={workspaceAction(returnContext, serve ? 'markServed' : 'closeInquiry')}
 		use:enhance={submit}
 		aria-busy={submitting}
-		class="flex flex-[1.4_1_150px]"
+		class="flex flex-[1_1_100%]"
 		data-testid="fulfillment-form"
 	>
 		<Button

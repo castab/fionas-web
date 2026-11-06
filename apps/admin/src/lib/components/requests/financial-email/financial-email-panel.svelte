@@ -13,7 +13,9 @@
 	} from '$lib/financial-email-contract.js';
 	import {
 		MESSAGE_MAX_LENGTH,
+		customerFirstName,
 		draftLocked,
+		emailCopy,
 		expectationFields,
 		financialEmailMessage,
 		financialEmailStatus,
@@ -21,12 +23,13 @@
 		intentVersionLabel,
 		kindLabel,
 		messageProblemCopy,
+		missingEmailPermissionCopy,
+		pacificTimeLabel,
 		sameIntent,
 		unavailableCopy
 	} from '$lib/financial-email.js';
 	import { replyExpectation } from '$lib/conversation.js';
 	import { formatMoney } from '$lib/presentation.js';
-	import { receivedTimeLabel } from '$lib/payments.js';
 	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
 	import EmailPreviewFrame from './email-preview-frame.svelte';
@@ -83,6 +86,7 @@
 	});
 
 	const name = $derived(kindLabel(view.kind));
+	const first = $derived(customerFirstName(request.inquiry.name));
 	const target = $derived(financialEmailTarget(request));
 	const intent = $derived(target && 'intent' in target ? target.intent : null);
 	const expectation = $derived(replyExpectation(timeline));
@@ -116,13 +120,15 @@
 		!draft || draft.state !== 'reviewed' || locked
 			? null
 			: changedDocument || detailsChanged || serverStale
-				? `The ${name} or its payment details changed since this preview. Preview the email again before sending.`
+				? `The ${name} or its payment details changed since this preview. Preview again before sending.`
 				: changedConversation
-					? 'New correspondence arrived since this preview. Check Activity, then preview the email again.'
+					? 'New messages arrived since this preview. Check Activity, then preview again.'
 					: changedMessage
-						? 'You changed the message after the preview. Preview the email again to review it.'
+						? 'You changed the message. Preview again to check it before sending.'
 						: null
 	);
+	// The unresolved send this browser cannot check, for the escalation copy.
+	const lostSendId = $derived(history.unknown.at(-1)?.sendId ?? null);
 	const unavailable = $derived(
 		target && 'unavailable' in target
 			? target.unavailable
@@ -189,12 +195,8 @@
 					preview = null;
 					message = '';
 					serverStale = false;
+					// The page closes this panel and confirms the send in Right now's Customer email block.
 					onaccepted(accepted);
-					await announce(
-						accepted.replayed
-							? `This ${name} email was already accepted earlier; no new email was sent.`
-							: `${name} email accepted by the email provider. Delivery is not confirmed yet.`
-					);
 					return;
 				}
 				if (data && 'draft' in data && data.draft !== undefined) draft = data.draft;
@@ -214,7 +216,7 @@
 				if (sending && draft) draft = { ...draft, state: 'unknown' };
 				await announce(
 					sending
-						? 'The send could not be confirmed. It may have been sent. Use Reconcile original send, which repeats the exact original command.'
+						? 'We can’t tell if this email went out. Use Check again: it repeats the original send exactly and never sends a second copy.'
 						: 'The preview is unavailable right now. Try again shortly.',
 					true
 				);
@@ -239,11 +241,8 @@
 >
 	<div class="flex flex-col gap-1.5">
 		<h2 id="financial-email-title" class={caps}>Email {name.toLowerCase()}</h2>
-		<p class="m-0 text-xs leading-[1.55] text-(--text-muted)">
-			{view.kind === 'QUOTE'
-				? 'Emails the current published Quote, with the customer’s payment link, in the booking’s email thread. Publishing a Quote never sends it; this does, only when you click Send quote.'
-				: 'Emails the current Invoice and its remaining balance, with the customer’s payment link, in the booking’s email thread. Only you sending it here emails it.'}
-			This is not a conversation reply and records no payment.
+		<p class="m-0 text-xs leading-[1.55] text-(--text-muted)" data-testid="financial-email-intro">
+			{emailCopy.intro(view.kind, first)}
 		</p>
 	</div>
 
@@ -270,41 +269,39 @@
 
 	{#if lost}
 		<p class={cn(notice, 'bg-rust-600/8 text-rust-600')} data-testid="financial-email-lost">
-			The original command for an unresolved email is not available in this browser, so it cannot be
-			reconciled here. Do not prepare a new email. Ask an administrator to investigate with the send
-			ID shown under Customer email.
+			{emailCopy.lost(lostSendId)}
 		</p>
 	{:else if draft?.state === 'reconciliation_required'}
 		<p
 			class={cn(notice, 'bg-rust-600/8 text-rust-600')}
 			data-testid="financial-email-reconciliation"
 		>
-			<strong>Reconciliation required.</strong> Commerce cannot reconstruct this email exactly, so
-			it will not dispatch it. The customer may or may not have received it. Investigate provider
-			acceptance and delivery{draft.sendId ? ` with send ID ${draft.sendId}` : ''}; never assume it
-			was not sent.
+			<strong>We couldn’t confirm whether {first} got this email</strong>, and it can’t be sent
+			again automatically. Ask an administrator to check {draft.sendId
+				? `send ID ${draft.sendId}`
+				: 'it'} before doing anything else.
 		</p>
 	{:else if locked && draft}
 		<p class={cn(notice, 'bg-rust-600/8 text-(--text-body)')} data-testid="financial-email-locked">
-			<strong>Send outcome unknown.</strong>
+			<strong>We can’t tell if this email went out.</strong>
 			{draft.possiblyAttempted
-				? 'Commerce has a matching send request from after this review, so it may already have been sent.'
-				: 'It may have been sent.'} The reviewed email is locked. Reconcile original send repeats its
-			exact key, message, review and original conversation expectation: if it was already sent, nothing
-			new is sent; if it never reached the email provider, this sends it now.
+				? 'A send was started after this preview, so it may already have gone out.'
+				: ''} Check again to find out. Checking never sends a second copy: if the first one went out,
+			nothing new is sent; if it didn’t, it goes out now. The message can’t be changed until then.
 		</p>
 	{:else if draft?.state === 'rejected'}
 		<p class={cn(notice, 'bg-cream-200')} data-testid="financial-email-rejected">
-			The last send was refused, and nothing is pending under it. Review the email again to start a
-			new send.
+			That send was refused, so nothing went out. Preview again to start a new one.
 		</p>
 	{/if}
 
 	{#if history.current && !locked}
 		<p class={cn(notice, 'bg-olive-700/8')} data-testid="financial-email-already">
-			This {name} was already emailed {receivedTimeLabel(
-				history.current.acceptedAt ?? history.current.requestedAt
-			)} Pacific. Sending again emails the customer again.
+			{emailCopy.already(
+				view.kind,
+				first,
+				pacificTimeLabel(history.current.acceptedAt ?? history.current.requestedAt)
+			)}
 		</p>
 	{/if}
 
@@ -331,7 +328,7 @@
 		</div>
 		{#if fields}
 			<div class="min-w-0">
-				<dt class={micro}>Document (staff only)</dt>
+				<dt class={micro}>Sending</dt>
 				<dd class="m-0 mt-0.5 text-[13px]" data-testid="email-document">
 					{intentVersionLabel(locked && draft ? draft.intent : fields)}
 				</dd>
@@ -346,9 +343,8 @@
 	{/if}
 
 	{#if !view.canManage}
-		<p class={cn(notice, 'bg-cream-200')}>
-			Emailing a {name} requires inquiry read, financial-document read, communications read and send,
-			and payment-access manage permissions.
+		<p class={cn(notice, 'bg-cream-200')} data-testid="financial-email-permissions">
+			{missingEmailPermissionCopy}
 		</p>
 	{:else if fields && !lost}
 		<form
@@ -395,7 +391,7 @@
 					disabled={!!pending}
 					aria-describedby="financial-email-message-help"
 					aria-invalid={!normalized.ok ? 'true' : undefined}
-					placeholder={`Leave blank for the standard ${name} greeting.`}
+					placeholder="Leave blank for our standard greeting."
 					class={`min-h-24 w-full min-w-0 resize-y rounded-input border border-(--border-soft) bg-(--surface-card) px-3 py-2.5 text-sm leading-[1.55] wrap-anywhere read-only:opacity-80 aria-invalid:border-rust-600 ${focusRing}`}
 				></textarea>
 				<p
@@ -403,8 +399,8 @@
 					class="m-0 flex justify-between gap-3 text-xs text-(--text-muted)"
 				>
 					<span
-						>Plain text; blank lines start new paragraphs. Shown to the customer above the {name}.
-						Changing it after a preview needs a new preview.</span
+						>Plain text. Leave a blank line to start a new paragraph. It shows above the {name}; if
+						you change it after previewing, preview again.</span
 					>
 					{#if hydrated}<span aria-hidden="true" class="whitespace-nowrap"
 							>{message.length}/{MESSAGE_MAX_LENGTH.toLocaleString('en-US')}</span
@@ -475,8 +471,7 @@
 					</dl>
 					<EmailPreviewFrame html={preview.html} text={preview.text} subject={preview.subject} />
 					<p class="m-0 text-[11.5px] leading-[1.5] text-(--text-muted)">
-						The sent email carries the customer’s own payment link instead of the inert preview
-						button. Customers never see version numbers.
+						The real email uses {first}’s own payment link. Customers never see version numbers.
 					</p>
 				</section>
 			{/if}
@@ -489,7 +484,7 @@
 						disabled={!canReconcile}
 						class="min-h-12 flex-[1.4_1_180px]"
 						data-testid="reconcile-financial-email"
-						>{pending === 'send' ? 'Reconciling…' : 'Reconcile original send'}</Button
+						>{pending === 'send' ? 'Checking…' : 'Check again'}</Button
 					>
 				{:else}
 					<Button
@@ -521,11 +516,15 @@
 					>{/if}
 			</div>
 			{#if draft && draft.state !== 'reviewed'}
-				<p class="m-0 text-[11px] leading-[1.5] text-(--text-muted)">
-					Reviewed {receivedTimeLabel(draft.reviewedAt)} Pacific{draft.sendId
-						? ` · Send ID ${draft.sendId}`
-						: ''}. The original command is kept encrypted in this browser for 30 days; reconcile
-					before then. A new key is never used to retry it.
+				<p
+					class="m-0 text-[11px] leading-[1.5] text-(--text-muted)"
+					data-testid="financial-email-footnote"
+				>
+					{emailCopy.footnote(
+						pacificTimeLabel(draft.reviewedAt),
+						draft.sendId,
+						locked && draft.state !== 'reconciliation_required'
+					)}
 				</p>
 			{/if}
 		</form>

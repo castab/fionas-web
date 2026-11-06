@@ -55,7 +55,7 @@ labels; failed, delayed, bounced, complained, suppressed and indeterminate state
 The timeline's `financialEmails` command history and an outbound MESSAGE's matching `financialEmail`
 metadata are validated with the rest of the read (unique send IDs; metadata only on outbound
 messages and only for that message ID). Such a message is labelled **Quote emailed** /
-**Invoice emailed** with the staff-only document version and business revision, Current/Earlier
+**Invoice emailed** with the staff-only document version ("Quote v2"), Current/Earlier
 (commerce's `current`) and sender; it is the provider message itself, never an extra band. UNKNOWN
 and REJECTED commands without a message appear in Right now's **Customer email** block. A financial
 email never acknowledges correspondence: Needs reply and the watermark are unchanged, and the reply

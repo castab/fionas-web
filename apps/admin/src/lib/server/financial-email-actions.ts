@@ -260,7 +260,7 @@ export async function previewFinancialEmailAction(event: Event) {
 		return failure(409, {
 			draft: publicDraft(record, possiblyAttempted(record, timeline)),
 			error:
-				'The reviewed email may already have been sent, so it is locked. Reconcile the original send before preparing another.'
+				'This email may already have gone out, so it can’t be changed. Check again before preparing another.'
 		});
 	const target = financialEmailTarget(current.data);
 	if (!target || !('intent' in target))
@@ -382,7 +382,7 @@ export async function sendFinancialEmailAction(event: Event) {
 			error:
 				record.state === 'reviewed'
 					? 'The message changed after the preview. Preview the email again to review the new message; nothing was sent.'
-					: 'The original email is locked. Reconcile repeats its exact original message.'
+					: 'The message can’t be changed until you check again. Check again repeats the original message exactly.'
 		});
 	if (sendPending.has(record.key))
 		return failure(409, {
@@ -438,7 +438,7 @@ export async function sendFinancialEmailAction(event: Event) {
 		return failure(409, {
 			draft: publicDraft(unknown),
 			error:
-				'Commerce could not confirm whether the email was accepted. It may have been sent. Use Reconcile original send, which repeats the exact original command and cannot create a duplicate.'
+				'We can’t tell if this email went out. Use Check again: it repeats the original send exactly and never sends a second copy.'
 		});
 	}
 	const code = result.error.status === 401 ? 'unauthenticated' : result.error.code;

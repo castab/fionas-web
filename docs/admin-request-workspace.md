@@ -47,8 +47,24 @@ approvals** disclosure at every stage, next to the **Financial versions** link t
 `requestSummary`/`requestSummaryDescription` with the business-timezone date the load supplies
 (`businessDate`), so a countdown ("scooping in 25 days") never depends on the host or browser
 clock. Its figures are backend values only: Estimate or Quote total and the active deposit while
-QUOTED; Invoice total, `reconciliation.netApplied` (Paid) and balance afterwards. Its action row
-holds Build quote / Revise quote / Amend invoice / Decline, Mark event served / Close event, and Record deposit / Record payment.
+QUOTED; Invoice total, `reconciliation.netApplied` (Paid) and balance afterwards.
+
+Its actions follow **one primary action per stage**, full width, with secondary actions below it
+side by side (`flex: 1 1 120px`, 14px side padding), wrapping when there isn't room. Phones wrap the
+same way.
+
+| Stage               | Primary (full width)                  | Secondary row                  |
+| ------------------- | ------------------------------------- | ------------------------------ |
+| REQUESTED           | Build quote, with Decline (danger)    | —                              |
+| QUOTED              | Record deposit                        | Revise quote · Email quote     |
+| BOOKED              | Mark event served (with its help)     | Record payment · Amend invoice |
+| SERVED, settled     | Close event (with its help)           | Amend invoice                  |
+| SERVED, balance due | Record payment (Close event can't be) | Amend invoice · Email invoice  |
+
+Each action keeps its own permission. An action this staff member can't take isn't shown, and the
+remaining buttons fill their row; a missing primary leaves only the secondary row (the secondary
+actions are never promoted). In the 340px rail, "Record payment" and "Amend invoice" don't fit two
+up, so each takes its own line. The Customer email block above the rows is status only.
 Payment entry opens below the card from `?payment` (a plain link, so it works without JavaScript)
 or stays open while a returned payment result is shown; success PRGs to the clean path, which
 closes it.
@@ -251,17 +267,20 @@ refreshes also refresh displayed attempts. See [customer-payments.md](customer-p
 
 ## Quote and Invoice emails
 
-Right now carries a **Customer email** block while QUOTED or SERVED: never emailed, current
+Right now carries a **Customer email** status block while QUOTED or SERVED: never emailed, current
 document emailed (with provider send/delivery labels; accepted is never shown as delivered), only an
-earlier revision emailed, UNKNOWN sends needing reconciliation, or a rejected latest attempt, plus
+earlier revision emailed, UNKNOWN sends needing a check, or a refused latest attempt, plus
 an explanation when nothing can be emailed (fully paid or overpaid Invoice, missing business
-revision, unreviewable conversation, unresolved send, missing permissions). **Email quote** /
-**Email invoice** opens the `?email` review panel in the main column; it requires all five
-permissions (`fionas.inquiries.read`, `commerce.financial-document.read`,
-`fionas.communications.read`, `fionas.communications.send`, `fionas.payment-access.manage`). The
-panel previews the backend-rendered email in an isolated frame, then sends it only on **Send
-quote** / **Send invoice**. A possibly sent email reopens the panel by itself, locked to **Reconcile
-original send**. Publishing a Quote, amending an Invoice and recording payments never email. The
+revision, unreviewable conversation, unresolved send, missing permissions). The block has no
+button: **Email quote** / **Email invoice** sits in Right now's secondary row and opens the `?email`
+review panel in the main column; it requires all five permissions (`fionas.inquiries.read`,
+`commerce.financial-document.read`, `fionas.communications.read`, `fionas.communications.send`,
+`fionas.payment-access.manage`), and staff without them read "Ask an administrator to turn on
+emailing for you…" instead of the permission names. The panel previews the backend-rendered email
+in an isolated frame, then sends it only on **Send quote** / **Send invoice**. An accepted or
+replayed send closes the panel and confirms it once in the Customer email block ("Sent just now. See
+it in Activity…"); locked, refused and unknown outcomes keep it open. A possibly sent email reopens
+the panel by itself, locked to **Check again**. Publishing a Quote, amending an Invoice and recording payments never email. The
 panel does not join the review-snapshot set: a live staff-request re-read that changes the
 document, or newer correspondence, invalidates its preview instead. See
 [admin-financial-emails.md](admin-financial-emails.md).

@@ -1,5 +1,8 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { goto, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
 	import { Badge, Button, Card, focusRing } from '@fionas/ui';
 	import { site } from '@fionas/shared';
 	import RequestDetails from '$lib/components/requests/request-details.svelte';
@@ -20,7 +23,7 @@
 		FinancialEmailActionResult,
 		FinancialEmailKind
 	} from '$lib/financial-email-contract.js';
-	import { draftLocked, financialEmailStatus } from '$lib/financial-email.js';
+	import { draftLocked, financialEmailStatus, kindLabel } from '$lib/financial-email.js';
 	import type { StaffTimeline } from '$lib/conversation-contract.js';
 	import { canRecordDeposit, canRecordInvoicePayment, receivedTimeLabel } from '$lib/payments.js';
 	import { isDecimal } from '$lib/payment-history.js';
@@ -195,7 +198,20 @@
 	);
 	const publications = $derived(request ? publicationEntries(request) : []);
 	// Quote (QUOTED) or balance-due Invoice (SERVED) email: one reviewed, recoverable command.
-	const emailView = $derived(data.financialEmail);
+	// An enhanced send accepted for this page load (`base` ties it to that load): the panel closes,
+	// its recovery record is consumed, and Right now's Customer email block confirms it once.
+	let emailSent = $state.raw<{
+		base: unknown;
+		accepted: { sendId: string; replayed: boolean; kind: FinancialEmailKind };
+	} | null>(null);
+	const emailAccepted = $derived(
+		emailSent && emailSent.base === data.financialEmail ? emailSent.accepted : null
+	);
+	const emailView = $derived(
+		data.financialEmail && emailAccepted
+			? { ...data.financialEmail, draft: null, preview: null, stale: false }
+			: data.financialEmail
+	);
 	const emailResult = $derived(
 		form && 'financialEmail' in form ? (form as FinancialEmailActionResult).financialEmail : null
 	);
@@ -203,18 +219,56 @@
 		emailView && timeline ? financialEmailStatus(timeline.financialEmails, emailView.kind) : null
 	);
 	// Opened by ?email (works without JavaScript); a native result or a possibly sent email keeps it.
+	// Locked, rejected and unknown outcomes keep it open; an accepted or replayed send closes it.
 	const showEmail = $derived(
 		!!request &&
 			!!emailView &&
+			!emailAccepted &&
 			(data.emailOpen || !!emailResult || draftLocked(emailView.draft) || emailView.lost)
 	);
+	// Email quote / Email invoice, in Right now's secondary actions: an unresolved send reopens it.
+	const emailLocked = $derived(!!emailView && draftLocked(emailView.draft));
+	const canOpenEmail = $derived(
+		!!emailView &&
+			emailView.canManage &&
+			(emailLocked || (!!emailView.intent && !emailView.unavailable && !emailView.lost))
+	);
+	// The sent email's Activity message once the refreshed timeline has it, else Activity itself.
+	const sentAccepted = $derived(emailAccepted ?? emailView?.accepted ?? null);
+	const activityHref = $derived.by(() => {
+		const sendId = sentAccepted?.sendId;
+		const item = sendId
+			? timeline?.items.find(
+					(i) => 'financialEmail' in i && i.financialEmail?.sendId === sendId && 'messageId' in i
+				)
+			: undefined;
+		return item && 'messageId' in item ? `#message-${item.messageId}` : '#conversation';
+	});
 	// Bumped after an enhanced financial email is accepted: one targeted Activity read.
 	let emailRefresh = $state(0);
-	let emailAccepted = $state<{
+	async function emailWasAccepted(accepted: {
 		sendId: string;
 		replayed: boolean;
 		kind: FinancialEmailKind;
-	} | null>(null);
+	}) {
+		emailSent = { base: data.financialEmail, accepted };
+		emailRefresh++;
+		// Leave the ?email state without a new history entry or a reload: drafts, the reply composer
+		// and disclosures stay as they are.
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- route is resolve()d plus workspaceSearch
+		replaceState(route, page.state);
+		await tick();
+		document.getElementById('financial-email-accepted')?.focus();
+	}
+	// Shallow routing keeps SvelteKit's own URL at ?email, so reopening after a send would reuse
+	// the consumed load. Re-run it, exactly as opening the panel from a clean URL does.
+	function reopenEmail(event: MouseEvent) {
+		if (!emailAccepted || event.defaultPrevented || event.button !== 0) return;
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		event.preventDefault();
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- panelHref is resolve()d plus workspaceSearch
+		void goto(panelHref('email'), { invalidateAll: true });
+	}
 	const caps =
 		'm-0 font-sans text-[11px] leading-[1.4] font-semibold tracking-(--track-caps-tight) text-(--text-heading) uppercase';
 	const micro =
@@ -410,26 +464,32 @@
 							status={emailStatus}
 							historyLoaded={!!timeline}
 							userId={data.user.id}
-							href={showEmail ? '#financial-email' : panelHref('email')}
-							disabled={mutationPending}
-							accepted={emailAccepted ?? emailView.accepted ?? null}
+							customerName={request.inquiry.name}
+							accepted={sentAccepted}
+							{activityHref}
 						/>
 					{/if}
-					{#if availableMode || canDecline}
-						<!-- Separate permissions: either action can appear without the other. -->
-						<div class="flex flex-wrap gap-2.5">
-							{#if availableMode}
+					{@const serve = canMarkServed(request, data.user.permissions)}
+					{@const close = canCloseInquiry(request, data.user.permissions)}
+					{@const fulfillment = serve || close || !!form?.fulfillmentError}
+					<!-- One primary action per stage, full width: Build quote (with Decline), Record deposit,
+					     Mark event served, Close event, or Record payment while a SERVED balance is due.
+					     Secondary actions sit below it, side by side, wrapping when there isn't room. An action
+					     this staff member can't take isn't shown; the rest fill the row. -->
+					{@const payPrimary = canPay && (stage === 'QUOTED' || (stage === 'SERVED' && !close))}
+					{@const editorSecondary = !!availableMode && availableMode !== 'INITIAL_QUOTE'}
+					{@const secondary =
+						'min-h-12 flex-[1_1_120px] px-3.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-45'}
+					{#if availableMode === 'INITIAL_QUOTE' || canDecline}
+						<!-- REQUESTED. Separate permissions: either action can appear without the other. -->
+						<div class="flex flex-wrap gap-2.5" data-testid="primary-actions">
+							{#if availableMode === 'INITIAL_QUOTE'}
 								<!-- Once the panel is open, this brings it into view instead of reloading it. -->
 								<Button
 									href={showBuilder ? '#quote-builder' : panelHref(editorPanels[availableMode])}
-									variant={availableMode === 'INVOICE_AMENDMENT' ? 'secondary' : 'primary'}
 									disabled={mutationPending || mutationReviewRequired}
 									class="min-h-12 flex-[1.4_1_150px] px-4 aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-									data-testid={availableMode === 'INITIAL_QUOTE'
-										? 'build-quote'
-										: availableMode === 'QUOTE_REVISION'
-											? 'revise-quote'
-											: 'amend-invoice'}>{editorCopy[availableMode].open}</Button
+									data-testid="build-quote">{editorCopy[availableMode].open}</Button
 								>
 							{/if}
 							{#if canDecline}
@@ -443,17 +503,8 @@
 							{/if}
 						</div>
 					{/if}
-					{#if quoteResult?.reviewRequired && !showBuilder}
-						<div role="alert" class="flex flex-col items-start gap-3">
-							<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>
-							<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
-								>Reload to review</Button
-							>
-						</div>
-					{/if}
-					{#if canPay || !!form?.fulfillmentError || canMarkServed(request, data.user.permissions) || canCloseInquiry(request, data.user.permissions)}<div
-							class="flex flex-wrap gap-2.5"
-						>
+					{#if fulfillment || payPrimary}
+						<div class="flex flex-wrap gap-2.5" data-testid="primary-actions">
 							<FulfillmentControls
 								{request}
 								permissions={data.user.permissions}
@@ -466,20 +517,65 @@
 									clientReviewRequired = true;
 								}}
 							/>
-							{#if canPay}
+							{#if payPrimary}
 								<!-- Once the panel is open, this brings it into view instead of reloading it. -->
 								<Button
 									href={showPayment ? '#record-payment' : panelHref('payment')}
-									variant={canMarkServed(request, data.user.permissions) ? 'secondary' : 'primary'}
 									disabled={mutationPending || mutationReviewRequired}
-									class="min-h-12 flex-[1_1_140px] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+									class="min-h-12 flex-[1_1_100%] aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
 									data-testid="open-payment"
 									>{canRecordDeposit(request, data.user.permissions)
 										? 'Record deposit'
 										: 'Record payment'}</Button
 								>
 							{/if}
-						</div>{/if}
+						</div>
+					{/if}
+					{#if (canPay && !payPrimary) || editorSecondary || canOpenEmail}
+						<div class="flex flex-wrap gap-2.5" data-testid="secondary-actions">
+							{#if canPay && !payPrimary}
+								<Button
+									href={showPayment ? '#record-payment' : panelHref('payment')}
+									variant="secondary"
+									disabled={mutationPending || mutationReviewRequired}
+									class={secondary}
+									data-testid="open-payment">Record payment</Button
+								>
+							{/if}
+							{#if editorSecondary && availableMode}
+								<Button
+									href={showBuilder ? '#quote-builder' : panelHref(editorPanels[availableMode])}
+									variant="secondary"
+									disabled={mutationPending || mutationReviewRequired}
+									class={secondary}
+									data-testid={availableMode === 'QUOTE_REVISION'
+										? 'revise-quote'
+										: 'amend-invoice'}>{editorCopy[availableMode].open}</Button
+								>
+							{/if}
+							{#if canOpenEmail && emailView}
+								<Button
+									href={showEmail ? '#financial-email' : panelHref('email')}
+									variant="secondary"
+									disabled={mutationPending}
+									class={secondary}
+									onclick={reopenEmail}
+									data-testid="open-financial-email"
+									>{emailLocked
+										? 'Review unresolved email'
+										: `Email ${kindLabel(emailView.kind).toLowerCase()}`}</Button
+								>
+							{/if}
+						</div>
+					{/if}
+					{#if quoteResult?.reviewRequired && !showBuilder}
+						<div role="alert" class="flex flex-col items-start gap-3">
+							<p class="m-0 text-sm text-rust-600">{quoteResult.quoteError}</p>
+							<Button href={route} data-sveltekit-reload variant="secondary" size="sm"
+								>Reload to review</Button
+							>
+						</div>
+					{/if}
 				</Card>
 				{#if data.customerPayments}
 					<!-- Beside Right now: the stable customer link and provider diagnostics. Activity stays
@@ -568,10 +664,7 @@
 							blocked={mutationReviewRequired || mutationPending}
 							detailsChanged={liveStale}
 							focusOnOpen={data.emailOpen && !form}
-							onaccepted={(accepted) => {
-								emailAccepted = accepted;
-								emailRefresh++;
-							}}
+							onaccepted={emailWasAccepted}
 						/>
 					{/key}
 				{/if}

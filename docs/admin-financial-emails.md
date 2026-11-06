@@ -21,7 +21,8 @@ automatic or scheduled emails, reminders, PDFs or template editor.
 | Commerce calls (preview, send)            | `apps/admin/src/lib/server/financial-email.ts`                           |
 | Sealed exact-command recovery             | `apps/admin/src/lib/server/financial-email-recovery.ts`                  |
 | Load and form actions                     | `apps/admin/src/lib/server/financial-email-actions.ts`                   |
-| Right now status block                    | `$lib/components/requests/financial-email/financial-email-status.svelte` |
+| Right now status block (status only)      | `$lib/components/requests/financial-email/financial-email-status.svelte` |
+| Right now action rows, post-send close    | `apps/admin/src/routes/(app)/requests/[inquiryId]/+page.svelte`          |
 | Review panel and preview frame            | `$lib/components/requests/financial-email/`                              |
 | Stub and journeys                         | `apps/admin/e2e/financial-email-stub.mjs`, `financial-email.e2e.ts`      |
 
@@ -66,24 +67,67 @@ version or history length; if commerce omits them the email is unavailable.
 
 ## Workflow
 
-**Email quote** / **Email invoice** opens `?email` (a native link; the panel keeps the Requests
-return context through every action). The panel shows the authoritative recipient (the staff
-detail's customer before preview, the preview's afterwards), the thread it will use (reply in the
-existing thread, or start the booking thread), the staff-only document identity
-("Quote v2 · revision 2") and an optional personal message.
+**Email quote** / **Email invoice** sits in Right now's secondary action row (see
+[admin-request-workspace.md](admin-request-workspace.md)) and opens `?email` (a
+native link; the panel keeps the Requests return context through every action). The panel shows the
+authoritative recipient (the staff detail's customer before preview, the preview's afterwards), the
+thread it will use (reply in the existing thread, or start the booking thread), what it is
+**Sending** ("Quote v2", staff only) and an optional personal message.
+
+### Staff wording
+
+Copy lives in `financial-email.ts` (`emailCopy`, `unavailableCopy`, `financialEmailError`,
+`missingEmailPermissionCopy`, `acceptedNoticeCopy`) so each sentence is one tested string. It names
+the customer by first name (`customerFirstName`, "the customer" if blank) and times as
+`receivedTimeLabel` + " Pacific" (`pacificTimeLabel`). It is plain on purpose: "We can't tell if
+this email went out", **Check again** / "Checking…", "That send was refused, so nothing went out",
+"Ask an administrator to turn on emailing for you…" (never the five permission names). The meaning
+of every state is unchanged; only the words changed.
+
+### One staff version label
+
+Staff see only `{Kind} v{documentVersion}` ("Quote v2", "Invoice v4") in the panel, the status
+block and Activity's meta line ("Quote v2 (staff only) · Current Quote · Sent by you"), matching
+the rest of the console (`emailedVersionLabel`, `intentVersionLabel`). Customers never see it.
+`businessRevision` / `expectedBusinessRevision` stay in the data, hidden fields, sealed commands,
+recovery matching and validation; only the visible text dropped them.
+
+**Accepted limitation.** Commerce can publish two business revisions on one ledger version, so two
+emails can carry the same label. A Quote deposit-terms revision (`ReviseInquiryProposalDeposit`, or
+a revision with no line change) keeps `current.document` and records a new `quote_revision`
+(`inquiry_proposals` is unique on document, version and deposit revision, not on version alone). An
+Invoice amendment that changes only the service plan keeps the document version and records a new
+`invoice_revision`. Whether an email is the **Current** or an **Earlier** one always comes from
+commerce's `current` flag, never from the label. To tell such emails apart, use their send IDs
+(Message details) or Financial versions.
 
 1. **Preview email** posts the identity the page shows plus the conversation expectation the
    Activity column currently shows. The action re-reads the staff request and timeline and refuses
    a changed document, newer correspondence or any UNKNOWN command instead of rebasing. Previews are
    write-free in commerce and never call the preview endpoint while typing.
 2. The review shows the subject, the backend's exact total, amount due now, paid, remaining balance
-   and (Quote) balance after deposit, the HTML in an isolated frame (desktop/phone width toggle) and
-   the plain-text alternative. The payment button is the inert `https://example.invalid/payment-preview`.
+   and (Quote) balance after deposit, the HTML in an isolated frame and the plain-text alternative.
+   The payment button is the inert `https://example.invalid/payment-preview`. The frame is 720px
+   tall; **Show the whole email** / **Shorter preview** switches it to a fixed 1,800px with
+   `scrolling="no"`. The opaque-origin sandbox can't be measured from the parent, so it is never
+   loosened to auto-size. **Desktop** is full width; **Phone** shows 375px inside a handset
+   outline (ink-700 surround, 12px padding and 18px at the bottom, 16px outer and 10px screen
+   radius, a 64×5px ink-500 pill above the screen). The full-length and plain-text toggles are
+   CSS-driven checkboxes styled as chips, so they also work without JavaScript.
 3. **Send quote** / **Send invoice** appears only while the review is still valid. Editing the
    message, a changed document (live re-read of the staff request), newer correspondence, an
    unreloadable details change or a changed review token withdraws it until **Preview again**.
-4. The outcome is announced in the panel's status region and the Customer email block. Accepted
-   means _accepted by the email provider_; delivery is shown only when provider state reports it.
+4. **Accepted (201) or replayed (200): the panel closes.** Enhanced, the page leaves `?email` with
+   `replaceState` (no new history entry and no reload, so drafts, the reply composer and
+   disclosures stay), refreshes Activity once, and moves focus to a status notice in the Customer
+   email block: "Sent just now. **See it in Activity**; it shows as delivered once the email
+   provider confirms." A replay reads "This Quote email already went out earlier, so nothing new
+   was sent." The link targets the Activity message (`#message-{id}`, matched by send ID) once the
+   refreshed timeline has it, else `#conversation`. Natively, the PRG drops `?email`, so the same
+   one-time notice lands with the panel closed. Reopening after an enhanced send re-runs the load
+   (`invalidateAll`), because shallow routing leaves SvelteKit's own URL at `?email`. Locked,
+   refused and unknown outcomes keep the panel open, as before. Accepted means _accepted by the
+   email provider_; delivery is shown only when provider state reports it.
 
 Message rules match commerce's `FinancialEmailMessage`: CRLF/LF normalized to LF, trimmed at the
 edges, at most 2,000 UTF-16 units, well-formed Unicode, no controls except tab/CR/LF; internal blank
@@ -113,7 +157,7 @@ conversation expectation become the command **at preview time**, before any send
   `/requests/{inquiryId}` and authenticated (AAD) to the staff user and inquiry. The browser cannot
   read or alter it; another user, inquiry or key cannot open it. An identical re-review keeps the key;
   any change mints a new one.
-- Send and **Reconcile original send** always post that sealed command, never form values: the same
+- Send and **Check again** (the reconcile button) always post that sealed command, never form values: the same
   key, email, message, review token and _original_ expectation, even after newer correspondence or
   the email itself appear in Activity. Any submission of one review (double click, native resubmit,
   retry after a lost response) therefore repeats one idempotent command.
@@ -124,13 +168,13 @@ conversation expectation become the command **at preview time**, before any send
   and availability refusals (`email_sending_disabled`, `email_provider_unavailable`,
   `stripe_disabled`, `financial_email_tracking_not_verified`, `financial_email_in_progress`,
   401/403/404) keep the command as it was. ACCEPTED (201, or a 200 replay) consumes the key: the
-  enhanced path answers in place and refreshes Activity; the native path PRGs with a body-free
-  one-time notice. A 200 replay says no new email was sent.
+  enhanced path answers in place, closes the panel and refreshes Activity; the native path PRGs
+  (without `?email`) with a body-free one-time notice. A 200 replay says no new email was sent.
 - A record whose response was lost still says `reviewed` in the browser. The load and the preview
   action then look for a commerce command by the same user, for the same identity, requested after
-  the review: if one exists the review is locked to **Reconcile original send**. Commerce commits the
+  the review: if one exists the review is locked to **Check again**. Commerce commits the
   intent before dispatching, so without such a record nothing under the key was sent.
-- Locked states make the message read-only and offer only Reconcile; there is no Retry with a new
+- Locked states make the message read-only and offer only Check again; there is no Retry with a new
   key, no force-send and no "mark failed". A new timeline read never clears UNKNOWN. A definitive
   refusal allows a new deliberate review (new key).
 
@@ -147,15 +191,15 @@ kept. The message is stored encrypted in the cookie (at most three ~3.6 KB chunk
 bearer or rendered email is ever stored (previews are inert and sends return none). Recovery
 cookies are never forwarded to commerce (`forwardedCookie` in `backend.ts`). The
 lost-response heuristic compares timestamps with a two-minute allowance for clock skew; a false
-match only turns Send into Reconcile, which still sends at most once under the key.
+match only turns Send into Check again, which still sends at most once under the key.
 
 ## Activity, SSE and status
 
 The timeline's `financialEmails` (validated, including UNKNOWN and REJECTED) drive the Customer
 email block: never emailed, current document emailed (commerce's `current`, never timestamps or the
 ledger version alone), only an earlier revision emailed, UNKNOWN needing reconciliation (with send
-IDs), and a rejected latest attempt. A MESSAGE with `financialEmail` metadata is labelled
-**Quote emailed** / **Invoice emailed** with the staff-only `Quote v2 · revision 2`, Current/Earlier
+IDs), and a refused latest attempt, followed by the one-time notice after a send. A MESSAGE with `financialEmail` metadata is labelled
+**Quote emailed** / **Invoice emailed** with the staff-only `Quote v2`, Current/Earlier
 and sender, plus the send ID under Message details; it is the same provider message, never a second
 event. UNKNOWN and REJECTED commands without a message appear only in the status block.
 
