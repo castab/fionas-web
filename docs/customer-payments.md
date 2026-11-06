@@ -290,7 +290,7 @@ with only `completing` are treated as uncertain and bound to the original attemp
 
 **One authorization.** While a form is open, ordinary Pay and recovery are blocked. Both panels
 are keyed by launch. Embedded Checkout serializes initialization and teardown because Stripe
-allows one Embedded Checkout per page. Elements destroys its two mounted fields and detaches
+allows one Embedded Checkout per page. Elements destroys its mounted Stripe elements and detaches
 its SDK change handler's receiver. Stripe's Elements SDK does not expose a general destroy or
 unsubscribe method. Disposed launches cannot mount or act on late initialization or confirmation.
 
@@ -370,34 +370,71 @@ Elements Pay button until a fresh summary arrives. Superseded reads cannot inval
 
 [Mobile panel with mock fields](images/checkout-elements-mobile.png)
 
+Mock wallet layouts on [desktop](images/checkout-wallets-desktop.png) and
+[mobile](images/checkout-wallets-mobile.png).
+
 - **Stripe API.** `initCheckoutElementsSdk` uses the authorized Checkout Session secret.
   `loadActions` provides `getSession`, `validateElements` and `confirm`. The panel mounts a
-  Contact Details Element and a Payment Element. Stripe owns email collection and validation.
-  Fiona's page never copies the entered email into its state, requests or storage. Stripe
-  supplies the methods and any eligible wallets, including their branding and disclosures.
+  Contact Details Element, a Payment Element and one Express Checkout Element on that same SDK
+  and Session. Both paths use the same saved checkout authorization, including its key, exact
+  USD amount and Quote or Invoice revision. Stripe owns the wallet UI and its authentication.
   [Stripe's Checkout Elements integration](https://docs.stripe.com/payments/accept-a-payment?payment-ui=elements&api-integration=checkout)
 - **Appearance.** The panel uses the shared Fiona's Card, Badge and Button. The Elements
   Appearance API takes resolved cream, olive, text and error colors, input radius and spacing
   from the site. `elementsOptions.fonts` supplies the existing Latin Poppins WOFF2 as a
   `CustomFontSource` so the iframe can load the font without another network origin.
-  Stripe controls field layout and wallet branding. Hosted and Embedded still use Stripe
-  Checkout branding. [Stripe Appearance API](https://docs.stripe.com/elements/appearance-api)
+  Stripe draws the provider-branded 48 px wallet buttons and arranges them for the available
+  width. The panel shows the wallet area and card separator only while Stripe reports Apple Pay
+  or Google Pay as available. It uses Stripe's default eligibility and keeps the card form
+  available if neither wallet is eligible or Express Checkout fails to initialize.
+  [Stripe Appearance API](https://docs.stripe.com/elements/appearance-api)
 - **Amount.** Read `total.total.minorUnitsAmount`, `currency` and `minorUnitsAmountDivisor`
   from Stripe's Session. A positive safe integer in USD with divisor 100 must equal the
   exact cents pinned in the saved command. The panel displays that verified total, including
   the selected amount for partial payments. Missing or changed amounts close the fields
   and leave only same-attempt recovery.
-- **Confirmation.** Both fields must be ready and `canConfirm` true. Pay validates the fields,
-  awaits a fresh commerce summary and rechecks Stripe's total and readiness. The controller
-  checks `authorizationMatches` and records the in-flight marker before
-  `actions.confirm({ redirect: 'if_required' })`. Stripe uses commerce's configured return URL.
-  Validation errors stay in the form before dispatch. The installed Stripe.js types distinguish
+- **Confirmation.** Card Pay requires both Stripe fields to be ready and `canConfirm` true,
+  and validates the fields. Wallets use Stripe's `confirm` event as the payment input. Both
+  paths verify the open Session and exact USD total, read a fresh commerce summary, then
+  reverify the Session before dispatch. The controller checks `authorizationMatches` and saves
+  the in-flight marker. A shared lock allows one dispatch through
+  `actions.confirm({ redirect: 'if_required' })`. Wallet confirmation also passes Stripe's
+  original `expressCheckoutConfirmEvent`. Stripe uses commerce's configured return URL.
+  The installed Stripe.js types distinguish
   success, `paymentFailed` and an unclassified error with a null code. An explicit `paymentFailed`
   on an open Session clears the local lock and keeps the same fields mounted for correction.
   A reported completion removes the form and waits for commerce's ledger. Null or unfamiliar
   codes and thrown confirmation errors remove the form, keep the lock and show the uncertainty
   notice. Both paths refresh and poll the authoritative summary with the existing bounds.
   [Stripe Checkout confirmation](https://docs.stripe.com/js/custom_checkout/confirm)
+- **Email and cancellation.** Stripe handles wallet contact collection through the Checkout
+  Session and the original event. A wallet-provided billing email can satisfy the requirement
+  with the card fields empty. If the wallet supplies no email, the customer can use the
+  Stripe-owned Contact Details field. With neither source present, the app ends the wallet
+  interaction using Stripe's validation callback and asks the customer to provide an email.
+  Payer email stays in Stripe's payment flow. Dismissing the sheet before authorization leaves
+  the Session open. Stripe can also emit `cancel` after `confirm`, so dismissal never clears
+  an in-flight lock or substitutes for the confirmation result.
+  [Stripe Express Checkout with Checkout Sessions](https://docs.stripe.com/elements/express-checkout-element/accept-a-payment?payment-ui=embedded-components)
+
+### Wallet eligibility and configuration
+
+Serve the page over HTTPS, including real-device development and preview testing. Register each
+exact hostname that serves `/pay` in [Payment method domains](https://dashboard.stripe.com/settings/payment_method_domains).
+Include the production hostname in live mode and register staging and HTTPS development hosts
+in the Stripe sandbox used for testing. Use a registered HTTPS test hostname or tunnel for a
+local build. Check Apple Pay and Google Pay in the corresponding account's
+[Payment methods settings](https://dashboard.stripe.com/settings/payment_methods) and match
+the public publishable key to commerce's account and mode. The existing `card` payment method
+on the Checkout Session supports both wallets.
+
+Stripe also checks browser, device, region, currency and wallet setup. An enabled Dashboard
+setting alone does not guarantee a button. This integration uses Stripe's default eligibility
+for both wallets. Stripe's supported-browser table also describes opt-in modes that expand
+availability on some desktop browsers. Use a top-level browser tab for real-device tests.
+The existing payment CSP permits Stripe's frames and denies embedding Fiona's payment page.
+[Stripe browser support](https://docs.stripe.com/elements/express-checkout-element#supported-browsers) ·
+[Stripe domain registration](https://docs.stripe.com/payments/payment-methods/pmd-registration)
 
 ### Checking an uncertain Elements confirmation
 
@@ -407,7 +444,7 @@ authorization, and reconciles it. Stripe documents an open Session as one where 
 processing has yet to start. Only a validated `OPEN` / `PENDING` Elements response for the
 original attempt and a fresh, matching commerce summary allow the controller to clear
 `completing` and mount that same Session. The form verifies Stripe's status and exact USD total
-again, and Pay requires valid fields and `canConfirm`. The customer submits again deliberately.
+again. The customer submits again deliberately using an eligible wallet or valid card fields.
 [Stripe Checkout Session status](https://docs.stripe.com/api/checkout/sessions/object#checkout_session_object-status)
 
 - `PROCESSING`, `SUCCEEDED` and a previously reported completion keep the form closed. The
@@ -752,6 +789,25 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
 8. Verify the bearer is stripped from the address bar and that the Session secret, test email
    and payment details stay out of Fiona's storage, URLs, SSR output and logs.
 
+**Express wallets on real devices** (same Elements mode and registered HTTPS test hostname)
+
+1. On an iPhone, open the payment link directly in Safari with an active card in Apple Wallet.
+   On an Android phone, open it directly in Chrome with an active card in Google Pay and the
+   matching Google account signed in. Stripe test keys allow a real wallet card to return a test
+   token without charging the card. [Stripe wallet testing](https://docs.stripe.com/elements/express-checkout-element/accept-a-payment?payment-ui=embedded-components#test-the-integration)
+2. Start a fresh Quote deposit or Invoice payment on each device. Confirm Stripe shows the
+   eligible button above the card form, the amount is correct, and the page fits the screen.
+   Repeat in a browser without an eligible wallet and verify the card form works on its own.
+3. Leave the card form blank. Open the wallet, dismiss it, and verify the same payment form
+   remains usable. Open it again, authorize with a wallet email, and verify pending settlement
+   until the commerce summary shows the applied payment. Check that there is one checkout
+   attempt and one ledger payment. Where the wallet supplies no email, try the Contact Details
+   fallback. Look for CSP errors in the device browser console.
+4. On another test booking, change the reviewed terms or record a manual payment while the
+   wallet sheet is open. Verify the stale form closes and **Check previous payment** uses the
+   original authorization. If confirmation is interrupted, verify that the same action resumes
+   only an original, verified open attempt or continues waiting for settlement.
+
 ## Tests
 
 - Public unit: `money.test.ts`, `contract.test.ts` (summary/command/response readers and every
@@ -768,8 +824,10 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
   Invoice confirmation, removal on settled/revoked/disabled, unknown modes), `embedded.test.ts`
   (publishable keys, one instance at a time, late initialization destroyed, failures by kind) and
   `embedded-checkout.svelte.test.ts` (browser: mount once, focus, cleanup, retry, missing key).
-  `elements.test.ts` covers appearance, both mounts, exact amount and currency checks, readiness,
-  validation, single confirmation, safe errors and late SDK callbacks.
+  `elements.test.ts` covers appearance, mounts, wallet eligibility and email fallback, exact
+  amount and currency checks, readiness, validation, the shared lock, safe errors and late SDK
+  callbacks. The payment browser suite mocks Stripe wallet availability, cancellation, decline,
+  settlement and uncertainty, competing card submission, and changed terms on desktop and mobile.
 - Public E2E (`npm run test:e2e:payments --workspace=@fionas/public`; part of `test:e2e`; no
   Docker or NATS), desktop and mobile, against `e2e/payments/stub-commerce.mjs` with
   `checkout.stripe.com` simulated by routed pages: fragment capture and cleanup, security headers,

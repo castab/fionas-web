@@ -34,9 +34,11 @@
 	let heading = $state<HTMLHeadingElement>();
 	let contactMount = $state<HTMLElement>();
 	let paymentMount = $state<HTMLElement>();
+	let walletMount = $state<HTMLElement>();
 	let view = $state.raw<ElementsView>({ kind: 'loading' });
 	let confirm: (() => Promise<void>) | undefined;
 	const submitting = $derived(view.kind === 'ready' && view.submitting);
+	const showWallets = $derived(view.kind === 'ready' && view.walletsAvailable);
 	const body = 'm-0 text-(--text-body) [font:var(--type-body-sm)]';
 
 	$effect(() => {
@@ -44,9 +46,10 @@
 	});
 
 	$effect(() => {
-		if (!contactMount || !paymentMount) return;
+		if (!contactMount || !paymentMount || !walletMount) return;
 		const contact = contactMount;
 		const payment = paymentMount;
+		const wallet = walletMount;
 		// The page keys this component by launch ID. Summary reads may update the parent
 		// during preflight, but the mounted fields must stay intact for the same launch.
 		const form = untrack(() => {
@@ -56,6 +59,7 @@
 				publishableKey,
 				contactMount: contact,
 				paymentMount: payment,
+				walletMount: wallet,
 				onChange: (next) => (view = next),
 				prepareConfirmation: () => onprepare(current.id),
 				beginConfirmation: () => onconfirm(current.id),
@@ -69,7 +73,7 @@
 </script>
 
 <Card class="flex flex-col gap-5 px-[26px] py-6 max-[600px]:px-5" data-testid="elements-checkout">
-	<section aria-labelledby="elements-checkout-title" class="flex min-w-0 flex-col gap-5">
+	<section aria-labelledby="elements-checkout-title" class="relative flex min-w-0 flex-col gap-5">
 		<header class="flex flex-col items-start gap-2">
 			<Badge tone="olive">Secure payment</Badge>
 			<h2
@@ -114,6 +118,22 @@
 			</div>
 		{/if}
 
+		<div
+			class={cn(
+				'flex min-w-0 flex-col gap-4',
+				!showWallets && 'invisible absolute inset-x-0 top-0'
+			)}
+			inert={!showWallets || (!submitting && (!summaryFresh || refreshing))}
+		>
+			<div class="min-w-0" bind:this={walletMount} data-testid="elements-wallets"></div>
+			{#if showWallets}
+				<p class={cn(hintText, 'm-0 flex items-center gap-3 text-center')}>
+					<span class="h-px flex-1 bg-(--border-soft)" aria-hidden="true"></span>
+					or pay with card
+					<span class="h-px flex-1 bg-(--border-soft)" aria-hidden="true"></span>
+				</p>
+			{/if}
+		</div>
 		<form
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -138,7 +158,9 @@
 					<p class="m-0 text-rust-600 [font:var(--type-body-sm)]" role="alert">
 						{view.error === 'declined'
 							? 'Your payment was declined. Check your details or try another card.'
-							: 'Check the details in the payment form and try again.'}
+							: view.error === 'wallet-email'
+								? 'Provide an email in your wallet or in Contact details, then try again.'
+								: 'Check the details in the payment form and try again.'}
 					</p>
 				{/if}
 				{#if !summaryFresh}
