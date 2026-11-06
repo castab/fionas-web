@@ -448,11 +448,17 @@ test('a staff amendment while the form is open removes it; checking reuses the s
 
 // The fake consumes the actual Appearance API config and font in its iframes. Its fields
 // contain placeholders only, and its confirm function never contacts a provider.
-function elementsScript(cents: number, fail = false) {
+function elementsScript(
+	cents: number,
+	fail = false,
+	wallets: { applePay?: boolean; googlePay?: boolean } = {}
+) {
 	return `
 	(() => {
 		const embedded = window.Stripe;
 		const t = window.__elementsTest = { creates: 0, destroys: 0, confirms: 0, fail: ${fail}, decline: false, uncertain: false };
+		const availablePaymentMethods = ${JSON.stringify(wallets)};
+		const wallet = window.__walletMock = { failed: 0, confirmed: [], cancel: null, authorize: null };
 		window.Stripe = (key) => ({
 			...embedded(key),
 			initCheckoutElementsSdk({ clientSecret, elementsOptions }) {
@@ -502,20 +508,59 @@ function elementsScript(cents: number, fail = false) {
 				return {
 					on(_event, fn) { change = fn; },
 					createContactDetailsElement() {
-						return element('contact', '<label for="email">Email address</label><input id="email" type="email" placeholder="you@example.com" required>', 70);
+						return element('contact', '<label for="email">Email address</label><input id="email" type="email" placeholder="you@example.com" required>', 76);
 					},
 					createPaymentElement() {
 						return element('payment', '<label for="number">Card number</label><input id="number" placeholder="Card number" required>' +
 							'<div class="pair"><div><label for="expiry">Expiration</label><input id="expiry" placeholder="MM / YY"></div>' +
 							'<div><label for="code">Security code</label><input id="code" placeholder="CVC"></div></div>', 166);
 					},
+					createExpressCheckoutElement(options) {
+						const events = {};
+						let frame;
+						wallet.cancel = () => events.cancel?.({ elementType: 'expressCheckout' });
+						wallet.authorize = (type) => events.confirm?.({
+							expressPaymentType: type,
+							billingDetails: { email: 'wallet@example.test' },
+							paymentFailed() { wallet.failed++; }
+						});
+						return {
+							on(name, callback) { events[name] = callback; },
+							mount(target) {
+								const buttons = [
+									['apple_pay', 'Apple Pay', availablePaymentMethods.applePay],
+									['google_pay', 'Google Pay', availablePaymentMethods.googlePay]
+								].filter(([, , available]) => available);
+								if (buttons.length === 0) {
+									events.ready?.({ availablePaymentMethods: undefined });
+									return;
+								}
+								frame = document.createElement('iframe');
+								frame.title = 'Stripe wallet buttons (mock)';
+								frame.style.cssText = 'display:block;width:100%;border:0;height:' + options.buttonHeight + 'px';
+								frame.srcdoc = '<!doctype html><style>body{margin:0;display:flex;gap:8px}' +
+									'button{flex:1;min-width:0;border:0;border-radius:' + v.borderRadius +
+									';background:#171717;color:white;font:600 15px system-ui;height:' + options.buttonHeight + 'px}</style>' +
+									buttons.map(([type, label]) => '<button data-type="' + type + '">' + label + ' (mock)</button>').join('');
+								frame.onload = () => {
+									for (const button of frame.contentDocument.querySelectorAll('button')) {
+										button.onclick = () => wallet.authorize(button.dataset.type);
+									}
+									events.ready?.({ availablePaymentMethods });
+								};
+								target.appendChild(frame);
+							},
+							destroy() { frame?.remove(); }
+						};
+					},
 					async loadActions() {
 						if (t.fail) return { type: 'error', error: { message: 'Private test load failure' } };
 						return { type: 'success', actions: {
 							getSession,
 							async validateElements() { return { type: 'success', session: getSession() }; },
-							async confirm({ redirect }) {
+							async confirm({ redirect, expressCheckoutConfirmEvent }) {
 								if (redirect !== 'if_required') throw new Error('Unexpected redirect option');
+								if (expressCheckoutConfirmEvent) wallet.confirmed.push(expressCheckoutConfirmEvent.expressPaymentType);
 								t.confirms++;
 								if (t.uncertain) return { type: 'error', error: { code: null, message: 'Private test error' } };
 								return t.decline
@@ -754,11 +799,12 @@ test('an old Embedded attempt resumes after the switch and a fresh payment uses 
 	await fakeStripe(page, elementsScript(96000));
 	await open(page, publicId, token);
 	await page.getByTestId('pay').click();
-	await expect(page.getByTestId('embedded-checkout')).toBeVisible();
+	const embeddedFrame = page.locator('iframe[title="Secure checkout (test)"]');
+	await expect(embeddedFrame).toBeVisible();
 	await page.getByRole('button', { name: 'Back to booking overview' }).click();
 	await update(request, publicId, { uiMode: 'ELEMENTS' });
 	await page.getByRole('button', { name: 'Continue your payment' }).click();
-	await expect(page.locator('iframe[title="Secure checkout (test)"]')).toBeVisible();
+	await expect(embeddedFrame).toBeVisible();
 	await completeInStripe(page);
 	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
 	await update(request, publicId, { summary: bookedSummary() });
@@ -801,5 +847,191 @@ test('Elements preflight catches an amendment before Stripe can confirm', async 
 	const [first, check] = await posts(request, publicId);
 	expect(check.key).toBe(first.key);
 	expect(check.body).toBe(first.body);
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+});
+
+type WalletMock = {
+	cancel(): void;
+	authorize(type: 'apple_pay' | 'google_pay'): void;
+	confirmed: string[];
+	failed: number;
+};
+
+const walletFrame = (page: Page) =>
+	page.frameLocator('iframe[title="Stripe wallet buttons (mock)"]');
+const walletConfirmations = (page: Page) =>
+	page.evaluate(() => (window as unknown as { __walletMock: WalletMock }).__walletMock.confirmed);
+
+async function openWallets(
+	page: Page,
+	request: APIRequestContext,
+	wallets = { applePay: true, googlePay: true }
+) {
+	const { publicId, token } = await scenario(request, quotedSummary(), 'ELEMENTS');
+	await fakeStripe(page, elementsScript(24000, false, wallets));
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$240.00');
+	return publicId;
+}
+
+for (const [name, applePay, googlePay] of [
+	['Apple Pay only', true, false],
+	['Google Pay only', false, true],
+	['both wallets', true, true],
+	['neither wallet', false, false]
+] as const) {
+	test(`Express Checkout displays ${name} using Stripe availability`, async ({
+		page,
+		request
+	}, testInfo) => {
+		await openWallets(page, request, { applePay, googlePay });
+		const separator = page.getByText('or pay with card', { exact: true });
+		if (applePay || googlePay) {
+			await expect(separator).toBeVisible();
+			await expect(walletFrame(page).getByRole('button', { name: 'Apple Pay (mock)' })).toHaveCount(
+				applePay ? 1 : 0
+			);
+			await expect(
+				walletFrame(page).getByRole('button', { name: 'Google Pay (mock)' })
+			).toHaveCount(googlePay ? 1 : 0);
+			for (const button of await walletFrame(page).getByRole('button').all()) {
+				const bounds = (await button.boundingBox())!;
+				expect(bounds.height).toBeGreaterThanOrEqual(44);
+				expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+			}
+		} else {
+			await expect(separator).toHaveCount(0);
+			await expect(page.getByTestId('elements-wallets')).toBeHidden();
+		}
+		await expect(page.getByRole('button', { name: 'Pay $240.00' })).toBeDisabled();
+		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+			page.viewportSize()!.width
+		);
+		const screenshotDir = process.env.PAYMENTS_SCREENSHOTS;
+		if (applePay && googlePay && screenshotDir) {
+			const viewport = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
+			await page.setViewportSize({ ...page.viewportSize()!, height: 1050 });
+			const panel = page.getByTestId('elements-checkout');
+			await panel.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+			await panel.screenshot({
+				path: join(screenshotDir, `checkout-wallets-${viewport}.png`),
+				scale: 'css'
+			});
+		}
+	});
+}
+
+test('Express Checkout settles from the ledger and blocks a competing card confirmation', async ({
+	page,
+	request
+}) => {
+	const publicId = await openWallets(page, request);
+	const pay = page.getByRole('button', { name: 'Pay $240.00' });
+	await fakeFields(page);
+	await expect(pay).toBeEnabled();
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route(`**/api/payments/${publicId}`, async (route) => {
+		await held;
+		await route.continue();
+	});
+	try {
+		await walletFrame(page).getByRole('button', { name: 'Apple Pay (mock)' }).click();
+		await expect(page.getByRole('button', { name: 'Submitting payment…' })).toBeDisabled();
+		await page
+			.locator('form')
+			.filter({ has: page.getByTestId('elements-contact') })
+			.dispatchEvent('submit');
+		await page.evaluate(() =>
+			(window as unknown as { __walletMock: WalletMock }).__walletMock.authorize('google_pay')
+		);
+		expect(await walletConfirmations(page)).toEqual([]);
+	} finally {
+		release();
+	}
+	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
+	expect(await walletConfirmations(page)).toEqual(['apple_pay']);
+	expect(await elementsState(page)).toMatchObject({ creates: 1, confirms: 1 });
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	await expect(page.getByTestId('stage-label')).toHaveText('Quote ready');
+	await update(request, publicId, { summary: bookedSummary() });
+	await expect(page.getByTestId('payment-notice')).toContainText('Deposit received');
+	const authorization = await posts(request, publicId);
+	expect(authorization).toHaveLength(1);
+	expect(authorization[0].body).not.toContain('wallet@example.test');
+	expect(await persisted(page, [])).not.toContain('wallet@example.test');
+});
+
+test('Express Checkout cancellation and decline leave the same Session available for card', async ({
+	page,
+	request
+}) => {
+	const publicId = await openWallets(page, request);
+	await page.evaluate(() => {
+		const mock = window as unknown as { __walletMock: WalletMock; __elementsTest: ElementsTest };
+		mock.__walletMock.cancel();
+		mock.__elementsTest.decline = true;
+	});
+	expect(await elementsState(page)).toMatchObject({ confirms: 0 });
+	await walletFrame(page).getByRole('button', { name: 'Google Pay (mock)' }).click();
+	await expect(page.getByRole('alert')).toContainText('Your payment was declined');
+	expect(await walletConfirmations(page)).toEqual(['google_pay']);
+	await expect(page.getByRole('button', { name: 'Pay $240.00' })).toBeDisabled();
+	await fakeFields(page);
+	await page.evaluate(() => {
+		(window as unknown as { __elementsTest: ElementsTest }).__elementsTest.decline = false;
+	});
+	await page.getByRole('button', { name: 'Pay $240.00' }).click();
+	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
+	expect(await elementsState(page)).toMatchObject({ creates: 1, confirms: 2 });
+	expect(await posts(request, publicId)).toHaveLength(1);
+});
+
+test('Express Checkout uncertainty recovers only the original authorization', async ({
+	page,
+	request
+}) => {
+	const publicId = await openWallets(page, request);
+	await page.evaluate(() => {
+		(window as unknown as { __elementsTest: ElementsTest }).__elementsTest.uncertain = true;
+	});
+	await walletFrame(page).getByRole('button', { name: 'Google Pay (mock)' }).click();
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	const check = page.getByRole('button', { name: 'Check previous payment' });
+	await expect(check).toBeVisible();
+	expect(await posts(request, publicId)).toHaveLength(1);
+	await check.click();
+	await expect(walletFrame(page).getByRole('button', { name: 'Google Pay (mock)' })).toBeVisible();
+	const [first, recovery] = await posts(request, publicId);
+	expect(recovery.key).toBe(first.key);
+	expect(recovery.body).toBe(first.body);
+	expect(await elementsState(page)).toMatchObject({ creates: 2, confirms: 1 });
+});
+
+test('Express Checkout invalidates both payment paths when booking changes during wallet authorization', async ({
+	page,
+	request
+}) => {
+	const publicId = await openWallets(page, request);
+	await expect(walletFrame(page).getByRole('button', { name: 'Apple Pay (mock)' })).toBeVisible();
+	const summary = quotedSummary();
+	const amended = underway(
+		quotedSummary({
+			document: { ...summary.document, version: 7, businessRevision: 9 }
+		})
+	);
+	await page.route(`**/api/payments/${publicId}`, (route) => route.fulfill({ json: amended }));
+	await walletFrame(page).getByRole('button', { name: 'Apple Pay (mock)' }).click();
+	await expect(page.getByTestId('payment-notice')).toContainText(
+		"Your booking's payment details have changed"
+	);
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	expect(await walletConfirmations(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Check previous payment' }).click();
+	await expect.poll(async () => (await posts(request, publicId)).length).toBe(2);
+	const [first, recovery] = await posts(request, publicId);
+	expect(recovery.key).toBe(first.key);
+	expect(recovery.body).toBe(first.body);
 	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
 });

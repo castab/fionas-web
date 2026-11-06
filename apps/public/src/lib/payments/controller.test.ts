@@ -1451,6 +1451,27 @@ describe('Elements confirmation preflight', () => {
 		expect(h.store.checkout()?.key).toBe('key-1');
 	});
 
+	it('blocks a wallet or card preflight when staff records a payment below the authorized balance', async () => {
+		const h = await opened({}, true);
+		const launch = h.state.checkout!;
+		const authorization = h.store.checkout();
+		h.replySummary(
+			ok({
+				...bookedSummary({ paidAmount: '1100.00', balance: '100.00', requiredAmount: '100.00' }),
+				canPay: false,
+				paymentInProgress: true,
+				unavailableReason: 'PAYMENT_IN_PROGRESS'
+			})
+		);
+		expect(await h.controller.prepareConfirmation(launch.id)).toBe(false);
+		expect(h.controller.beginConfirmation(launch.id)).toBe(false);
+		expect(launch.isCurrent()).toBe(false);
+		expect(h.state.checkout).toBeNull();
+		expect(h.store.checkout()).toEqual(authorization);
+		await h.controller.pay(choice);
+		expect(h.checkoutCalls()).toHaveLength(1);
+	});
+
 	it.each(['redirected', 'sending'] as const)(
 		'after interrupted confirmation, reload resumes the verified OPEN attempt (%s)',
 		async (phase) => {

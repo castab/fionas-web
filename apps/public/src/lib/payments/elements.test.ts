@@ -1,7 +1,8 @@
 import type {
 	StripeCheckoutConfirmResult,
 	StripeCheckoutSession,
-	StripeCheckoutValidateElementsResult
+	StripeCheckoutValidateElementsResult,
+	StripeExpressCheckoutElementConfirmEvent
 } from '@stripe/stripe-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OnPageCheckoutLaunch } from './controller.js';
@@ -19,10 +20,13 @@ const baseSession = {
 function fixture({
 	initial = baseSession,
 	prepareConfirmation = vi.fn(async () => true),
-	initialization = Promise.resolve()
+	initialization = Promise.resolve(),
+	wallets = {},
+	walletMountFails = false
 } = {}) {
 	const contactMount = {} as HTMLElement;
 	const paymentMount = {} as HTMLElement;
+	const walletMount = {} as HTMLElement;
 	const onChange = vi.fn();
 	const onPending = vi.fn();
 	const onRetryable = vi.fn();
@@ -57,9 +61,25 @@ function fixture({
 	}
 	const contact = element();
 	const payment = element();
+	const walletHandlers = new Map<string, (event?: unknown) => unknown>();
+	const express = {
+		on: vi.fn((name: string, handler: (event?: unknown) => unknown) =>
+			walletHandlers.set(name, handler)
+		),
+		mount: vi.fn(() => {
+			if (walletMountFails) throw new Error('wallet unavailable');
+			walletHandlers.get('ready')?.({ availablePaymentMethods: wallets });
+		}),
+		destroy: vi.fn()
+	};
 	let session = initial;
 	let listener: (session: StripeCheckoutSession) => void;
-	const confirm = vi.fn<() => Promise<StripeCheckoutConfirmResult>>();
+	const confirm =
+		vi.fn<
+			(options?: {
+				expressCheckoutConfirmEvent?: StripeExpressCheckoutElementConfirmEvent;
+			}) => Promise<StripeCheckoutConfirmResult>
+		>();
 	const actions = {
 		getSession: vi.fn(() => session),
 		validateElements: vi.fn(async (): Promise<StripeCheckoutValidateElementsResult> => ({
@@ -72,7 +92,8 @@ function fixture({
 		on: vi.fn((_event, callback) => (listener = callback)),
 		loadActions: vi.fn(async () => ({ type: 'success', actions })),
 		createContactDetailsElement: vi.fn(() => contact),
-		createPaymentElement: vi.fn(() => payment)
+		createPaymentElement: vi.fn(() => payment),
+		createExpressCheckoutElement: vi.fn(() => express)
 	};
 	const initialize = vi.fn(() => sdk);
 	const loadStripe = vi.fn(async () => {
@@ -85,6 +106,7 @@ function fixture({
 		publishableKey: 'pk_test_51FionasTestKey0123456789',
 		contactMount,
 		paymentMount,
+		walletMount,
 		onChange,
 		onPending,
 		onRetryable,
@@ -97,6 +119,7 @@ function fixture({
 		confirm,
 		contact,
 		contactMount,
+		express,
 		form,
 		initialize,
 		launch,
@@ -108,10 +131,36 @@ function fixture({
 		paymentMount,
 		prepareConfirmation,
 		sdk,
+		walletMount,
+		walletEvent(name: string, event?: unknown) {
+			return walletHandlers.get(name)?.(event);
+		},
 		change(patch: Partial<StripeCheckoutSession>) {
 			session = { ...session, ...patch };
 			listener?.(session);
 		}
+	};
+}
+
+function walletEvent(
+	expressPaymentType: 'apple_pay' | 'google_pay' = 'apple_pay',
+	email = 'wallet@example.test'
+): StripeExpressCheckoutElementConfirmEvent {
+	return {
+		expressPaymentType,
+		billingDetails: {
+			email,
+			name: 'Test customer',
+			address: {
+				city: 'Seattle',
+				state: 'WA',
+				postal_code: '98101',
+				country: 'US',
+				line1: '123 Test Street',
+				line2: null
+			}
+		},
+		paymentFailed: vi.fn()
 	};
 }
 
@@ -304,5 +353,178 @@ describe('Checkout Elements browser boundary', () => {
 		await submitting;
 		expect(second.onPending).not.toHaveBeenCalled();
 		expect(second.payment.destroy).toHaveBeenCalledOnce();
+	});
+
+	it('mounts Express Checkout on the same SDK and shows only Stripe-reported wallets', async () => {
+		const h = fixture({ wallets: { link: true, googlePay: true } });
+		await vi.waitFor(() => expect(h.express.mount).toHaveBeenCalledWith(h.walletMount));
+		expect(h.initialize).toHaveBeenCalledOnce();
+		expect(h.sdk.createExpressCheckoutElement).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({
+				buttonHeight: 48,
+				paymentMethods: {
+					applePay: 'auto',
+					googlePay: 'auto',
+					amazonPay: 'never',
+					klarna: 'never',
+					paypal: 'never',
+					link: 'never'
+				}
+			})
+		);
+		expect(h.onChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ walletsAvailable: true })
+		);
+		h.walletEvent('availablepaymentmethodschange', {
+			paymentMethods: { googlePay: { available: false }, link: { available: true } }
+		});
+		expect(h.onChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ walletsAvailable: false })
+		);
+		h.walletEvent('availablepaymentmethodschange', {
+			paymentMethods: { applePay: { available: true } }
+		});
+		expect(h.onChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ walletsAvailable: true })
+		);
+		h.walletEvent('loaderror');
+		expect(h.onChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ kind: 'ready', walletsAvailable: false })
+		);
+		h.form.stop();
+		expect(h.express.destroy).toHaveBeenCalledOnce();
+		h.onChange.mockClear();
+		h.walletEvent('ready', { availablePaymentMethods: { googlePay: true } });
+		h.walletEvent('confirm', walletEvent());
+		expect(h.onChange).not.toHaveBeenCalled();
+		expect(h.confirm).not.toHaveBeenCalled();
+	});
+
+	it('keeps the card form usable if the wallet mount fails', async () => {
+		const h = fixture({ walletMountFails: true });
+		await vi.waitFor(() => expect(h.express.mount).toHaveBeenCalled());
+		h.change({ canConfirm: true });
+		expect(h.onChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ canConfirm: true, walletsAvailable: false })
+		);
+		h.confirm.mockResolvedValue({ type: 'success', session: baseSession });
+		await h.form.confirm();
+		expect(h.confirm).toHaveBeenCalledExactlyOnceWith({ redirect: 'if_required' });
+	});
+
+	it.each(['success', 'decline', 'uncertain'] as const)(
+		'shares card and wallet preflight and lock for a %s',
+		async (outcome) => {
+			const h = fixture({ wallets: { applePay: true, googlePay: true } });
+			await vi.waitFor(() => expect(h.express.mount).toHaveBeenCalled());
+			// Dismissing the sheet before Stripe emits confirm creates no payment or lock.
+			h.walletEvent('cancel');
+			expect(h.beginConfirmation).not.toHaveBeenCalled();
+			const event = walletEvent();
+			let finish!: (result: StripeCheckoutConfirmResult) => void;
+			h.confirm.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+			h.walletEvent('confirm', event);
+			h.change({ canConfirm: true });
+			await h.form.confirm();
+			h.walletEvent('confirm', walletEvent('google_pay'));
+			await vi.waitFor(() =>
+				expect(h.confirm).toHaveBeenCalledExactlyOnceWith({
+					redirect: 'if_required',
+					expressCheckoutConfirmEvent: event
+				})
+			);
+			h.walletEvent('cancel'); // Also possible after wallet authorization.
+			await h.form.confirm();
+			expect(h.actions.validateElements).not.toHaveBeenCalled();
+			expect(h.prepareConfirmation).toHaveBeenCalledBefore(h.beginConfirmation);
+			expect(h.beginConfirmation).toHaveBeenCalledBefore(h.confirm);
+			expect(h.beginConfirmation).toHaveBeenCalledOnce();
+			expect(h.confirm).toHaveBeenCalledOnce();
+			expect(h.onRetryable).not.toHaveBeenCalled();
+			if (outcome === 'success') finish({ type: 'success', session: baseSession });
+			else if (outcome === 'decline')
+				finish({
+					type: 'error',
+					error: {
+						code: 'paymentFailed',
+						message: 'declined',
+						paymentFailed: { declineCode: null }
+					}
+				});
+			else finish({ type: 'error', error: { code: null, message: 'unknown' } });
+			if (outcome === 'decline') {
+				await vi.waitFor(() => expect(h.onRetryable).toHaveBeenCalledOnce());
+				expect(h.onPending).not.toHaveBeenCalled();
+				expect(h.express.destroy).not.toHaveBeenCalled();
+				h.confirm.mockResolvedValueOnce({ type: 'success', session: baseSession });
+				await h.form.confirm();
+				expect(h.confirm).toHaveBeenLastCalledWith({ redirect: 'if_required' });
+			} else {
+				await vi.waitFor(() =>
+					expect(h.onPending).toHaveBeenCalledExactlyOnceWith(
+						outcome === 'success' ? 'submitted' : 'uncertain'
+					)
+				);
+				expect(h.express.destroy).toHaveBeenCalledOnce();
+			}
+		}
+	);
+
+	it('uses Stripe Contact details as a fallback when the wallet does not supply email', async () => {
+		const h = fixture({ wallets: { googlePay: true } });
+		await vi.waitFor(() => expect(h.express.mount).toHaveBeenCalled());
+		const event = walletEvent('google_pay', '');
+		h.walletEvent('confirm', event);
+		await vi.waitFor(() =>
+			expect(event.paymentFailed).toHaveBeenCalledWith(
+				expect.objectContaining({ reason: 'invalid_payment_data' })
+			)
+		);
+		expect(h.onChange).toHaveBeenLastCalledWith(expect.objectContaining({ error: 'wallet-email' }));
+		expect(h.beginConfirmation).not.toHaveBeenCalled();
+		h.change({ email: 'stripe@example.test' });
+		h.confirm.mockResolvedValue({ type: 'success', session: baseSession });
+		const retry = walletEvent('google_pay', '');
+		h.walletEvent('confirm', retry);
+		await vi.waitFor(() => expect(h.onPending).toHaveBeenCalledWith('submitted'));
+		expect(h.confirm).toHaveBeenCalledExactlyOnceWith({
+			redirect: 'if_required',
+			expressCheckoutConfirmEvent: retry,
+			email: 'stripe@example.test'
+		});
+	});
+
+	it.each([
+		{ currency: 'eur' },
+		{ total: { ...baseSession.total, total: { minorUnitsAmount: 48001, amount: 'ignored' } } }
+	])('blocks a wallet confirmation if Stripe terms change during preflight (%#)', async (patch) => {
+		let allow!: (valid: boolean) => void;
+		const preflight = new Promise<boolean>((resolve) => (allow = resolve));
+		const h = fixture({ wallets: { applePay: true }, prepareConfirmation: vi.fn(() => preflight) });
+		await vi.waitFor(() => expect(h.express.mount).toHaveBeenCalled());
+		h.walletEvent('confirm', walletEvent());
+		h.change(patch);
+		allow(true);
+		await vi.waitFor(() =>
+			expect(h.onChange).toHaveBeenLastCalledWith({ kind: 'unavailable', reason: 'amount' })
+		);
+		expect(h.beginConfirmation).not.toHaveBeenCalled();
+		expect(h.confirm).not.toHaveBeenCalled();
+	});
+
+	it('ignores a wallet result after the launch is invalidated during preflight', async () => {
+		let allow!: (valid: boolean) => void;
+		const preflight = new Promise<boolean>((resolve) => (allow = resolve));
+		const h = fixture({ wallets: { applePay: true }, prepareConfirmation: vi.fn(() => preflight) });
+		await vi.waitFor(() => expect(h.express.mount).toHaveBeenCalled());
+		const event = walletEvent();
+		h.walletEvent('confirm', event);
+		vi.mocked(h.launch.isCurrent).mockReturnValue(false);
+		h.form.stop();
+		allow(true);
+		await preflight;
+		expect(h.beginConfirmation).not.toHaveBeenCalled();
+		expect(h.confirm).not.toHaveBeenCalled();
+		expect(event.paymentFailed).not.toHaveBeenCalled();
 	});
 });
