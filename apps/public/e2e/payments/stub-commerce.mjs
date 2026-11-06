@@ -81,10 +81,10 @@ async function checkout(req, res, scenario) {
 	// The presentation is fixed when the attempt is created: a same-key replay above keeps it even
 	// after the scenario switches modes, exactly like commerce's immutable uiMode.
 	const response =
-		scenario.uiMode === 'EMBEDDED'
+		scenario.uiMode === 'EMBEDDED' || scenario.uiMode === 'ELEMENTS'
 			? {
 					attemptId,
-					uiMode: 'EMBEDDED',
+					uiMode: scenario.uiMode,
 					// Deliberately not a "tidy" shape: Stripe documents no client-secret format.
 					clientSecret: `${session}_secret_fid-${randomBytes(12).toString('hex')}#%2B`,
 					state: 'OPEN',
@@ -116,7 +116,7 @@ createServer(async (req, res) => {
 			summary: body.summary,
 			replies: body.replies ?? [],
 			mode: body.mode ?? null,
-			// How new attempts are presented: HOSTED (default), EMBEDDED, or LEGACY (no uiMode).
+			// How new attempts are presented: HOSTED (default), EMBEDDED, ELEMENTS or LEGACY.
 			uiMode: body.uiMode ?? 'HOSTED',
 			revoked: false,
 			keys: new Map(),

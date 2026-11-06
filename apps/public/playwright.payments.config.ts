@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * The customer payment suite (`/pay/{publicId}`), against a deterministic commerce stub. It needs
  * no NATS, Docker, Stripe account or merchant secrets: hosted Checkout is simulated in the browser
- * with routed `checkout.stripe.com` pages, and Embedded Checkout with a routed fake Stripe.js on
+ * with routed `checkout.stripe.com` pages, and on-page Checkout with routed fake Stripe.js on
  * `js.stripe.com` (Stripe's real card iframe is never automated). Booking stays off; payments
  * don't depend on it.
  */

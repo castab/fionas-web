@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -16,6 +16,7 @@
 	import { stageLabel } from '$lib/payments/view.js';
 	import { readPublishableKey } from '$lib/payments/embedded.js';
 	import EmbeddedCheckout from '$lib/components/payments/embedded-checkout.svelte';
+	import ElementsCheckout from '$lib/components/payments/elements-checkout.svelte';
 	import PaymentAction from '$lib/components/payments/payment-action.svelte';
 	import PaymentNotice from '$lib/components/payments/payment-notice.svelte';
 	import PaymentHistory from '$lib/components/payments/payment-history.svelte';
@@ -24,10 +25,16 @@
 	// The bearer never reaches this component's state or the server: it lives in the controller's
 	// closure and this tab's sessionStorage only.
 	let view = $state.raw<PageState | null>(null);
+	let heading = $state<HTMLHeadingElement>();
 	let controller: PaymentController | null = null;
 
-	onMount(() => {
+	$effect(() => {
 		const publicId = page.params.publicId ?? '';
+		return untrack(() => openBooking(publicId));
+	});
+
+	function openBooking(publicId: string) {
+		view = null;
 		const path = resolve('/pay/[publicId=uuid]', { publicId });
 		let storage: Storage | null;
 		try {
@@ -42,10 +49,11 @@
 			search: window.location.search,
 			// Drops the fragment (and any ?checkout= return marker) from the address bar and this
 			// history entry at once, keeping SvelteKit's own history state. SvelteKit's page.url is
-			// then synced once hydration has finished (its router can't navigate during onMount).
+			// then synced once hydration has finished and the router is ready.
 			clearUrl() {
 				window.history.replaceState(window.history.state, '', path);
 				void tick().then(() => {
+					if (page.params.publicId !== publicId) return;
 					try {
 						replaceState(path, page.state);
 					} catch {
@@ -62,6 +70,10 @@
 				return () => document.removeEventListener('visibilitychange', listener);
 			},
 			onState(next) {
+				if (view?.checkout && !next.checkout)
+					void tick().then(() => {
+						if (controller === created && !view?.checkout) heading?.focus();
+					});
 				view = next;
 			}
 		});
@@ -75,14 +87,15 @@
 		return () => {
 			window.removeEventListener('hashchange', reopened);
 			created.dispose();
+			controller = null;
 		};
-	});
+	}
 
 	const notice = $derived(
 		view?.notice ? noticeCopy(view.notice, view.summary, view.paymentUncertain) : null
 	);
 	const ready = $derived(view?.phase === 'ready' && view.summary ? view : null);
-	// Public by design (a Stripe publishable key); only needed once an embedded payment opens.
+	// Public by design. Only an on-page Checkout needs it.
 	const publishableKey = readPublishableKey(env.PUBLIC_STRIPE_PUBLISHABLE_KEY);
 	const headline =
 		'm-0 font-sans text-[34px] leading-[1.2] font-bold tracking-(--track-heading) text-balance text-(--text-heading) max-[600px]:text-[28px]';
@@ -121,7 +134,7 @@
 		<Badge tone={ready ? 'inverse' : 'olive'} data-testid="stage-label"
 			>{ready?.summary ? stageLabel(ready.summary) : 'Booking & payments'}</Badge
 		>
-		<h1 class={headline}>your booking</h1>
+		<h1 class={headline} bind:this={heading} tabindex="-1">your booking</h1>
 		<p class="m-0 text-(--text-muted) [font:var(--type-body-sm)]">
 			Review your event and pay securely online. No account needed.
 		</p>
@@ -199,15 +212,32 @@
 		{/if}
 		{#if notice}<PaymentNotice {notice} />{/if}
 		<PaymentOverview summary={ready.summary} />
-		{#if ready.embedded}
+		{#if ready.checkout}
 			<!-- Keyed by launch: a new authorization always gets a fresh Stripe instance. -->
-			{#key ready.embedded.id}
-				<EmbeddedCheckout
-					launch={ready.embedded}
-					{publishableKey}
-					oncomplete={(id) => controller?.embeddedComplete(id)}
-					onclose={() => controller?.closeEmbedded()}
-				/>
+			{#key ready.checkout.id}
+				{#if ready.checkout.mode === 'EMBEDDED'}
+					{@const id = ready.checkout.id}
+					<EmbeddedCheckout
+						launch={ready.checkout}
+						{publishableKey}
+						oncomplete={(id) => controller?.checkoutComplete(id)}
+						onclose={() => controller?.closeCheckout(id)}
+					/>
+				{:else}
+					<ElementsCheckout
+						launch={ready.checkout}
+						{publishableKey}
+						summaryFresh={ready.summaryFresh}
+						refreshing={ready.busy === 'refreshing'}
+						onprepare={(id) => controller?.prepareConfirmation(id) ?? Promise.resolve(false)}
+						onconfirm={(id) => controller?.beginConfirmation(id) ?? false}
+						onretryable={(id) => controller?.confirmationRetryable(id)}
+						onpending={(id) => controller?.checkoutComplete(id)}
+						onclose={(id) => controller?.closeCheckout(id)}
+						onrefresh={() => controller?.refresh()}
+						onrecover={(id) => controller?.checkCheckout(id)}
+					/>
+				{/if}
 			{/key}
 		{:else}
 			<PaymentAction

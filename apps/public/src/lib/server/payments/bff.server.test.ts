@@ -192,19 +192,30 @@ describe('checkout BFF', () => {
 		});
 	});
 
-	it('relays an embedded client secret only in the checkout answer, no-store, never logged', async () => {
-		reply = () => Response.json({ ...embeddedCheckout, debug: 'internal', customerEmail: 'x@y.z' });
-		const response = await createCheckout(checkoutEvent());
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual(embeddedCheckout);
-		expect(response.headers.get('cache-control')).toBe('no-store');
-		expect(response.headers.get('referrer-policy')).toBe('no-referrer');
-		const logged = JSON.stringify([
-			vi.mocked(console.error).mock.calls,
-			vi.mocked(console.warn).mock.calls
-		]);
-		expect(logged).not.toContain(embeddedSecret);
-	});
+	it.each(['EMBEDDED', 'ELEMENTS'])(
+		'whitelists the %s checkout answer, no-store, never logged',
+		async (uiMode) => {
+			const opened = { ...embeddedCheckout, uiMode };
+			reply = () => Response.json({ ...opened, debug: 'internal', customerEmail: 'x@y.z' });
+			const response = await createCheckout(checkoutEvent());
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual(opened);
+			expect(response.headers.get('cache-control')).toBe('no-store');
+			expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+			const logged = JSON.stringify([
+				vi.mocked(console.error).mock.calls,
+				vi.mocked(console.warn).mock.calls
+			]);
+			expect(logged).not.toContain(embeddedSecret);
+			reply = () => Response.json({ ...opened, state: 'PROCESSING', url: openCheckout.url });
+			expect(await (await createCheckout(checkoutEvent())).json()).toEqual({
+				attemptId: opened.attemptId,
+				uiMode,
+				state: 'PROCESSING',
+				outcome: opened.outcome
+			});
+		}
+	);
 
 	it('never lets a launch credential through a payment summary', async () => {
 		reply = () =>
@@ -220,6 +231,7 @@ describe('checkout BFF', () => {
 		for (const body of [
 			{ ...embeddedCheckout, uiMode: 'POPUP' },
 			{ ...embeddedCheckout, url: openCheckout.url },
+			{ ...embeddedCheckout, uiMode: 'ELEMENTS', url: openCheckout.url },
 			{ ...embeddedCheckout, clientSecret: undefined }
 		]) {
 			reply = () => Response.json(body);

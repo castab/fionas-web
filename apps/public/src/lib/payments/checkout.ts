@@ -10,6 +10,7 @@
 import {
 	IDEMPOTENCY_KEY,
 	PAYMENT_TOKEN,
+	isOnPageCheckoutMode,
 	readCheckoutCommand,
 	type CheckoutCommand,
 	type CheckoutUiMode,
@@ -35,19 +36,19 @@ export function readCheckoutReturn(search: string): 'returned' | 'cancelled' | n
 /**
  * A checkout command saved before transmission. `phase` is `sending` until a response arrives
  * (an ambiguous outcome stays `sending`), then `redirected` once commerce answered with a
- * provider state: a Checkout Session was opened (hosted or embedded) or already settled. The
+ * provider state: a Checkout Session was opened or already settled. The
  * literal predates Embedded Checkout and is kept so commands saved by either release survive a
  * deploy in both directions; it no longer implies that this tab navigated away.
  *
  * Only the command's identity, exact body, reviewed terms and nonsecret recovery hints are kept:
- * never a hosted Checkout URL or an embedded client secret. Either is obtained again only by
+ * never a hosted Checkout URL or a client secret. Either is obtained again only by
  * resending this same key and body.
  */
 export type StoredCheckout = {
 	key: string;
 	command: CheckoutCommand;
 	purpose: 'DEPOSIT' | 'INVOICE';
-	/** Cents the customer chose, for wording only. */
+	/** Exact cents reviewed by the customer, also used to verify the Stripe Session total. */
 	amountCents: string;
 	/** Authoritative paid amount and lifecycle when the customer decided, for confirmations. */
 	paidBefore: string;
@@ -58,8 +59,8 @@ export type StoredCheckout = {
 	/** How commerce presented the opened attempt (nonsecret; wording and resume only). */
 	uiMode?: CheckoutUiMode;
 	/**
-	 * Stripe.js reported that the embedded Checkout completed. Only wording: the page still waits
-	 * for commerce to show the payment, and never marks anything paid from this.
+	 * Confirmation started or Stripe reported completion. Wait for commerce to show the
+	 * payment before taking another payment action.
 	 */
 	completing?: boolean;
 };
@@ -91,7 +92,7 @@ const isStoredCheckout = (value: unknown): value is StoredCheckout => {
 		v.lifecycleBefore.length <= 64 &&
 		(v.phase === 'sending' || v.phase === 'redirected') &&
 		(v.blocked === undefined || typeof v.blocked === 'boolean') &&
-		(v.uiMode === undefined || v.uiMode === 'HOSTED' || v.uiMode === 'EMBEDDED') &&
+		(v.uiMode === undefined || v.uiMode === 'HOSTED' || isOnPageCheckoutMode(v.uiMode)) &&
 		(v.completing === undefined || typeof v.completing === 'boolean')
 	);
 };

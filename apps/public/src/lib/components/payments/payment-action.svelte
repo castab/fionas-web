@@ -2,6 +2,7 @@
 	import { Button, Card, capsSm, cn, hintText } from '@fionas/ui';
 	import { mailtoUrl, site } from '@fionas/shared';
 	import type { AmountChoice, PageState } from '$lib/payments/controller.js';
+	import { isOnPageCheckoutMode } from '$lib/payments/contract.js';
 	import type { PayableTerms } from '$lib/payments/view.js';
 	import { STAFF_REVIEW_MESSAGE } from '$lib/payments/copy.js';
 	import {
@@ -95,18 +96,18 @@
 	const body = 'm-0 text-(--text-body) [font:var(--type-body-sm)]';
 	// This tab's own earlier command can always be resent; anything else is a new decision.
 	const ownCommand = $derived(!!pending && !pending.ambiguous && !pending.blocked);
-	// Stripe.js reported completion: only commerce can settle it, so nothing to resume or retry.
+	// When confirmation was dispatched, Elements can check the same attempt without reopening it.
 	const completing = $derived(ownCommand && !!pending?.completing);
+	const checkOnly = $derived(completing && pending?.uiMode === 'ELEMENTS');
 	const canRecover = $derived(
-		view?.kind === 'in-progress' && !completing && (!!view.recovery || ownCommand)
+		view?.kind === 'in-progress' && (!completing || checkOnly) && (!!view.recovery || ownCommand)
 	);
-	// This tab's own embedded form whose terms changed under it: only a same-key check is offered.
+	// This tab's own form whose terms changed under it: only a same-key check is offered.
 	const invalidated = $derived(
-		ownCommand && !completing && pending?.uiMode === 'EMBEDDED' && !!pending?.termsChanged
+		ownCommand && isOnPageCheckoutMode(pending?.uiMode) && !!pending?.termsChanged
 	);
-	// This tab's own closed embedded form, still on current terms: continuing reopens it here.
-	const resumesEmbedded = $derived(
-		ownCommand && pending?.uiMode === 'EMBEDDED' && !pending?.termsChanged
+	const resumesCheckout = $derived(
+		ownCommand && !completing && isOnPageCheckoutMode(pending?.uiMode) && !pending?.termsChanged
 	);
 	// A summary kept after a failed refresh is display-only: no new payment against it.
 	const stale = $derived(!current.summaryFresh);
@@ -335,11 +336,13 @@
 						)}. We'll check that earlier payment with our payment processor first. You can review
 						your balance and pay again once it's resolved.
 					</p>
-				{:else if resumesEmbedded}
+				{:else if resumesCheckout}
 					<p class={body}>
 						Your secure payment form for {formatCents(pending!.amountCents)} is still open. Continue to
 						return to that same payment here.
 					</p>
+				{:else if checkOnly}
+					<p class={body}>You can check the status of this same payment below.</p>
 				{:else if invoiceTerms}
 					<p class={body}>
 						We'll check that earlier payment first. If it's still open you can go back to it; if it
@@ -360,9 +363,9 @@
 					disabled={busy || (stale && !ownCommand)}
 					data-testid="recover-payment"
 					>{@render submitLabel(
-						invalidated
+						invalidated || checkOnly
 							? 'Check previous payment'
-							: resumesEmbedded
+							: resumesCheckout
 								? 'Continue your payment'
 								: 'Check previous payment and continue'
 					)}</Button

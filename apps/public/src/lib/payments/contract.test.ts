@@ -205,6 +205,27 @@ describe('checkout contract', () => {
 		}
 	});
 
+	it('launches Elements only with its own client secret on an OPEN answer', () => {
+		const elements = { ...embeddedCheckout, uiMode: 'ELEMENTS' } as const;
+		expect(readCheckoutResponse(elements)).toEqual(elements);
+		expect(checkoutLaunch(elements)).toEqual({ mode: 'ELEMENTS', clientSecret: embeddedSecret });
+		for (const bad of [
+			{ ...elements, clientSecret: undefined },
+			{ ...elements, clientSecret: undefined, url: openCheckout.url },
+			{ ...elements, url: openCheckout.url },
+			{ ...elements, clientSecret: 'sk_test_notAClientSecret123' }
+		])
+			expect(readCheckoutResponse(bad)).toBeNull();
+		const closed = readCheckoutResponse({ ...elements, state: 'EXPIRED', url: openCheckout.url })!;
+		expect(closed).toEqual({
+			attemptId: elements.attemptId,
+			uiMode: 'ELEMENTS',
+			state: 'EXPIRED',
+			outcome: elements.outcome
+		});
+		expect(checkoutLaunch(closed)).toBeNull();
+	});
+
 	it('names the failed check without echoing any value', () => {
 		const cases: [unknown, string][] = [
 			[[], 'not_object'],

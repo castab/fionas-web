@@ -1,8 +1,9 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { join } from 'node:path';
 import { bookedSummary, quotedSummary } from '../../src/lib/payments/testing/fixtures.js';
 
 /*
- * Embedded Checkout on /pay, end to end against the commerce stub. Stripe.js itself is replaced by
+ * On-page Checkout on /pay, end to end against the commerce stub. Stripe.js is replaced by
  * a routed fake on https://js.stripe.com (loaded through the real @stripe/stripe-js loader), whose
  * placeholder iframe also comes from js.stripe.com so the page's frame-src policy is exercised.
  * Stripe's real card form is never automated here; see the manual test-mode acceptance runbook.
@@ -10,7 +11,7 @@ import { bookedSummary, quotedSummary } from '../../src/lib/payments/testing/fix
 
 const stub = `http://127.0.0.1:${process.env.PAYMENTS_STUB_PORT ?? '4031'}`;
 type Summary = ReturnType<typeof quotedSummary>;
-type UiMode = 'HOSTED' | 'EMBEDDED' | 'LEGACY';
+type UiMode = 'HOSTED' | 'EMBEDDED' | 'ELEMENTS' | 'LEGACY';
 type Call = { method: string; url: string; key?: string; body?: string };
 
 async function scenario(request: APIRequestContext, summary: Summary, uiMode: UiMode) {
@@ -92,14 +93,17 @@ button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:6px;backgr
 <div class="f">1234 1234 1234 1234 · MM / YY · CVC</div><button type="button">Pay (test)</button>`;
 
 /** Routes js.stripe.com to the fake; `state.fail` makes the next loads fail like a blocker would. */
-async function fakeStripe(page: Page) {
+async function fakeStripe(page: Page, additionalScript = '') {
 	const state = { fail: false, requests: [] as string[] };
 	await page.route('https://js.stripe.com/**', async (route) => {
 		const url = route.request().url();
 		state.requests.push(url);
 		if (state.fail) return route.abort('blockedbyclient');
 		if (/\/stripe\.js(\?|$)/.test(url))
-			return route.fulfill({ contentType: 'text/javascript', body: FAKE_STRIPE_JS });
+			return route.fulfill({
+				contentType: 'text/javascript',
+				body: FAKE_STRIPE_JS + additionalScript
+			});
 		return route.fulfill({ contentType: 'text/html', body: FAKE_FORM });
 	});
 	return state;
@@ -440,4 +444,311 @@ test('a staff amendment while the form is open removes it; checking reuses the s
 	await expect(notice).toContainText("Your booking's payment details have changed");
 	await expect(page.getByTestId('embedded-checkout')).toHaveCount(0);
 	expect(await stripeTest(page)).toMatchObject({ creates: 1, live: 0 });
+});
+
+// The fake consumes the actual Appearance API config and font in its iframes. Its fields
+// contain placeholders only, and its confirm function never contacts a provider.
+function elementsScript(cents: number, fail = false) {
+	return `
+	(() => {
+		const embedded = window.Stripe;
+		const t = window.__elementsTest = { creates: 0, destroys: 0, confirms: 0, fail: ${fail}, decline: false };
+		window.Stripe = (key) => ({
+			...embedded(key),
+			initCheckoutElementsSdk({ clientSecret, elementsOptions }) {
+				if (!clientSecret.startsWith('cs_test_')) throw new Error('invalid test configuration');
+				t.creates++;
+				const values = { contact: false, payment: false };
+				const { appearance, fonts: [font] } = elementsOptions;
+				const v = appearance.variables;
+				let change;
+				const getSession = () => ({
+					currency: 'usd',
+					minorUnitsAmountDivisor: 100,
+					total: { total: { minorUnitsAmount: ${cents}, amount: 'untrusted display amount' } },
+					status: { type: 'open' },
+					canConfirm: values.contact && values.payment
+				});
+				function element(kind, markup, height) {
+					const events = {};
+					let frame;
+					return {
+						on(name, callback) { events[name] = callback; },
+						mount(target) {
+							frame = document.createElement('iframe');
+							frame.title = kind === 'contact' ? 'Stripe contact details (mock)' : 'Stripe payment details (mock)';
+							frame.style.cssText = 'display:block;width:100%;border:0;height:' + height + 'px';
+							frame.srcdoc = '<!doctype html><style>@font-face{font-family:Poppins;src:' + font.src +
+								'} body{margin:0;color:' + v.colorText + ';background:' + v.colorBackground +
+								';font:14px ' + v.fontFamily + '} label{display:block;margin-bottom:5px}' +
+								'input{box-sizing:border-box;font:16px ' + v.fontFamily +
+								';color:' + v.colorText + ';width:100%;padding:10px 12px;background:' + v.colorBackground +
+								';border:1px solid ' + appearance.rules['.Input'].borderColor + ';border-radius:' + v.borderRadius +
+								'} input:focus{outline:2px solid ' + v.colorPrimary + '}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}</style>' + markup;
+							frame.onload = async () => {
+								const doc = frame.contentDocument;
+								await doc.fonts.load('16px Poppins');
+								doc.querySelector('input').addEventListener('input', (event) => {
+									values[kind] = event.target.checkValidity();
+									change?.(getSession());
+								});
+								events.ready?.();
+							};
+							target.appendChild(frame);
+						},
+						destroy() { t.destroys++; frame?.remove(); }
+					};
+				}
+				return {
+					on(_event, fn) { change = fn; },
+					createContactDetailsElement() {
+						return element('contact', '<label for="email">Email address</label><input id="email" type="email" placeholder="you@example.com" required>', 70);
+					},
+					createPaymentElement() {
+						return element('payment', '<label for="number">Card number</label><input id="number" placeholder="Card number" required>' +
+							'<div class="pair"><div><label for="expiry">Expiration</label><input id="expiry" placeholder="MM / YY"></div>' +
+							'<div><label for="code">Security code</label><input id="code" placeholder="CVC"></div></div>', 166);
+					},
+					async loadActions() {
+						if (t.fail) return { type: 'error', error: { message: 'Private test load failure' } };
+						return { type: 'success', actions: {
+							getSession,
+							async validateElements() { return { type: 'success', session: getSession() }; },
+							async confirm({ redirect }) {
+								if (redirect !== 'if_required') throw new Error('Unexpected redirect option');
+								t.confirms++;
+								return t.decline
+									? { type: 'error', error: { code: 'paymentFailed', message: 'Private test decline' } }
+									: { type: 'success', session: getSession() };
+							}
+						} };
+					}
+				};
+			}
+		});
+		window.Stripe.version = embedded.version;
+	})();
+	`;
+}
+
+type ElementsTest = {
+	creates: number;
+	destroys: number;
+	confirms: number;
+	fail: boolean;
+	decline: boolean;
+};
+const elementsState = (page: Page) =>
+	page.evaluate(() => (window as unknown as { __elementsTest: ElementsTest }).__elementsTest);
+
+async function fakeFields(page: Page) {
+	await page
+		.frameLocator('iframe[title="Stripe contact details (mock)"]')
+		.getByLabel('Email address')
+		.fill('checkout@example.test');
+	await page
+		.frameLocator('iframe[title="Stripe payment details (mock)"]')
+		.getByLabel('Card number')
+		.fill('Mock payment details');
+}
+
+test('Elements deposit stays pending until commerce records it', async ({ page, request }) => {
+	const logs: string[] = [];
+	page.on('console', (message) => logs.push(message.text()));
+	page.on('pageerror', (error) => logs.push(error.message));
+	const { publicId, token } = await scenario(request, quotedSummary(), 'ELEMENTS');
+	const stripe = await fakeStripe(page, elementsScript(24000));
+	const response = await open(page, publicId, token);
+	const html = await response!.text();
+	expect(stripe.requests).toEqual([]);
+	await page.getByTestId('pay').focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('heading', { name: 'Complete your payment' })).toBeFocused();
+	const pay = page.getByRole('button', { name: 'Pay $240.00' });
+	await expect(pay).toBeDisabled();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$240.00');
+	await fakeFields(page);
+	await expect(pay).toBeEnabled();
+	await pay.focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	await expect(page.getByTestId('stage-label')).toHaveText('Quote ready');
+	expect(await elementsState(page)).toMatchObject({ confirms: 1, destroys: 2 });
+	await update(request, publicId, { summary: bookedSummary() });
+	await expect(page.getByTestId('payment-notice')).toContainText('Deposit received');
+	expect(await posts(request, publicId)).toHaveLength(1);
+	const [secret] = (await stubState(request, publicId)).secrets;
+	for (const privateValue of [secret, 'checkout@example.test', 'Mock payment details']) {
+		expect(html).not.toContain(privateValue);
+		expect(await persisted(page, logs)).not.toContain(privateValue);
+	}
+	expect(html).not.toContain(token);
+	await expect(page).toHaveURL(new RegExp(`/pay/${publicId}$`));
+});
+
+test('Elements verifies the full Invoice amount, with branded desktop and mobile fields', async ({
+	page,
+	request
+}, testInfo) => {
+	const summary = bookedSummary({
+		document: { ...bookedSummary().document, totalAmount: '720.00' },
+		balance: '480.00',
+		requiredAmount: '480.00'
+	});
+	const { publicId, token } = await scenario(request, summary, 'ELEMENTS');
+	await fakeStripe(page, elementsScript(48000));
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$480.00');
+	const field = page
+		.frameLocator('iframe[title="Stripe contact details (mock)"]')
+		.getByLabel('Email address');
+	expect(
+		await field.evaluate((element) => {
+			const doc = element.ownerDocument;
+			return (
+				[...doc.fonts].some((font) => font.family === 'Poppins' && font.status === 'loaded') &&
+				doc.defaultView!.getComputedStyle(element).fontFamily.includes('Poppins')
+			);
+		})
+	).toBe(true);
+	await page.keyboard.press('Tab');
+	await expect(field).toBeFocused();
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+		page.viewportSize()!.width
+	);
+	const screenshotDir = process.env.PAYMENTS_SCREENSHOTS;
+	if (screenshotDir) {
+		await field.blur();
+		const viewport = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
+		if (viewport === 'desktop')
+			await page.setViewportSize({ ...page.viewportSize()!, height: 1000 });
+		const panel = page.getByTestId('elements-checkout');
+		await panel.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+		await panel.screenshot({
+			path: join(screenshotDir, `checkout-elements-${viewport}.png`),
+			scale: 'css'
+		});
+	}
+});
+
+test('Elements resumes a partial Invoice payment after reload and handles a decline', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, bookedSummary(), 'ELEMENTS');
+	await fakeStripe(page, elementsScript(10000));
+	await open(page, publicId, token);
+	await page.getByRole('radio', { name: 'A different amount' }).check();
+	await page.getByLabel('Amount (USD)').fill('100');
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$100.00');
+	await page.getByRole('button', { name: 'Back to booking overview' }).click();
+	await expect(page.getByRole('heading', { name: 'your booking' })).toBeFocused();
+	await page.reload();
+	await page.getByRole('button', { name: 'Continue your payment' }).click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$100.00');
+	await fakeFields(page);
+	await page.evaluate(
+		() => ((window as unknown as { __elementsTest: ElementsTest }).__elementsTest.decline = true)
+	);
+	const pay = page.getByRole('button', { name: 'Pay $100.00' });
+	await pay.click();
+	await expect(page.getByRole('alert')).toContainText('Your payment was declined');
+	expect(await elementsState(page)).toMatchObject({ creates: 1, destroys: 0, confirms: 1 });
+	await expect(page.getByRole('alert')).not.toContainText('Private test decline');
+	await expect(pay).toBeEnabled();
+	await page.evaluate(
+		() => ((window as unknown as { __elementsTest: ElementsTest }).__elementsTest.decline = false)
+	);
+	await pay.click();
+	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
+	await update(request, publicId, {
+		summary: bookedSummary({ paidAmount: '340.00', balance: '860.00', requiredAmount: '860.00' })
+	});
+	await expect(page.getByTestId('payment-notice')).toContainText(
+		'Your remaining balance is $860.00'
+	);
+	const [first, resumed] = await posts(request, publicId);
+	expect(resumed.key).toBe(first.key);
+	expect(resumed.body).toBe(first.body);
+	expect(resumed.body).toContain('"amountMinor":10000');
+});
+
+test('Elements can check the same authorization after a loading failure', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, quotedSummary(), 'ELEMENTS');
+	await fakeStripe(page, elementsScript(24000, true));
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByRole('alert')).toContainText("We couldn't load the secure payment form");
+	await page.evaluate(
+		() => ((window as unknown as { __elementsTest: ElementsTest }).__elementsTest.fail = false)
+	);
+	await page.getByRole('button', { name: 'Check previous payment' }).click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$240.00');
+	const [first, check] = await posts(request, publicId);
+	expect(check.key).toBe(first.key);
+	expect(check.body).toBe(first.body);
+});
+
+test('an old Embedded attempt resumes after the switch and a fresh payment uses Elements', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, quotedSummary(), 'EMBEDDED');
+	await fakeStripe(page, elementsScript(96000));
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('embedded-checkout')).toBeVisible();
+	await page.getByRole('button', { name: 'Back to booking overview' }).click();
+	await update(request, publicId, { uiMode: 'ELEMENTS' });
+	await page.getByRole('button', { name: 'Continue your payment' }).click();
+	await expect(page.locator('iframe[title="Secure checkout (test)"]')).toBeVisible();
+	await completeInStripe(page);
+	await expect(page.getByTestId('payment-notice')).toContainText('Confirming your payment');
+	await update(request, publicId, { summary: bookedSummary() });
+	await expect(page.getByTestId('payment-notice')).toContainText('Deposit received');
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$960.00');
+	const [original, resumed, fresh] = await posts(request, publicId);
+	expect(resumed.key).toBe(original.key);
+	expect(fresh.key).not.toBe(original.key);
+});
+
+test('Elements preflight catches an amendment before Stripe can confirm', async ({
+	page,
+	request
+}) => {
+	const summary = bookedSummary();
+	const { publicId, token } = await scenario(request, summary, 'ELEMENTS');
+	await fakeStripe(page, elementsScript(96000));
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$960.00');
+	await fakeFields(page);
+	const pay = page.getByRole('button', { name: 'Pay $960.00' });
+	await expect(pay).toBeEnabled();
+	// Give the first read after the customer clicks Pay the amended summary.
+	const amended = underway(
+		bookedSummary({
+			document: { ...summary.document, version: 7, businessRevision: 9 }
+		})
+	);
+	await page.route(`**/api/payments/${publicId}`, (route) => route.fulfill({ json: amended }));
+	await pay.click();
+	await expect(page.getByTestId('payment-notice')).toContainText(
+		"Your booking's payment details have changed"
+	);
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	expect(await elementsState(page)).toMatchObject({ confirms: 0, destroys: 2 });
+	await page.getByRole('button', { name: 'Check previous payment' }).click();
+	await expect.poll(async () => (await posts(request, publicId)).length).toBe(2);
+	const [first, check] = await posts(request, publicId);
+	expect(check.key).toBe(first.key);
+	expect(check.body).toBe(first.body);
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
 });
