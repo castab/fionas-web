@@ -66,6 +66,10 @@ export type CustomerPaymentsResult = {
 	url?: string;
 	reconciled?: { attemptId: string; state: string; outcome: string };
 	message?: string;
+	/** How `message` reads: confirmed release/payment, plain status, or something needing care. */
+	messageTone?: 'positive' | 'neutral' | 'warning';
+	/** A reconcile may have changed settlement: Right now and Activity should be re-read. */
+	settlement?: boolean;
 	error?: string;
 	/** The mutation may have committed: controls stay blocked until a reload confirms state. */
 	reviewRequired?: boolean;
@@ -202,9 +206,11 @@ export function attemptPurposeLabel(purpose: string): string {
 
 /** Attempts a staff check could still change: active ones, or paid but not yet applied. */
 export function canReconcileAttempt(attempt: PaymentAttempt): boolean {
+	// Only coherent unresolved pairs (see `coherentAttempt`): an incoherent one is investigated.
 	return (
-		['CREATING', 'OPEN', 'PROCESSING'].includes(attempt.state) ||
-		(attempt.state === 'SUCCEEDED' && attempt.outcome === 'PENDING')
+		attempt.outcome === 'PENDING' &&
+		!attempt.ledgerPaymentId &&
+		['CREATING', 'OPEN', 'PROCESSING', 'SUCCEEDED'].includes(attempt.state)
 	);
 }
 
@@ -232,12 +238,14 @@ export function customerPaymentsErrorMessage(
 			: 'This request has no payment link to change.';
 	if (status === 409)
 		return intent === 'reconcile'
-			? "Stripe couldn't settle this attempt yet. Try again later or check it in the Stripe Dashboard."
+			? "We couldn't reconcile this checkout, and no release was confirmed. Reload to check its latest status before doing anything else with it."
 			: intent === 'issue' || intent === 'rotate'
 				? 'Payment links can be created or rotated only while a request is quoted, booked or served.'
 				: 'The payment link changed. Reload to see its current status.';
 	if (status === 400 || status === 422) return 'That request was refused. Reload and try again.';
 	return intent === 'reveal'
 		? "We couldn't load the payment link. Try again in a moment."
-		: "We couldn't confirm the result. Reload to see the current status before trying again.";
+		: intent === 'reconcile'
+			? "We couldn't confirm what Stripe did. Don't assume the checkout was released or paid: reload to see the current status before another action."
+			: "We couldn't confirm the result. Reload to see the current status before trying again.";
 }

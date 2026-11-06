@@ -230,10 +230,17 @@ test('attempt diagnostics distinguish reconciliation and offer a safe Stripe che
 	await payments(context, { mode: 'reconcile-expire' });
 	await openRow.getByText('Check with Stripe…').click();
 	await expect(openRow).toContainText('never creates a new charge');
+	// Authorized against Invoice v2 while the booking is at Invoice v3: release is offered too.
+	await expect(openRow.getByTestId('payment-attempt-terms')).toContainText(
+		'It was started for Invoice v2; the current terms are Invoice v3.'
+	);
+	await expect(card(page).getByTestId('release-previous-checkout')).toBeVisible();
+	await expect(openRow.getByTestId('reconcile-attempt')).toHaveText('Check payment status');
 	await openRow.getByTestId('reconcile-attempt').click();
 	await expect(card(page).getByTestId('customer-payments-status')).toContainText(
-		'Checked with Stripe'
+		'Stripe confirmed the previous checkout expired'
 	);
+	await expect(card(page).getByTestId('release-previous-checkout')).toHaveCount(0);
 	await expect(rows.filter({ hasText: 'Expired' })).toHaveCount(1);
 	expect(await page.content()).not.toContain('cs_test_private');
 });

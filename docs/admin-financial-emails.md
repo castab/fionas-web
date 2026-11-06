@@ -49,6 +49,29 @@ without the permissions, and explains why emailing is unavailable:
 documented refusal has its own copy (`financialEmailError`); backend messages and request contents
 are never shown.
 
+### Checkout independence
+
+Since fionas-commerce PR #41, an active, processing or unresolved Stripe Checkout never makes the
+current Quote or SERVED Invoice ineligible for email: commerce validates the document and ledger
+terms independently of provider attempts, and the email uses neutral review wording ("Review your
+quote", "Review your updated quote", "Review your invoice") that stays accurate whatever happens at
+checkout. The admin matches that:
+
+- `financialEmailTarget`, **Email quote** / **Email invoice**, preview and send read only the staff
+  request, the timeline and permissions. Nothing here reads payment attempts or the public `canPay`;
+  a successful commerce preview is the confirmation that this email is eligible.
+- `financial_email_ineligible` copy names a changed stage or terms that can't be paid online, never
+  a payment in progress; `financial_email_review_stale` and the panel's invalidation copy name the
+  document, its recorded payments or the email.
+- A Stripe check (including **Release previous checkout** under Customer payments) that answers
+  EXPIRED, FAILED, OPEN, CREATING or PROCESSING changes nothing an email review binds, so it
+  re-reads neither the staff request nor Activity and never invalidates an open preview. A captured
+  or applied payment does re-read both, and a changed document, ledger payment, customer or message
+  still invalidates the review here and at commerce (`financial_email_review_stale`).
+- Sending an updated Quote never requires releasing the old checkout first, and releasing it never
+  requires an email; the two are separate cards and actions. See
+  [Previous checkouts after a revision](customer-payments.md#previous-checkouts-after-a-revision).
+
 ## Identities
 
 `financialEmailTarget` reads the authoritative staff request only:
@@ -196,7 +219,9 @@ event. UNKNOWN and REJECTED commands without a message appear only in the status
 The page keeps the latest applied Activity read, so status updates with live SSE refreshes and with
 the targeted refresh after an enhanced send (`refreshSignal`). Financial-email commands are not part
 of the `financialHistory` comparison (a send changes no staff request); payments, publications and
-amendments still re-read the staff request, which invalidates an open preview. A send never
+amendments still re-read the staff request. The panel invalidates its preview when the reviewed
+identity changed, and commerce refuses a send whose reviewed facts (ledger payments included)
+changed with `financial_email_review_stale`. Checkout state is part of neither. A send never
 acknowledges correspondence, so Needs reply stays until staff mark it read. Drafts, the reply
 composer and disclosures are untouched.
 

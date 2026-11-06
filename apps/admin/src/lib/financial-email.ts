@@ -408,9 +408,9 @@ export function expectationFields(expectation: ReplyExpectation): Record<string,
 export function financialEmailError(code: string, attempted = false): string {
 	const copy: Record<string, string> = {
 		financial_email_review_stale:
-			'The document, payment state or email changed since this preview. Preview the email again before sending.',
+			'The document, its recorded payments or the email changed since this preview. Preview the email again before sending.',
 		financial_email_ineligible:
-			'This document cannot be emailed right now (for example, its stage changed, a payment is in progress, or there is no collectible balance). Reload to review the current state.',
+			'This document can’t be emailed right now: its stage changed, or its terms can’t be paid online (for example, nothing is left to collect). Reload to review the current state.',
 		financial_email_deposit_required:
 			'This Quote has no active approved deposit, so it cannot be emailed. Reload to review.',
 		payment_access_revoked:

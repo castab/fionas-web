@@ -80,6 +80,7 @@ beforeEach(() => {
 			})
 	};
 	vi.spyOn(console, 'error').mockImplementation(() => undefined);
+	vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
 function actionEvent(entries: [string, string][], permissions = permitted) {
@@ -279,6 +280,144 @@ describe('customer payments action', () => {
 			attempts: [{ id: attempt.id }]
 		});
 		expect(JSON.stringify(result)).not.toContain('checkout.stripe.com');
+	});
+
+	it('answers a release with the provider-confirmed status only, once per submission', async () => {
+		const reconcile = (state: string, outcome = 'PENDING', attemptId = attempt.id) => {
+			routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+				Response.json({ attemptId, uiMode: 'EMBEDDED', state, outcome });
+		};
+		const submit = async () =>
+			data(
+				await customerPaymentsAction(
+					actionEvent([
+						['intent', 'reconcile'],
+						['attemptId', attempt.id]
+					])
+				)
+			);
+		reconcile('EXPIRED');
+		expect(await submit()).toMatchObject({
+			reconciled: { state: 'EXPIRED' },
+			messageTone: 'positive',
+			settlement: false,
+			message: expect.stringContaining('released')
+		});
+		reconcile('OPEN');
+		const open = await submit();
+		expect(open).toMatchObject({ messageTone: 'neutral', settlement: false });
+		expect(open.message).toContain('wasn’t released');
+		reconcile('PROCESSING');
+		const processing = await submit();
+		expect(processing).toMatchObject({ messageTone: 'warning', settlement: false });
+		expect(String(processing.message)).not.toMatch(/it’s released|cancel/i);
+		reconcile('SUCCEEDED', 'APPLIED');
+		expect(await submit()).toMatchObject({ messageTone: 'positive', settlement: true });
+		reconcile('SUCCEEDED', 'RECONCILIATION_REQUIRED');
+		expect(await submit()).toMatchObject({
+			messageTone: 'warning',
+			settlement: true,
+			message: expect.stringContaining('needs staff reconciliation')
+		});
+		// One bodyless POST per submission, to exactly the submitted attempt, never retried.
+		const posts = calls.filter((c) => c.method === 'POST');
+		expect(posts).toHaveLength(5);
+		expect(new Set(posts.map((c) => c.url))).toEqual(
+			new Set([`${base}/payment-attempts/${attempt.id}/reconcile`])
+		);
+		expect(posts.every((c) => c.body === undefined || c.body === null)).toBe(true);
+		// Each answer re-reads the authoritative attempt list.
+		expect(calls.filter((c) => c.url === `${base}/payment-attempts`)).toHaveLength(5);
+	});
+
+	it('blocks for review when Stripe’s answer is ambiguous or about another attempt', async () => {
+		const submit = async () =>
+			data(
+				await customerPaymentsAction(
+					actionEvent([
+						['intent', 'reconcile'],
+						['attemptId', attempt.id]
+					])
+				)
+			);
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json({
+				attemptId: '00000000-0000-4000-8000-000000000999',
+				state: 'EXPIRED',
+				outcome: 'PENDING'
+			});
+		const other = await submit();
+		expect(other).toMatchObject({ reviewRequired: true });
+		expect(other.reconciled).toBeUndefined();
+		expect(other.message).toBeUndefined();
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json({ attemptId: attempt.id, state: 'PAUSED', outcome: 'PENDING' });
+		expect(await submit()).toMatchObject({ reviewRequired: true });
+		// Well-formed but semantically unsupported pairs are never a payment success or release.
+		for (const [state, outcome] of [
+			['OPEN', 'APPLIED'],
+			['EXPIRED', 'APPLIED'],
+			['PROCESSING', 'RECONCILIATION_REQUIRED']
+		]) {
+			routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+				Response.json({ attemptId: attempt.id, state, outcome });
+			const answer = await submit();
+			expect(answer).toMatchObject({ reviewRequired: true, settlement: true });
+			expect(answer.reconciled).toBeUndefined();
+			expect(answer.message).toBeUndefined();
+			expect(answer.error).toBe(
+				"We couldn't confirm what Stripe did. Don't assume the checkout was released or paid: reload to see the current status before another action."
+			);
+		}
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json({ code: 'stripe_unavailable', message: 'PRIVATE' }, { status: 502 });
+		const failed = await submit();
+		expect(failed).toMatchObject({ reviewRequired: true });
+		expect(failed.error).toContain("Don't assume the checkout was released or paid");
+		expect(JSON.stringify(failed)).not.toContain('PRIVATE');
+		routes[`POST ${base}/payment-attempts/${attempt.id}/reconcile`] = () =>
+			Response.json(
+				{ code: 'CHECKOUT_CREATION_UNKNOWN_REQUIRES_RECONCILIATION', message: 'PRIVATE' },
+				{ status: 409 }
+			);
+		const conflict = await submit();
+		// A conflict proves only that no confirmed outcome came back: reload before anything else.
+		expect(conflict).toMatchObject({ reviewRequired: true });
+		expect(conflict.error).toBe(
+			"We couldn't reconcile this checkout, and no release was confirmed. Reload to check its latest status before doing anything else with it."
+		);
+		expect(conflict.error).not.toMatch(/nothing was|no payment|settled|cancel/i);
+		expect(JSON.stringify(conflict)).not.toMatch(/PRIVATE|CHECKOUT_CREATION/);
+		// Its static code is kept for operators in the server log only.
+		expect(console.warn).toHaveBeenCalledWith(
+			expect.stringContaining('reconcile 409 CHECKOUT_CREATION_UNKNOWN_REQUIRES_RECONCILIATION')
+		);
+		// One POST per submission; nothing was retried.
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(7);
+	});
+
+	it('keeps payment-link conflicts definite (no reload lock)', async () => {
+		for (const intent of ['rotate', 'revoke'] as const) {
+			routes[`POST ${base}/payment-access/${intent}`] = () =>
+				Response.json({ code: 'illegal_transition', message: 'PRIVATE' }, { status: 409 });
+			const refused = data(
+				await customerPaymentsAction(
+					actionEvent([
+						['intent', intent],
+						['confirm', intent]
+					])
+				)
+			);
+			expect(refused.reviewRequired).toBe(false);
+		}
+		routes[`POST ${base}/payment-access`] = () =>
+			Response.json({ code: 'illegal_transition', message: 'PRIVATE' }, { status: 409 });
+		const issue = data(await customerPaymentsAction(actionEvent([['intent', 'issue']])));
+		expect(issue).toMatchObject({
+			reviewRequired: false,
+			error:
+				'Payment links can be created or rotated only while a request is quoted, booked or served.'
+		});
 	});
 
 	it('maps CLOSED issuance refusals and ambiguous failures to safe copy', async () => {

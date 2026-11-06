@@ -3,7 +3,15 @@
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { Badge, Button, Card } from '@fionas/ui';
-	import type { InquiryStage } from '$lib/request-contract.js';
+	import type { CurrentStaffRequest, InquiryStage } from '$lib/request-contract.js';
+	import {
+		attemptDocumentLabel,
+		attemptsNeedingAttention,
+		classifyAttempt,
+		currentPaymentTerms,
+		supersededCopy,
+		type AttemptAttention
+	} from '$lib/checkout-attempts.js';
 	import {
 		attemptOutcomeLabels,
 		attemptPurposeLabel,
@@ -18,18 +26,23 @@
 		type PaymentLinkIntent
 	} from '$lib/customer-payments.js';
 	import { receivedTimeLabel } from '$lib/payments.js';
+	import { attemptRefresh } from '$lib/attempt-refresh.js';
 	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 
 	let {
 		stage,
+		request,
 		view,
 		result = null,
 		endpoint,
 		route,
 		returnContext = null,
-		refreshSignal = 0
+		refreshSignal = 0,
+		onsettlement
 	}: {
 		stage: InquiryStage;
+		/** The live authoritative staff request: attempts are compared with its current terms. */
+		request: CurrentStaffRequest;
 		view: CustomerPaymentsView;
 		/** A native (no-JavaScript) action result; enhanced results stay local to this card. */
 		result?: CustomerPaymentsResult | null;
@@ -40,6 +53,8 @@
 		returnContext?: RequestListQuery | null;
 		/** Increments after each authoritative Activity refresh (live timeline updates). */
 		refreshSignal?: number;
+		/** An enhanced Stripe check may have changed settlement: re-read Right now and Activity. */
+		onsettlement?: () => void;
 	} = $props();
 
 	const initial = untrack(() => {
@@ -52,7 +67,10 @@
 	});
 	let current = $state<CustomerPaymentsView>(initial);
 	let busy = $state<PaymentLinkIntent | null>(null);
+	// The attempt a Stripe check is running for: every other check waits until it answers.
+	let busyAttempt = $state<string | null>(null);
 	let message = $state(untrack(() => result?.message ?? ''));
+	let messageTone = $state(untrack(() => result?.messageTone ?? 'positive'));
 	let error = $state(untrack(() => result?.error ?? ''));
 	let reviewRequired = $state(untrack(() => !!result?.reviewRequired));
 	// The usable link, shown only after a deliberate reveal when the clipboard is unavailable.
@@ -61,15 +79,29 @@
 	let attemptsOpen = $state(false);
 	let attemptsStale = $state(false);
 	let refreshing = $state(false);
+	// The staff-request snapshot the shown attempts were read alongside. The two reads move at
+	// different moments; until they pair up again nothing is offered as a release.
+	let attemptsBasis = $state.raw(untrack(() => request));
+	// The latest attempt read failed: the last known attempts stay, marked possibly out of date.
+	let attemptsUnconfirmed = $state(false);
 	let revealTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const action = $derived(workspaceAction(returnContext, 'customerPayments'));
 	const issuable = $derived(canIssuePaymentLink(stage));
 	const link = $derived(current.availability === 'ready' ? current.link : null);
 	const attempts = $derived(current.availability === 'ready' ? current.attempts : null);
+	// Presentation only: commerce alone decides whether a check expires a session.
+	const terms = $derived(currentPaymentTerms(request));
 	const needsReconciliation = $derived(
-		attempts?.some((attempt) => attempt.outcome === 'RECONCILIATION_REQUIRED') ?? false
+		attempts?.some(
+			(attempt) => classifyAttempt(attempt, terms).status === 'reconciliation_required'
+		) ?? false
 	);
+	const attention = $derived(attemptsNeedingAttention(attempts, terms));
+	// Attempts and terms come from reads that pair up, and the latest read succeeded.
+	const confirmed = $derived(attemptsBasis === request && !attemptsUnconfirmed);
+	// Notices outside the diagnostics disclosure that live updates must keep accurate.
+	const prominent = $derived(attention.length > 0 || needsReconciliation);
 
 	function hideRevealed() {
 		revealed = null;
@@ -138,21 +170,35 @@
 		}
 		if (current.availability === 'ready') {
 			if (next.link) current = { ...current, link: next.link };
-			if (next.attempts !== undefined) current = { ...current, attempts: next.attempts };
+			if (next.attempts !== undefined) {
+				// Newer than any read already in flight, which is then discarded and read again.
+				refresher?.local();
+				if (next.attempts === null && current.attempts) attemptsUnconfirmed = true;
+				else {
+					current = { ...current, attempts: next.attempts };
+					attemptsBasis = request;
+					attemptsUnconfirmed = false;
+				}
+			}
 		}
 		error = next.error ?? '';
 		message = next.message ?? '';
+		messageTone = next.messageTone ?? 'positive';
 		if (next.reviewRequired) reviewRequired = true;
 		if (next.link && next.link.state !== 'active') hideRevealed();
+		// A captured or applied payment changes Right now and Activity, not just this card.
+		if (next.settlement && !next.reviewRequired) onsettlement?.();
 	}
 
-	function submitter(intent: PaymentLinkIntent): SubmitFunction {
+	function submitter(intent: PaymentLinkIntent, attemptId?: string): SubmitFunction {
 		return ({ cancel }) => {
+			// One deliberate submission, one request: duplicates and blocked states never post.
 			if (busy || reviewRequired) {
 				cancel();
 				return;
 			}
 			busy = intent;
+			busyAttempt = attemptId ?? null;
 			error = '';
 			message = '';
 			if (intent === 'rotate' || intent === 'revoke') hideRevealed();
@@ -180,6 +226,7 @@
 					}
 				} finally {
 					busy = null;
+					busyAttempt = null;
 				}
 			};
 		};
@@ -196,41 +243,85 @@
 		);
 	}
 
-	async function refresh() {
-		if (refreshing) return;
-		refreshing = true;
-		try {
-			const response = await fetch(endpoint, {
-				cache: 'no-store',
-				signal: AbortSignal.timeout(15000)
-			});
-			const next: unknown = await response.json();
-			if (response.ok && isView(next)) {
-				current = next;
-				attemptsStale = false;
-			}
-		} catch {
-			// The previously loaded diagnostics stay visible; a later notification can recover.
-		} finally {
-			refreshing = false;
+	/** A refreshed view, unless it lost attempts we had: then the last known stay, unconfirmed. */
+	function applyView(next: CustomerPaymentsView, basis: CurrentStaffRequest) {
+		const known = current.availability === 'ready' ? current.attempts : null;
+		const lost =
+			next.availability === 'unavailable' ||
+			(next.availability === 'ready' && next.attempts === null);
+		if (known && lost) {
+			if (next.availability === 'ready') current = { ...next, attempts: known };
+			attemptsUnconfirmed = true;
+			attemptsStale = true;
+			return;
 		}
+		current = next;
+		attemptsBasis = basis;
+		attemptsUnconfirmed = false;
+		attemptsStale = false;
 	}
 
-	// Live timeline updates: refresh diagnostics now when displayed, otherwise when next opened.
+	// One serialized read loop: overlapping hints coalesce, one arriving mid-read is kept for
+	// another pass, and a read older than a reconcile answer never overwrites it.
+	let refresher:
+		ReturnType<typeof attemptRefresh<CustomerPaymentsView, CurrentStaffRequest>> | undefined;
+	$effect(() => {
+		const target = endpoint;
+		return untrack(() => {
+			const loop = attemptRefresh<CustomerPaymentsView, CurrentStaffRequest>({
+				async read(signal) {
+					const response = await fetch(target, {
+						cache: 'no-store',
+						signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
+					});
+					const next: unknown = await response.json();
+					if (!response.ok || !isView(next)) throw new Error('Unavailable attempts');
+					return next;
+				},
+				basis: () => request,
+				apply: applyView,
+				busy(value) {
+					refreshing = value;
+				},
+				failure() {
+					// The last known attempts stay visible, marked possibly out of date.
+					attemptsUnconfirmed = true;
+					attemptsStale = true;
+				}
+			});
+			refresher = loop;
+			return () => loop.dispose();
+		});
+	});
+	const refresh = () => void refresher?.request();
+	/** Refresh now when attempt data is on screen (diagnostics or a notice), else when opened. */
+	function refreshIfShown() {
+		if (attemptsOpen || prominent) refresh();
+		else attemptsStale = true;
+	}
+
+	// Live timeline updates (after each authoritative Activity read).
 	let seenSignal = untrack(() => refreshSignal);
 	$effect(() => {
 		const signal = refreshSignal;
 		untrack(() => {
 			if (signal === seenSignal) return;
 			seenSignal = signal;
-			if (attemptsOpen) void refresh();
-			else attemptsStale = true;
+			refreshIfShown();
+		});
+	});
+	// A newer staff-request projection (a settled payment, a booked request, a new revision): pair
+	// the attempts with it before anything is offered against the new terms.
+	$effect(() => {
+		const latest = request;
+		untrack(() => {
+			if (latest !== attemptsBasis && current.availability === 'ready') refreshIfShown();
 		});
 	});
 
 	function toggleAttempts(event: Event) {
 		attemptsOpen = (event.currentTarget as HTMLDetailsElement).open;
-		if (attemptsOpen && attemptsStale) void refresh();
+		if (attemptsOpen && attemptsStale) refresh();
 	}
 
 	const caps =
@@ -238,14 +329,85 @@
 	const note = 'm-0 text-[12.5px] leading-[1.55] text-(--text-muted)';
 	const summaryClass =
 		'cursor-pointer rounded-sm font-sans text-[12.5px] font-semibold text-olive-800 select-none hover:text-olive-900 focus-visible:outline-solid focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-(--focus-ring)';
-	const stateTone = (attempt: PaymentAttempt) =>
-		attempt.outcome === 'RECONCILIATION_REQUIRED'
+	// Tone and labels follow the classification, so an incoherent pair never reads as paid.
+	const statusOf = (attempt: PaymentAttempt) => classifyAttempt(attempt, terms).status;
+	const stateTone = (attempt: PaymentAttempt) => {
+		const status = statusOf(attempt);
+		return status === 'reconciliation_required' || status === 'unrecognized'
 			? 'rust'
-			: attempt.outcome === 'APPLIED'
+			: status === 'applied'
 				? 'moss'
 				: 'outline';
-	const documentOf = (attempt: PaymentAttempt) =>
-		`${attempt.purpose === 'DEPOSIT' ? 'Quote' : 'Invoice'} v${attempt.businessRevision}`;
+	};
+	const stateLabel = (attempt: PaymentAttempt) =>
+		statusOf(attempt) === 'unrecognized'
+			? 'Status unclear'
+			: (attemptStateLabels[attempt.state] ?? attempt.state);
+	const outcomeLabel = (attempt: PaymentAttempt) =>
+		statusOf(attempt) === 'unrecognized'
+			? 'Outcome not confirmed'
+			: (attemptOutcomeLabels[attempt.outcome] ?? attempt.outcome);
+	const paymentOf = (attempt: PaymentAttempt) =>
+		`${attempt.purpose === 'DEPOSIT' ? 'deposit' : attempt.purpose === 'INVOICE' ? 'Invoice payment' : 'payment'} of ${formatMinor(attempt.authorizedMinor)}`;
+	const attentionHeading: Record<AttemptAttention['kind'], string> = {
+		release: 'Previous checkout is still open',
+		confirming: 'A payment is being confirmed',
+		unconfirmed: 'Checkout status isn’t confirmed',
+		uncertain: 'Checkout status needs investigation'
+	};
+	/** Release is offered only while the shown attempts and terms are confirmed together. */
+	const releasable = (item: AttemptAttention) => item.kind === 'release' && confirmed;
+	const headingOf = (item: AttemptAttention) =>
+		item.kind === 'release' && !confirmed
+			? 'Previous checkout may still be open'
+			: attentionHeading[item.kind];
+	function attentionCopy(item: AttemptAttention): string[] {
+		const payment = paymentOf(item.attempt);
+		const article = item.attempt.purpose === 'INVOICE' ? 'an' : 'a';
+		switch (item.status) {
+			case 'open_superseded':
+				return [
+					`The customer started ${article} ${payment} using an earlier version of this booking. ${supersededCopy(item.attempt, item.reasons, terms)}`,
+					confirmed
+						? 'You can check with Stripe and request release of that checkout so they can pay against the updated terms from the same link. Emailing the updated document doesn’t depend on this.'
+						: 'Its latest status isn’t confirmed here. Checking asks commerce, which releases it only if its terms are still out of date. Emailing the updated document doesn’t depend on this.'
+				];
+			case 'unrecognized':
+				return [
+					`Commerce reported a status for ${article} ${payment} that this console can’t interpret, so it isn’t shown as paid, applied or released.`,
+					'Reload to read it again. If it stays unclear, investigate it in the Stripe Dashboard before taking or recording another payment.'
+				];
+			case 'processing':
+				return [
+					`Stripe is confirming the customer’s ${payment}. Don’t start or record another payment until it settles.`
+				];
+			case 'paid_pending':
+				return [
+					`Stripe reports the customer’s ${payment} succeeded, but it isn’t applied to the booking yet. Don’t collect it again.`
+				];
+			case 'creating':
+				return [
+					`Checkout for ${article} ${payment} was started, but commerce hasn’t confirmed it with Stripe yet. Checking never creates a second charge.`
+				];
+			default:
+				return [
+					`A checkout for ${article} ${payment} is open, and its terms can’t be compared from here. Checking lets commerce compare them: it releases a checkout only when its terms are out of date.`
+				];
+		}
+	}
+	const rowNote = (attempt: PaymentAttempt) => {
+		const { status, reasons } = classifyAttempt(attempt, terms);
+		return status === 'open_superseded'
+			? `Earlier terms. ${supersededCopy(attempt, reasons, terms)}`
+			: status === 'open_current'
+				? 'Matches the current terms.'
+				: null;
+	};
+	const toneClass = {
+		positive: 'text-moss-600',
+		neutral: 'text-(--text-body)',
+		warning: 'text-rust-600'
+	} as const;
 </script>
 
 <Card
@@ -414,11 +576,83 @@
 			</p>
 		{/if}
 
+		{#if attemptsUnconfirmed && (prominent || attemptsOpen)}
+			<!-- The last attempt read failed: what follows is the last known state, not a confirmation. -->
+			<p
+				role="status"
+				class="m-0 rounded-input border border-olive-700/25 bg-cream-200 px-3 py-2 text-[12.5px] leading-[1.5] text-(--text-body)"
+				data-testid="checkout-status-stale"
+			>
+				We couldn’t refresh the checkout status, so what’s shown may be out of date.
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- route is the page's resolve()d workspace URL -->
+				<a href={route} data-sveltekit-reload class="font-semibold underline">Reload to review</a> before
+				acting on it.
+			</p>
+		{/if}
+
+		{#if attention.length}
+			<!-- Checkouts that need a staff decision, outside the diagnostics disclosure. Each posts the
+			     existing reconcile command for exactly its attempt; commerce decides what Stripe does. -->
+			<ul class="m-0 flex list-none flex-col gap-2 p-0">
+				{#each attention as item (item.attempt.id)}
+					<li
+						class={[
+							'flex flex-col gap-2 rounded-input border px-3 py-2.5',
+							item.kind === 'confirming' || item.kind === 'uncertain'
+								? 'border-rust-600/40 bg-rust-600/5'
+								: 'border-olive-700/25 bg-olive-700/8'
+						]}
+						data-testid={item.kind === 'release' ? 'previous-checkout' : 'checkout-status'}
+						data-attempt-id={item.attempt.id}
+						data-status={item.status}
+						data-confirmed={confirmed}
+					>
+						<p class="m-0 text-[13px] leading-[1.45] font-semibold text-(--text-body)">
+							{headingOf(item)}
+						</p>
+						{#each attentionCopy(item) as paragraph, index (index)}
+							<p class="m-0 text-[12.5px] leading-[1.55] text-(--text-body)">{paragraph}</p>
+						{/each}
+						{#if item.kind === 'uncertain'}
+							<Button
+								href={route}
+								data-sveltekit-reload
+								variant="secondary"
+								class="min-h-11 w-full"
+								data-testid="reload-checkout-status">Reload to review</Button
+							>
+						{:else}
+							<form method="POST" {action} use:enhance={submitter('reconcile', item.attempt.id)}>
+								<input type="hidden" name="intent" value="reconcile" />
+								<input type="hidden" name="attemptId" value={item.attempt.id} />
+								<Button
+									type="submit"
+									variant="secondary"
+									class="min-h-11 w-full"
+									disabled={!!busy || reviewRequired}
+									data-testid={releasable(item)
+										? 'release-previous-checkout'
+										: 'check-payment-status'}
+									>{busyAttempt === item.attempt.id
+										? 'Checking with Stripe…'
+										: releasable(item)
+											? 'Release previous checkout'
+											: 'Check payment status'}</Button
+								>
+							</form>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
 		<details ontoggle={toggleAttempts} data-testid="payment-attempts">
 			<summary class={summaryClass}
 				>Online payment attempts{attempts ? ` (${attempts.length})` : ''}{refreshing
 					? ' · refreshing'
-					: ''}</summary
+					: attemptsUnconfirmed
+						? ' · may be out of date'
+						: ''}</summary
 			>
 			<div class="mt-2 flex flex-col gap-2">
 				<p class={note}>
@@ -432,10 +666,12 @@
 				{:else}
 					<ul class="m-0 flex list-none flex-col gap-2 p-0">
 						{#each attempts as attempt (attempt.id)}
+							{@const termsNote = rowNote(attempt)}
 							<li
 								class={[
 									'flex flex-col gap-1 rounded-input border px-3 py-2.5',
-									attempt.outcome === 'RECONCILIATION_REQUIRED'
+									statusOf(attempt) === 'reconciliation_required' ||
+									statusOf(attempt) === 'unrecognized'
 										? 'border-rust-600 bg-rust-600/5'
 										: 'border-(--border-soft)'
 								]}
@@ -448,18 +684,21 @@
 											attempt.authorizedMinor
 										)}</span
 									>
-									<Badge size="sm" tone={stateTone(attempt)}
-										>{attemptStateLabels[attempt.state] ?? attempt.state}</Badge
-									>
+									<Badge size="sm" tone={stateTone(attempt)}>{stateLabel(attempt)}</Badge>
 								</div>
 								<span class="text-[11.5px] leading-[1.5] text-(--text-muted)">
 									<time datetime={attempt.createdAt}>{receivedTimeLabel(attempt.createdAt)}</time>
-									· {documentOf(attempt)} · {attemptOutcomeLabels[attempt.outcome] ??
-										attempt.outcome} · {attempt.ledgerPaymentId
+									· {attemptDocumentLabel(attempt)} · {outcomeLabel(attempt)} · {attempt.ledgerPaymentId
 										? 'Ledger payment recorded'
 										: 'No ledger payment'}
 								</span>
-								{#if attempt.outcome === 'RECONCILIATION_REQUIRED'}
+								{#if termsNote}
+									<span
+										class="text-[11.5px] leading-[1.5] text-(--text-muted)"
+										data-testid="payment-attempt-terms">{termsNote}</span
+									>
+								{/if}
+								{#if statusOf(attempt) === 'reconciliation_required'}
 									<span class="text-[11.5px] leading-[1.5] text-rust-600"
 										>Money reached the ledger but was not allocated automatically. Review unapplied
 										payments; checking again will not allocate it.</span
@@ -475,10 +714,11 @@
 										<summary class={summaryClass}>Check with Stripe…</summary>
 										<div class="mt-1.5 flex flex-col gap-1.5">
 											<p class={note}>
-												Asks Stripe for this attempt's latest status. It never creates a new charge,
+												Asks Stripe for this attempt's latest status. Commerce releases an open
+												checkout only when its terms are out of date. It never creates a new charge,
 												and it can't allocate an unapplied payment on its own.
 											</p>
-											<form method="POST" {action} use:enhance={submitter('reconcile')}>
+											<form method="POST" {action} use:enhance={submitter('reconcile', attempt.id)}>
 												<input type="hidden" name="intent" value="reconcile" />
 												<input type="hidden" name="attemptId" value={attempt.id} />
 												<Button
@@ -487,7 +727,9 @@
 													size="sm"
 													disabled={!!busy || reviewRequired}
 													data-testid="reconcile-attempt"
-													>{busy === 'reconcile' ? 'Checking…' : 'Check now'}</Button
+													>{busyAttempt === attempt.id
+														? 'Checking with Stripe…'
+														: 'Check payment status'}</Button
 												>
 											</form>
 										</div>
@@ -502,9 +744,10 @@
 	{/if}
 
 	<p
-		class="m-0 text-[12.5px] leading-[1.5] text-moss-600"
+		class={['m-0 text-[12.5px] leading-[1.5]', toneClass[messageTone]]}
 		role="status"
 		data-testid="customer-payments-status"
+		data-tone={message ? messageTone : undefined}
 	>
 		{message}
 	</p>

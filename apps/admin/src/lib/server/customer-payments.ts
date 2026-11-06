@@ -14,6 +14,7 @@ import {
 	type CustomerPaymentsView,
 	type PaymentLinkIntent
 } from '../customer-payments.js';
+import { reconcileFeedback } from '../checkout-attempts.js';
 import type { InquiryStage } from '../request-contract.js';
 
 /**
@@ -181,24 +182,48 @@ export async function customerPaymentsAction({
 				: await managePaymentAccess(config, inquiryId, intent, cookie);
 	if (!result.ok) {
 		if (result.error.status === 401) redirect(303, '/login');
+		// A reconcile conflict proves only that no confirmed outcome came back: Stripe may still have
+		// changed the session or captured money. It needs an authoritative reload, like a 5xx.
+		const conflict = intent === 'reconcile' && result.error.status === 409;
 		const definite =
-			[400, 403, 404, 409, 422].includes(result.error.status) ||
-			result.error.code === 'stripe_disabled';
+			!conflict &&
+			([400, 403, 404, 409, 422].includes(result.error.status) ||
+				result.error.code === 'stripe_disabled');
+		// The static code stays server-side for operators; staff see only fixed copy.
+		if (intent === 'reconcile')
+			console.warn(
+				`[customer-payments] ${inquiryId} reconcile ${result.error.status} ${result.error.code}`
+			);
 		// Never retried. A 5xx or lost response after a mutation may have committed.
 		return failure(result.error.status, result.error.code, mutation && !definite);
 	}
 	applySetCookies(cookies, result.setCookies);
 	if (intent === 'reconcile') {
-		const reconciled = readReconcileResult(result.data);
+		// Answers only for the attempt that was submitted; anything else is not a result.
+		const answer = readReconcileResult(result.data);
+		const reconciled = answer?.attemptId === values.attemptId ? answer : null;
+		const feedback = reconciled ? reconcileFeedback(reconciled) : null;
+		// The authoritative list, never a local edit of the attempt.
 		const attempts = await listPaymentAttempts(config, inquiryId, cookie);
+		const listed = attempts.ok ? readPaymentAttempts(attempts.data) : null;
+		if (!feedback || feedback.unconfirmed)
+			return {
+				customerPayments: {
+					intent,
+					attempts: listed,
+					error: customerPaymentsErrorMessage(intent, 503),
+					reviewRequired: true,
+					settlement: true
+				} satisfies CustomerPaymentsResult
+			};
 		return {
 			customerPayments: {
 				intent,
-				reconciled: reconciled ?? undefined,
-				attempts: attempts.ok ? readPaymentAttempts(attempts.data) : null,
-				message: reconciled
-					? 'Checked with Stripe. The attempt list below shows the current result.'
-					: 'Checked with Stripe. Reload to review the current result.'
+				reconciled: reconciled!,
+				attempts: listed,
+				message: feedback.text,
+				messageTone: feedback.tone,
+				settlement: feedback.settlement
 			} satisfies CustomerPaymentsResult
 		};
 	}
