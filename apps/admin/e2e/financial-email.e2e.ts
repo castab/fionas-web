@@ -1,5 +1,6 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { postAction, route, session, signIn, stubUrl } from './request-helpers.js';
+import { revisionFixture } from './revision-fixture.mjs';
 import { mayaDocumentId, mayaId, paymentFixture } from './request-fixture.mjs';
 
 const EMAIL_PERMISSIONS = [
@@ -107,7 +108,7 @@ test('Quote: preview is inert and write-free, editing invalidates it, and an exp
 	await expect(panel(page).getByTestId('email-recipient')).toContainText('Maya Torres');
 	await expect(panel(page).locator('dt', { hasText: 'Sending' })).toBeVisible();
 	await expect(panel(page).getByText('Document (staff only)')).toHaveCount(0);
-	// One staff label: the document version, as everywhere else in the console.
+	// The staff label uses the publication revision.
 	await expect(panel(page).getByTestId('email-document')).toHaveText('Quote v2');
 	await expect(review).toContainText(
 		'The real email uses Maya’s own payment link. Customers never see version numbers.'
@@ -303,9 +304,7 @@ test('Quote: an emailed earlier revision is not shown as the current one', async
 	await expect(status(page).getByTestId('financial-email-summary')).toContainText(
 		'This Quote was emailed to Maya'
 	);
-	const revised = quoted();
-	revised.currentQuoteRevision = 3;
-	revised.proposal!.quoteRevision = 3;
+	const revised = revisionFixture('quote-service-revision');
 	await replaceRequest(context, revised);
 	await page.goto(route);
 	// Same ledger version, new business revision: commerce's current flag says it is earlier.
@@ -314,6 +313,21 @@ test('Quote: an emailed earlier revision is not shown as the current one', async
 	);
 	await page.getByTestId('financial-email-chip').click();
 	await expect(page.getByTestId('financial-email-meta')).toContainText('Earlier Quote');
+	await openAndPreview(page);
+	await expect(panel(page).getByTestId('email-document')).toHaveText('Quote v3');
+	await expect(panel(page).locator('input[name="expectedDocumentVersion"]')).toHaveValue('2');
+	await expect(panel(page).getByTestId('email-subject')).not.toContainText(/Quote v3|Revision 3/i);
+	await expect(
+		page.frameLocator('[data-testid="email-preview-frame"]').locator('body')
+	).not.toContainText(/Quote v3|Revision 3/i);
+	await page.getByRole('button', { name: 'Send quote', exact: true }).click();
+	await expect(status(page).getByTestId('financial-email-summary')).toContainText(
+		'This Quote was emailed'
+	);
+	const emailed = page.getByTestId('financial-email-meta');
+	await expect(emailed.filter({ hasText: 'Quote v2' })).toContainText('Earlier Quote');
+	await expect(emailed.filter({ hasText: 'Quote v3' })).toContainText('Current Quote');
+	await expect(panel(page)).toHaveCount(0);
 });
 
 test('Quote: a changed Quote revision invalidates the open preview and its send', async ({
@@ -322,9 +336,7 @@ test('Quote: a changed Quote revision invalidates the open preview and its send'
 }) => {
 	await setup(page, context);
 	await openAndPreview(page);
-	const revised = quoted();
-	revised.currentQuoteRevision = 3;
-	revised.proposal!.quoteRevision = 3;
+	const revised = revisionFixture('quote-service-revision');
 	await replaceRequest(context, revised);
 	// The open form still sends: commerce refuses the stale review and nothing is dispatched.
 	await page.getByRole('button', { name: 'Send quote', exact: true }).click();
@@ -339,15 +351,14 @@ test('Quote: a changed Quote revision invalidates the open preview and its send'
 	await expect(page).toHaveURL(`${route}?email`);
 	await expect(page.getByTestId('financial-email-accepted')).toHaveCount(0);
 	expect((await emails(context)).dispatched ?? 0).toBe(0);
-	// Reloading reviews the current revision; a fresh review is required. The label is the same
-	// ledger version ("Quote v2"); the business revision lives in the identity, not the label.
+	// Reloading reviews the current business revision and requires a fresh review.
 	await page.reload();
 	const revisionField = panel(page).locator('input[name="expectedBusinessRevision"]');
-	await expect(panel(page).getByTestId('email-document')).toHaveText('Quote v2');
+	await expect(panel(page).getByTestId('email-document')).toHaveText('Quote v3');
 	await expect(revisionField).toHaveValue('3');
 	await page.getByRole('button', { name: 'Preview again', exact: true }).click();
 	await expect(page.getByRole('button', { name: 'Send quote', exact: true })).toBeEnabled();
-	await expect(panel(page).getByTestId('email-document')).toHaveText('Quote v2');
+	await expect(panel(page).getByTestId('email-document')).toHaveText('Quote v3');
 	expect((await emails(context)).previews.at(-1).expectedBusinessRevision).toBe(3);
 });
 

@@ -261,6 +261,7 @@ export async function editorAction(
 				data.quote.reviewedDocumentVersion === version &&
 				data.reviewedDepositRequirementRevision === depositRevision &&
 				data.currentProposalId === values.expectedProposalId &&
+				data.currentQuoteRevision === current!.proposal?.quoteRevision &&
 				(data.currentServicePlanRevision ?? null) === planRevision &&
 				previewMatchesSelections(command, data.quote)
 			) {
@@ -280,6 +281,7 @@ export async function editorAction(
 			if (
 				isInvoiceRevisionPreview(data, { ...scope, documentId: current!.financial.id }) &&
 				data.reviewedDocumentVersion === version &&
+				data.currentInvoiceRevision === current!.invoiceAmendmentHistory.at(-1)?.invoiceRevision &&
 				(data.currentServicePlanRevision ?? null) === planRevision &&
 				previewMatchesSelections(command, data)
 			) {

@@ -1,7 +1,8 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { route, session, signIn, stubUrl } from './request-helpers.js';
 import { mayaId, paymentFixture } from './request-fixture.mjs';
-import { milestoneFixture } from './conversation-fixture.mjs';
+import { revisionFixture } from './revision-fixture.mjs';
+import { conversationFixture, milestoneFixture, actor } from './conversation-fixture.mjs';
 
 /*
  * A live Activity update that changes financial history re-reads the authoritative staff request
@@ -109,4 +110,89 @@ test('message-only updates do not re-read the request', async ({ page, context }
 		(path: string) => path === `/staff/requests/${mayaId}`
 	);
 	expect(reads).toHaveLength(1);
+});
+
+test('a live topping swap shows separate Quote milestones for the same snapshot', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	const before = revisionFixture('quote-with-almonds');
+	const after = revisionFixture('quote-service-revision');
+	const timeline = conversationFixture();
+	const first = timeline.items.find((item) => item.kind === 'QUOTE_PUBLISHED')!;
+	first.proposal = before.proposal!;
+	first.financial = before.financial;
+	if (before.depositRequirement.state !== 'ACTIVE') throw new Error('Missing fixture deposit');
+	const { satisfied, ...depositRequirement } = before.depositRequirement;
+	void satisfied;
+	first.depositRequirement = depositRequirement;
+	await session(context, { request: before });
+	await conversation(context, { updates: 'live', timeline });
+	await page.goto(route);
+	await expect(page.getByTestId('live-status')).toHaveText('Live');
+	const activity = page.getByTestId('conversation');
+	const earlier = activity.locator('details').filter({ hasText: 'Quote v2 published' });
+	await expect(earlier.locator('summary')).toContainText('Current');
+	await earlier.locator('summary').click();
+	await expect(earlier.getByText('Sliced almonds')).toBeVisible();
+
+	await session(context, { request: after });
+	timeline.items.splice(1, 0, {
+		...first,
+		id: `quote:${after.proposal!.id}`,
+		occurredAt: after.proposal!.issuedAt,
+		proposal: after.proposal!
+	});
+	await conversation(context, { timeline, notify: true });
+
+	const latest = activity.locator('details').filter({ hasText: 'Quote v3 published' });
+	await expect(earlier.locator('summary')).toContainText('Superseded');
+	await expect(latest.locator('summary')).toContainText('Current');
+	await expect(page.getByTestId('request-summary')).toContainText('Quote v3 issued');
+	await expect(earlier.getByText('Sliced almonds')).toBeVisible();
+	await latest.locator('summary').click();
+	await expect(latest.getByText('Chopped peanuts')).toBeVisible();
+	for (const publication of [earlier, latest]) {
+		await expect(publication.locator('summary')).toContainText('$415');
+		await expect(publication).toContainText('Financial snapshot v2');
+		await expect(publication).toContainText('Deposit to hold the date');
+		await expect(publication).toContainText('$300');
+	}
+});
+
+test('a live service-only Invoice amendment shows its own business revision', async ({
+	page,
+	context
+}) => {
+	await signIn(page);
+	await session(context, { request: revisionFixture('booked') });
+	await conversation(context, { updates: 'live' });
+	await page.goto(route);
+	await expect(page.getByTestId('live-status')).toHaveText('Live');
+	await expect(page.getByTestId('financial-version')).toHaveText('Invoice v3');
+	const request = revisionFixture('invoice-service-amendment');
+	const amendment = request.invoiceAmendmentHistory[1];
+	await session(context, { request });
+	const { timeline } = await conversation(context);
+	timeline.items.push({
+		kind: 'INVOICE_AMENDED',
+		id: amendment.id,
+		occurredAt: amendment.approvedAt,
+		financial: request.financial,
+		amendment,
+		actor
+	});
+	await conversation(context, { timeline, notify: true });
+	await expect(page.getByTestId('financial-version')).toHaveText('Invoice v4');
+	const band = page
+		.getByTestId('conversation')
+		.locator('details')
+		.filter({ hasText: 'Invoice v4 amended' });
+	await band.locator('summary').click();
+	await expect(band).toContainText('Financial snapshot v3');
+	await expect(band.getByText('Chocolate topping instead of vanilla')).toBeVisible();
+	await page.getByTestId('financial-history-link').click();
+	await expect(page.getByTestId('history-invoices')).toContainText('Invoice v4');
+	await expect(page.getByTestId('history-versions')).toContainText('Invoice financial snapshot v3');
 });

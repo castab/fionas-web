@@ -1,3 +1,4 @@
+import { revisionFixture } from './revision-fixture.mjs';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { mayaId, mayaDocumentId, paymentFixture, appendPayment } from './request-fixture.mjs';
 import { postAction } from './request-helpers.js';
@@ -107,7 +108,7 @@ for (const native of [false, true]) {
 			await expect(page.getByTestId('financial-version')).toHaveText('Invoice v3');
 			const deposit = page.getByTestId('payment-receipt').filter({ hasText: 'Deposit · Cash' });
 			await expect(deposit).toContainText('$300');
-			await expect(deposit).toContainText('applied to Quote v2');
+			await expect(deposit).toContainText('applied to Quote financial snapshot v2');
 			await expect(page.getByTestId('request-balance')).toContainText('$115');
 			await openPayment(page);
 			await expect(page.getByTestId('payment-form')).toContainText('Up to $115');
@@ -261,8 +262,7 @@ for (const native of [false, true]) {
 			await open(page, context, 'booked');
 			await openPayment(page);
 			await page.getByLabel('Payment amount (USD)').fill(native ? '100.001' : '100');
-			const newer = paymentFixture('booked');
-			newer.financial.version = 4;
+			const newer = revisionFixture('invoice-financial-amendment');
 			await session(context, { request: newer });
 			await submitPayment(page).click();
 			await expect(page.getByRole('alert')).toContainText('Reload');
@@ -338,7 +338,7 @@ test('history shows only this document’s original allocation, not the whole re
 	const receipt = page.getByTestId('payment-receipt').first();
 	await expect(receipt).toContainText('Unknown payment method');
 	await expect(receipt).toContainText('$400');
-	await expect(receipt).toContainText('$300 applied to Quote v2');
+	await expect(receipt).toContainText('$300 applied to Quote financial snapshot v2');
 	await expect(page.getByTestId('payment-history')).not.toContainText('$400 applied');
 	await expect(page.getByTestId('payment-history')).not.toContainText('$100 applied');
 });

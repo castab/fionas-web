@@ -1,3 +1,4 @@
+import { isBusinessRevision } from './financial-revisions.js';
 import {
 	GROUP_MAX,
 	KEY_MAX,
@@ -608,6 +609,9 @@ export function isQuoteRevisionPreview(
 		isPlanPreview(p.quote.servicePlan, new Set(p.quote.lines.map((l) => l.id))) &&
 		typeof p.currentProposalId === 'string' &&
 		!!p.currentProposalId &&
+		isBusinessRevision(p.currentQuoteRevision) &&
+		isBusinessRevision(p.resultingQuoteRevision) &&
+		p.resultingQuoteRevision === p.currentQuoteRevision + 1 &&
 		Number.isInteger(p.reviewedDepositRequirementRevision) &&
 		p.reviewedDepositRequirementRevision > 0 &&
 		revisionNumber(p.currentServicePlanRevision) &&
@@ -631,6 +635,9 @@ export function isInvoiceRevisionPreview(
 		Number.isInteger(p.resultingDocumentVersion) &&
 		// Only a financial change appends a version; a service-only amendment keeps it.
 		p.resultingDocumentVersion === p.reviewedDocumentVersion + (p.financialChange ? 1 : 0) &&
+		isBusinessRevision(p.currentInvoiceRevision) &&
+		isBusinessRevision(p.resultingInvoiceRevision) &&
+		p.resultingInvoiceRevision === p.currentInvoiceRevision + 1 &&
 		typeof p.financialChange === 'boolean' &&
 		typeof p.servicePlanChange === 'boolean' &&
 		revisionNumber(p.currentServicePlanRevision) &&

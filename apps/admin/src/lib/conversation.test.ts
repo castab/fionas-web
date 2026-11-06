@@ -35,6 +35,18 @@ describe('conversation boundary', () => {
 		expect(value).toEqual(before);
 		expect(isStaffTimeline(value, 'other-inquiry')).toBe(false);
 	});
+	it('refuses a missing business revision or an amendment detached from its snapshot', () => {
+		const value = milestoneFixture();
+		const quote = value.items.find((i) => i.kind === 'QUOTE_PUBLISHED')!;
+		const invoice = value.items.find((i) => i.kind === 'INVOICE_AMENDED')!;
+		const revision = quote.proposal.quoteRevision;
+		Reflect.deleteProperty(quote.proposal, 'quoteRevision');
+		expect(isStaffTimeline(value, mayaId)).toBe(false);
+		quote.proposal.quoteRevision = revision;
+		invoice.amendment.documentVersion++;
+		expect(isStaffTimeline(value, mayaId)).toBe(false);
+	});
+
 	it.each(['EMPTY', 'MISSING', 'UNAVAILABLE', 'FORBIDDEN'] as const)(
 		'keeps %s separate and refuses leaked bodies',
 		(state) => {

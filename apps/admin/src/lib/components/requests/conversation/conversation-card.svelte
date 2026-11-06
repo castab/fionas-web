@@ -13,6 +13,7 @@
 		StaffTimeline
 	} from '$lib/conversation-contract.js';
 	import type { InquiryResponse } from '$lib/request-contract.js';
+	import type { ServicePlanResponse } from '$lib/quote-contract.js';
 	import type { PublicationEntry } from '$lib/revision-history.js';
 	import {
 		availabilityCopy,
@@ -35,6 +36,7 @@
 		blocked = false,
 		userId,
 		publications = [],
+		servicePlanHistory = [],
 		permissions,
 		route,
 		endpoint,
@@ -53,6 +55,7 @@
 		userId: string;
 		/** The current request's Quote publications, matched to quote bands for status and changes. */
 		publications?: PublicationEntry[];
+		servicePlanHistory?: ServicePlanResponse[];
 		permissions: string[];
 		route: string;
 		endpoint: string;
@@ -114,6 +117,7 @@
 	const acknowledgeAction = $derived(workspaceAction(returnContext, 'acknowledgeConversation'));
 	const messages = $derived(timeline?.items.filter((i) => i.kind === 'MESSAGE') ?? []);
 	const dayBreaks = $derived(timelineDayBreaks(timeline?.items ?? []));
+	const planByRevision = $derived(new Map(servicePlanHistory.map((plan) => [plan.revision, plan])));
 	const publicationById = $derived(new Map(publications.map((p) => [p.proposal.id, p])));
 	const noticed = $derived(messages.find((m) => m.messageId === newMessage));
 	const fromQuery = $derived(new URLSearchParams(route.split('?')[1]).get('from') ?? '');
@@ -388,6 +392,13 @@
 							publication={item.kind === 'QUOTE_PUBLISHED'
 								? publicationById.get(item.proposal.id)
 								: undefined}
+							plan={planByRevision.get(
+								(item.kind === 'QUOTE_PUBLISHED'
+									? item.proposal.servicePlanRevision
+									: item.kind === 'INVOICE_AMENDED'
+										? item.amendment.servicePlanRevision
+										: null) ?? 0
+							)}
 						/>{/if}
 				</li>{/each}
 		</ol>

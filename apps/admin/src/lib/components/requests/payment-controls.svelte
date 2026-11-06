@@ -12,6 +12,7 @@
 		paymentMethodLabel,
 		type PaymentFormValues
 	} from '$lib/payments.js';
+	import { currentDocumentLabel } from '$lib/request-workspace.js';
 	import { eventDateLabel, formatMoney } from '$lib/presentation.js';
 	import { workspaceAction, type RequestListQuery } from '$lib/request-list.js';
 
@@ -108,12 +109,12 @@
 			<p class="m-0 text-xs leading-[1.55] text-(--text-muted)">
 				Must be recorded in full to book this event. Recording it books {eventDateLabel(
 					request.inquiry.eventDate
-				)} and turns Quote v{request.financial.version} into an Invoice.
+				)} and turns {currentDocumentLabel(request)} into an Invoice.
 			</p>
 		{:else if invoice}
 			<p class="m-0 text-xs leading-[1.55] text-(--text-muted)">
-				Partial payments are fine — any amount up to the {formatMoney(balance, currency)} balance on Invoice
-				v{request.financial.version}, in whole cents.
+				Partial payments are fine — any amount up to the {formatMoney(balance, currency)} balance on
+				{currentDocumentLabel(request)}, in whole cents.
 			</p>
 		{/if}
 	</div>

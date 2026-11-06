@@ -52,15 +52,17 @@ export function resolveDepositAmount(total, terms, currency) {
  * @param {string} total
  * @param {import('../src/lib/request-contract.js').DepositTermsRequest} terms
  * @param {string} currency
- * @returns {Pick<import('../src/lib/request-contract.js').StaffRequestResponse, 'proposal' | 'depositRequirement'>}
+ * @returns {Pick<import('../src/lib/request-contract.js').StaffRequestResponse, 'proposal' | 'depositRequirement' | 'currentQuoteRevision'>}
  */
 export function proposalPair(inquiryId, documentId, documentVersion, total, terms, currency) {
 	return {
+		currentQuoteRevision: documentVersion,
 		proposal: {
 			id: `3${inquiryId.slice(1)}`,
 			inquiryId,
 			documentId,
 			documentVersion,
+			quoteRevision: documentVersion,
 			depositRequirementRevision: 1,
 			issuedAt: '2026-07-16T19:01:00Z',
 			issuedBy: '00000000-0000-0000-0000-000000000001',
@@ -146,6 +148,7 @@ export function requestFixtures() {
 					payments: [],
 					servicePlanHistory: [],
 					proposalHistory: [],
+					invoiceAmendmentHistory: [],
 					suggestedDepositTerms,
 					...(unquoted
 						? { proposal: null, depositRequirement: { state: 'NONE', documentId } }
@@ -233,6 +236,7 @@ export function requestFixtures() {
 		request.financial.reconciliation.balance = request.financial.total;
 		appendPayment(request, request.depositRequirement.requiredAmount.amount, 'CASH', 2);
 		request.depositRequirement.satisfied = true;
+		recordInitialInvoice(request);
 		const additional =
 			fixtureMinor(request.financial.reconciliation.balance) - fixtureMinor(balance);
 		if (additional > 0n)
@@ -329,6 +333,7 @@ export function paymentFixture(state = 'quoted') {
 	request.financial.stage = 'INVOICE';
 	request.financial.previousVersion = 2;
 	request.financial.version = 3;
+	recordInitialInvoice(request);
 	if (request.depositRequirement.state === 'ACTIVE')
 		request.depositRequirement.satisfied = state !== 'refunded';
 	if (state === 'additional') appendPayment(request, '100.00', 'CASH', 3);
@@ -359,6 +364,28 @@ export function paymentFixture(state = 'quoted') {
 		Object.assign(request.financial.reconciliation, { netApplied: '0.00', balance: '415.00' });
 	}
 	return request;
+}
+
+/** Record the automatic Invoice issuance after booking.
+ * @param {import('../src/lib/request-contract.js').CurrentStaffRequest} request */
+export function recordInitialInvoice(request) {
+	const { financial, inquiry } = request;
+	request.acceptedQuoteRevision = request.proposal?.quoteRevision;
+	request.currentInvoiceRevision = financial.version;
+	request.invoiceAmendmentHistory = [
+		{
+			id: `a${inquiry.id.slice(1)}`,
+			inquiryId: inquiry.id,
+			invoiceRevision: financial.version,
+			documentId: financial.id,
+			documentVersion: financial.version,
+			kind: 'INITIAL',
+			approvedAt: financial.createdAt,
+			servicePlanRevision: request.proposal?.servicePlanRevision,
+			financialChange: false,
+			servicePlanChange: false
+		}
+	];
 }
 
 /** Maya's REQUESTED inquiry as the backend projects it after a staff decline of Estimate `version`. */
@@ -410,6 +437,9 @@ export function withServicePlan(request, overrides = {}) {
 	request.proposalHistory = request.proposalHistory.map((p) =>
 		p.id === proposal.id ? structuredClone(proposal) : p
 	);
-	if (request.inquiry.lifecycle.stage !== 'QUOTED') request.acceptedServicePlan = plan;
+	if (request.inquiry.lifecycle.stage !== 'QUOTED') {
+		request.acceptedServicePlan = plan;
+		request.invoiceAmendmentHistory[0].servicePlanRevision = revision;
+	}
 	return request;
 }

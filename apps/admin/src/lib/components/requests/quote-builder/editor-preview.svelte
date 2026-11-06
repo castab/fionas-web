@@ -127,7 +127,7 @@
 >
 	{#if preview.mode === 'INITIAL_QUOTE'}
 		{@const quote = preview.quote}
-		{@render header(`Quote v${quote.quoteVersion} · ${copy.notYet}`)}
+		{@render header(`Quote · ${copy.notYet}`)}
 		{#if quote.servicePlan}<div
 				class="flex flex-col gap-2.5 border-b border-(--border-soft) pb-3"
 				data-testid="preview-service-plan"
@@ -165,13 +165,15 @@
 			</div>
 		</dl>
 	{:else if preview.mode === 'QUOTE_REVISION'}
-		{@const { quote, servicePlanChange, depositChange } = preview.revision}
+		{@const {
+			quote,
+			servicePlanChange,
+			depositChange,
+			currentQuoteRevision,
+			resultingQuoteRevision
+		} = preview.revision}
 		{@const current = request.depositRequirement}
-		{@render header(
-			quote.financialChange
-				? `Quote v${quote.quoteVersion} · ${copy.notYet}`
-				: `Quote v${quote.quoteVersion} stays · ${copy.notYet}`
-		)}
+		{@render header(`Quote v${resultingQuoteRevision} · ${copy.notYet}`)}
 		{#if !quote.financialChange}<p
 				class="m-0 text-[12.5px] leading-[1.55]"
 				data-testid="no-financial-change"
@@ -183,7 +185,7 @@
 		{@render lineList(quote.lines)}
 		{@render compare([
 			{
-				name: 'Current total',
+				name: `Current total (Quote v${currentQuoteRevision})`,
 				value: formatMoney(quote.estimateTotal, quote.currency),
 				testid: 'compare-current-total'
 			},
@@ -220,23 +222,19 @@
 	{:else}
 		{@const invoice = preview.invoice}
 		{@const settled = invoice.settlement}
-		{@render header(
-			invoice.financialChange
-				? `Invoice v${invoice.resultingDocumentVersion} · ${copy.notYet}`
-				: `Invoice v${invoice.reviewedDocumentVersion} stays · ${copy.notYet}`
-		)}
+		{@render header(`Invoice v${invoice.resultingInvoiceRevision} · ${copy.notYet}`)}
 		{#if !invoice.financialChange}<p
 				class="m-0 text-[12.5px] leading-[1.55]"
 				data-testid="no-financial-change"
 			>
-				The pricing isn’t changing, so no new invoice version is created. Only the service plan is
+				The pricing isn’t changing, so no new financial version is created. Only the service plan is
 				amended.
 			</p>{/if}
 		{@render servicePlan(invoice.servicePlan, invoice.servicePlanChange, 'preview-service-plan')}
 		{@render lineList(invoice.lines)}
 		{@render compare([
 			{
-				name: 'Current invoice',
+				name: `Current invoice (v${invoice.currentInvoiceRevision})`,
 				value: formatMoney(invoice.currentTotal, invoice.currency),
 				testid: 'compare-current-total'
 			},

@@ -665,6 +665,7 @@ createServer(async (req, res) => {
 		request.inquiry.lifecycle.stage = 'QUOTED';
 		Object.assign(request, pair);
 		request.proposalHistory = [structuredClone(pair.proposal)];
+		request.currentQuoteRevision = pair.currentQuoteRevision;
 		request.servicePlanHistory = [];
 		// Commit then fail: the UI must reload/review rather than immediately replay the mutation.
 		if (currentSession.mode === 'proposal-ambiguous')

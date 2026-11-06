@@ -2,17 +2,18 @@
 // Invoice revision endpoints so the admin can be exercised end to end; it is not a pricing authority.
 import { createHash } from 'node:crypto';
 import { composeLines, composePlan, decimal, minor } from './quote-stub.mjs';
-import { resolveDepositAmount } from './request-fixture.mjs';
+import { recordInitialInvoice, resolveDepositAmount } from './request-fixture.mjs';
 
 /** @typedef {import('../src/lib/request-contract.js').CurrentStaffRequest} Request */
 
 export const staffUserId = '00000000-0000-0000-0000-000000000001';
-let clock = 0;
-/** Strictly increasing instants, so approvals and publications always read in order. */
-const stamp = () =>
-	new Date(Date.parse('2026-10-20T18:00:00Z') + ++clock * 60_000)
-		.toISOString()
-		.replace('.000Z', 'Z');
+let clock = Date.parse('2026-10-20T18:00:00Z');
+/** Strictly increasing even when a Playwright worker supplies earlier publication fixtures.
+ * @param {string} after */
+function stamp(after) {
+	clock = Math.max(clock, Date.parse(after)) + 60_000;
+	return new Date(clock).toISOString().replace('.000Z', 'Z');
+}
 
 /** @param {number} status @param {string} code @param {string[]} [violations] */
 const refuse = (status, code, violations = []) => ({
@@ -72,6 +73,7 @@ export function recordBooking(/** @type {Request} */ request) {
 	const h = ensureHistory(request);
 	h.versions.push(snapshot(request.financial, request.financial.version, 'INVOICE'));
 	if (request.servicePlan) request.acceptedServicePlan = request.servicePlan;
+	recordInitialInvoice(request);
 }
 /** The staff-request projection: everything but the fixture's own bookkeeping. */
 export function projection(/** @type {Request & {__history?: unknown}} */ request) {
@@ -211,6 +213,8 @@ export function previewQuoteRevision(session, request, body) {
 					reviewToken
 				},
 				currentProposalId: request.proposal?.id,
+				currentQuoteRevision: request.currentQuoteRevision,
+				resultingQuoteRevision: Number(request.currentQuoteRevision) + 1,
 				reviewedDepositRequirementRevision: deposit.revision,
 				...(current ? { currentServicePlanRevision: current.revision } : {}),
 				...(current || plan.change
@@ -231,9 +235,9 @@ export function previewQuoteRevision(session, request, body) {
  * Appends the service approval a revision makes, if any, and returns it.
  * @param {Request} request
  * @param {{action: string, plan: *, change: boolean}} plan
- * @param {number} reviewedVersion @param {string} userId
+ * @param {number} reviewedVersion @param {string} userId @param {string} approvedAt
  */
-function approve(request, plan, reviewedVersion, userId) {
+function approve(request, plan, reviewedVersion, userId, approvedAt) {
 	if (!plan.change) return null;
 	const cleared = plan.action === 'CLEAR';
 	const approval = {
@@ -241,7 +245,7 @@ function approve(request, plan, reviewedVersion, userId) {
 		documentVersion: request.financial.version,
 		reviewedDocumentVersion: reviewedVersion,
 		...(cleared ? { items: [], lineNotes: [] } : plan.plan),
-		approvedAt: stamp(),
+		approvedAt,
 		approvedBy: userId,
 		revision: (request.servicePlanHistory.at(-1)?.revision ?? 0) + 1,
 		cleared
@@ -262,10 +266,11 @@ export function applyQuoteRevision(request, reviewed, body, userId) {
 	const f = request.financial;
 	const reviewedVersion = f.version;
 	const planResolution = resolvePlan(request, body, quote.lines);
+	const issuedAt = stamp(request.proposal?.issuedAt ?? f.createdAt);
 	if (quote.financialChange) {
 		f.previousVersion = f.version;
 		f.version = quote.quoteVersion;
-		f.createdAt = stamp();
+		f.createdAt = issuedAt;
 		f.lines = quote.lines.map((/** @type {*} */ { origin, key, ...line }) => {
 			void origin;
 			void key;
@@ -287,7 +292,7 @@ export function applyQuoteRevision(request, reviewed, body, userId) {
 			documentId: f.id,
 			revision: previous.revision + 1,
 			previousRevision: previous.revision,
-			createdAt: stamp(),
+			createdAt: issuedAt,
 			approvalDocumentVersion: f.version,
 			terms: structuredClone(body.terms),
 			requiredAmount: { amount: quote.deposit.requiredAmount.amount, currency: f.currency },
@@ -295,7 +300,7 @@ export function applyQuoteRevision(request, reviewed, body, userId) {
 		};
 		history.deposits.push(depositSnapshot(request.depositRequirement));
 	}
-	approve(request, planResolution, reviewedVersion, userId);
+	approve(request, planResolution, reviewedVersion, userId, issuedAt);
 	request.servicePlan = request.effectiveServicePlan ?? null;
 	const deposit = /** @type {*} */ (request.depositRequirement);
 	request.proposal = {
@@ -303,12 +308,14 @@ export function applyQuoteRevision(request, reviewed, body, userId) {
 		inquiryId: request.inquiry.id,
 		documentId: f.id,
 		documentVersion: f.version,
+		quoteRevision: reviewed.resultingQuoteRevision,
 		depositRequirementRevision: deposit.revision,
-		issuedAt: stamp(),
+		issuedAt,
 		issuedBy: userId,
 		issuanceKind: 'QUOTE_REVISED',
 		...(request.servicePlan ? { servicePlanRevision: request.servicePlan.revision } : {})
 	};
+	request.currentQuoteRevision = request.proposal.quoteRevision;
 	request.proposalHistory.push(structuredClone(request.proposal));
 	return {
 		proposal: request.proposal,
@@ -347,6 +354,7 @@ export function previewInvoiceRevision(session, request, body) {
 				JSON.stringify({
 					kind: 'invoice-revision',
 					body,
+					currentInvoiceRevision: request.currentInvoiceRevision,
 					epoch: session.quoteEpoch ?? 0,
 					plan: current?.revision ?? null,
 					// Bound to immutable payment history, so even offsetting money changes go stale.
@@ -365,6 +373,8 @@ export function previewInvoiceRevision(session, request, body) {
 				documentId: request.financial.id,
 				reviewedDocumentVersion: request.financial.version,
 				resultingDocumentVersion: request.financial.version + (composed.financialChange ? 1 : 0),
+				currentInvoiceRevision: request.currentInvoiceRevision,
+				resultingInvoiceRevision: Number(request.currentInvoiceRevision) + 1,
 				currentTotal: request.financial.total,
 				total: decimal(composed.total),
 				subtotal: decimal(composed.lines.reduce((sum, l) => sum + minor(l.subtotal), 0n)),
@@ -401,10 +411,11 @@ export function applyInvoiceRevision(request, reviewed, body, userId) {
 	const f = request.financial;
 	const reviewedVersion = f.version;
 	const planResolution = resolvePlan(request, body, reviewed.lines);
+	const approvedAt = stamp(request.invoiceAmendmentHistory.at(-1)?.approvedAt ?? f.createdAt);
 	if (reviewed.financialChange) {
 		f.previousVersion = f.version;
 		f.version = reviewed.resultingDocumentVersion;
-		f.createdAt = stamp();
+		f.createdAt = approvedAt;
 		f.lines = reviewed.lines.map((/** @type {*} */ { origin, key, ...line }) => {
 			void origin;
 			void key;
@@ -419,8 +430,28 @@ export function applyInvoiceRevision(request, reviewed, body, userId) {
 		f.reconciliation.balance = reviewed.balance;
 		history.versions.push(snapshot(f, f.version, 'INVOICE'));
 	}
-	const approval = approve(request, planResolution, reviewedVersion, userId);
-	return { financial: request.financial, ...(approval ? { servicePlan: approval } : {}) };
+	const approval = approve(request, planResolution, reviewedVersion, userId, approvedAt);
+	/** @type {Request['invoiceAmendmentHistory'][number]} */
+	const amendment = {
+		id: `invoice:${request.inquiry.id}:${reviewed.resultingInvoiceRevision}`,
+		inquiryId: request.inquiry.id,
+		invoiceRevision: reviewed.resultingInvoiceRevision,
+		documentId: f.id,
+		documentVersion: f.version,
+		servicePlanRevision: request.effectiveServicePlan?.revision,
+		kind: 'AMENDED',
+		approvedAt,
+		approvedBy: userId,
+		financialChange: reviewed.financialChange,
+		servicePlanChange: reviewed.servicePlanChange
+	};
+	request.currentInvoiceRevision = amendment.invoiceRevision;
+	request.invoiceAmendmentHistory.push(amendment);
+	return {
+		financial: request.financial,
+		amendment,
+		...(approval ? { servicePlan: approval } : {})
+	};
 }
 
 /**

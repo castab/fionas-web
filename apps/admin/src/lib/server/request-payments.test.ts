@@ -175,6 +175,7 @@ describe('reviewed payment actions', () => {
 			if (change === 'version') {
 				data.financial.version++;
 				data.proposal!.documentVersion++;
+				data.proposalHistory[0].documentVersion++;
 				if (data.depositRequirement.state === 'ACTIVE')
 					data.depositRequirement.approvalDocumentVersion++;
 			}

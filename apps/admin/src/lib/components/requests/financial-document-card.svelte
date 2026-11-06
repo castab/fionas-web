@@ -3,9 +3,9 @@
 	import PlanApprovals from './plan-approvals.svelte';
 	import { Button, Card, focusRing } from '@fionas/ui';
 	import type { CurrentStaffRequest } from '$lib/request-contract.js';
-	import { approvalSource, serviceCommitment } from '$lib/service-plan.js';
+	import { approvalPublicationLabel, serviceCommitment } from '$lib/service-plan.js';
 	import { formatMoney, submittedDateLabel } from '$lib/presentation.js';
-	import { financialStageLabel } from '$lib/request-workspace.js';
+	import { currentDocumentLabel } from '$lib/request-workspace.js';
 	import { approvalEntries } from '$lib/revision-history.js';
 	let {
 		request,
@@ -39,7 +39,6 @@
 				: []
 		)
 	);
-	const stage = $derived(financialStageLabel(financial.stage));
 	const served = $derived(lifecycleStage === 'SERVED' || lifecycleStage === 'CLOSED');
 	const issued = $derived(
 		financial.stage === 'QUOTE' && proposal?.documentVersion === financial.version
@@ -75,7 +74,7 @@
 		</div>
 		<span
 			class={`rounded-full border border-olive-300 px-2.5 py-1 whitespace-nowrap ${micro}`}
-			data-testid="financial-version">{stage} v{financial.version}{issued}</span
+			data-testid="financial-version">{currentDocumentLabel(request)}{issued}</span
 		>
 	</div>
 	{#if commitment.state === 'APPROVED'}
@@ -94,7 +93,8 @@
 				</details>
 			{/if}
 			<p class="m-0 text-[11px] text-(--text-muted)" data-testid="service-plan-provenance">
-				Approved with {approvalSource(plan, request)} v{plan.documentVersion} · plan revision {plan.revision}
+				{approvalPublicationLabel(plan, request) ?? `Financial snapshot v${plan.documentVersion}`} · plan
+				revision {plan.revision}
 				· {submittedDateLabel(plan.approvedAt)}
 			</p>
 		</div>

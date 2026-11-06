@@ -141,7 +141,11 @@ for (const close of [false, true])
 				const data = projection(close);
 				if (change === 'positive' || change === 'negative')
 					data.financial.reconciliation.balance = change === 'positive' ? '1.00' : '-1.00';
-				else if (change === 'quoted') Object.assign(data, paymentFixture('quoted'));
+				else if (change === 'quoted')
+					Object.assign(data, paymentFixture('quoted'), {
+						acceptedQuoteRevision: undefined,
+						currentInvoiceRevision: undefined
+					});
 				else
 					data.inquiry.lifecycle.stage =
 						change.toUpperCase() as typeof data.inquiry.lifecycle.stage;

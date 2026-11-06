@@ -50,6 +50,13 @@ EMPTY but uses the same empty send expectation, as supported by the backend topi
 established conversations never offer replacement. Send acceptance/pending and delivery are separate
 labels; failed, delayed, bounced, complained, suppressed and indeterminate states remain visible.
 
+Quote publications show `proposal.quoteRevision` and Invoice amendments show
+`amendment.invoiceRevision`. Each milestone keeps Commerce's event ID, historical amount and
+financial snapshot. Its service plan comes from the exact referenced approval, and each Quote
+keeps its historical deposit requirement. An SSE refresh can add another business revision that
+shares the same snapshot. Activity treats missing or malformed required revision data as an
+unavailable timeline.
+
 ## Financial emails in Activity
 
 The timeline's `financialEmails` command history and an outbound MESSAGE's matching `financialEmail`

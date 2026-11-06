@@ -8,6 +8,7 @@ import type {
 } from './conversation-contract.js';
 import { isFinancialDocumentHistory, isDepositRequirementHistory } from './revision-history.js';
 import { BUSINESS_TIME_ZONE } from './presentation.js';
+import { isBusinessRevision, isInvoiceAmendment } from './financial-revisions.js';
 import { isFinancialEmailHistory } from './financial-email.js';
 
 const object = (v: unknown): v is Record<string, unknown> =>
@@ -110,6 +111,8 @@ function item(v: unknown, inquiryId: string): v is TimelineItem {
 				p.inquiryId === inquiryId &&
 				p.documentId === v.financial.id &&
 				p.documentVersion === v.financial.version &&
+				isBusinessRevision(p.quoteRevision) &&
+				(p.servicePlanRevision == null || isBusinessRevision(p.servicePlanRevision)) &&
 				instant(p.issuedAt) &&
 				text(p.issuedBy) &&
 				text(p.issuanceKind) &&
@@ -124,7 +127,15 @@ function item(v: unknown, inquiryId: string): v is TimelineItem {
 		}
 		case 'INVOICE_AMENDED':
 			return (
-				financial(v.financial, inquiryId) && object(v.financial) && v.financial.stage === 'INVOICE'
+				financial(v.financial, inquiryId) &&
+				object(v.financial) &&
+				v.financial.stage === 'INVOICE' &&
+				isInvoiceAmendment(v.amendment, inquiryId, v.financial.id) &&
+				v.amendment.kind === 'AMENDED' &&
+				v.amendment.documentVersion === v.financial.version &&
+				object(v.actor) &&
+				v.actor.principalKind === 'USER' &&
+				v.actor.principalId === v.amendment.approvedBy
 			);
 		case 'PAYMENT_RECORDED':
 		case 'REFUND_RECORDED': {
@@ -198,6 +209,13 @@ export function isStaffTimeline(v: unknown, inquiryId: string): v is StaffTimeli
 		return false;
 	const emails = (v.financialEmails ?? []) as { sendId: string }[];
 	if (new Set(emails.map((e) => e.sendId)).size !== emails.length) return false;
+	const quotes = v.items.filter((i) => i.kind === 'QUOTE_PUBLISHED');
+	const invoices = v.items.filter((i) => i.kind === 'INVOICE_AMENDED');
+	if (
+		new Set(quotes.map((i) => i.proposal.quoteRevision)).size !== quotes.length ||
+		new Set(invoices.map((i) => i.amendment.invoiceRevision)).size !== invoices.length
+	)
+		return false;
 	const messages = v.items.filter((i) => i.kind === 'MESSAGE');
 	return (
 		new Set(v.items.map((i) => i.id)).size === v.items.length &&

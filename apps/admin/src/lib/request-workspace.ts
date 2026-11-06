@@ -1,3 +1,4 @@
+import { isCoherentBusinessRevisionState } from './financial-revisions.js';
 import { isRequestedItem } from './service-selections.js';
 import { isCoherentServicePlanState } from './service-plan.js';
 import type {
@@ -179,6 +180,18 @@ export function requestSummary(data: CurrentStaffRequest, today: string): string
 	if (stage === 'DECLINED') return 'Request declined';
 	return 'Event closed';
 }
+export function currentDocumentLabel(data: CurrentStaffRequest): string {
+	if (data.financial.stage === 'QUOTE') {
+		const revision = data.currentQuoteRevision ?? data.proposal?.quoteRevision;
+		return revision == null ? 'Quote (revision unavailable)' : `Quote v${revision}`;
+	}
+	if (data.financial.stage === 'INVOICE') {
+		const revision =
+			data.currentInvoiceRevision ?? data.invoiceAmendmentHistory.at(-1)?.invoiceRevision;
+		return revision == null ? 'Invoice (revision unavailable)' : `Invoice v${revision}`;
+	}
+	return `${financialStageLabel(data.financial.stage)} v${data.financial.version}`;
+}
 export function requestSummaryDescription(data: CurrentStaffRequest, today: string): string {
 	const { inquiry, financial, proposal } = data;
 	const stage = inquiry.lifecycle.stage;
@@ -189,7 +202,7 @@ export function requestSummaryDescription(data: CurrentStaffRequest, today: stri
 		}. Review the Estimate in the Serving plan before issuing a quote.`;
 	}
 	if (stage === 'QUOTED')
-		return `${proposal ? `Quote v${proposal.documentVersion} issued ${submittedDateLabel(proposal.issuedAt)}. ` : ''}The full approved deposit is required to hold the date and book this event.`;
+		return `${proposal ? `${currentDocumentLabel(data)} issued ${submittedDateLabel(proposal.issuedAt)}. ` : ''}The full approved deposit is required to hold the date and book this event.`;
 	if (stage === 'CLOSED') return 'Service and payment are complete. Nothing else is pending.';
 	if (stage === 'DECLINED')
 		return 'No booking action is pending. The request and its original Estimate stay on file.';
@@ -295,6 +308,7 @@ export function isCurrentStaffRequest(
 		)
 	)
 		return false;
+	if (!isCoherentBusinessRevisionState(data)) return false;
 	const version = (value: unknown) =>
 		typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
 	const instant = (value: unknown) =>
