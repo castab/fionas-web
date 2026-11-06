@@ -283,8 +283,10 @@ original key and exact body.
 
 **Saved command.** The sessionStorage command keeps its `phase` literal `redirected` (meaning
 "commerce opened a provider Session", whether or not the tab navigated) so commands survive a
-deploy across compatible frontend releases, with optional nonsecret `uiMode` and `completing`.
-Commands saved by the previous release (no `uiMode`) read exactly as before.
+deploy across compatible frontend releases. Elements saves the nonsecret commerce `attemptId`
+and uses `completing` to lock a dispatched confirmation. `awaitingSettlement` distinguishes a
+reported completion or provider processing from an unknown outcome. Older Elements commands
+with only `completing` are treated as uncertain and bound to the original attempt by their key.
 
 **One authorization.** While a form is open, ordinary Pay and recovery are blocked. Both panels
 are keyed by launch. Embedded Checkout serializes initialization and teardown because Stripe
@@ -292,7 +294,7 @@ allows one Embedded Checkout per page. Elements destroys its two mounted fields 
 its SDK change handler's receiver. Stripe's Elements SDK does not expose a general destroy or
 unsubscribe method. Disposed launches cannot mount or act on late initialization or confirmation.
 
-**Completion.** Embedded's `onComplete` and Elements confirmation both lead to the same commerce
+**Completion.** Embedded's `onComplete` and a reported Elements completion lead to the same commerce
 summary read. The controller removes the form, marks the saved command `completing`, keeps
 new payments closed, shows **Confirming your payment** / "We're confirming your payment", and
 restarts the bounded summary polling. Only commerce's summary confirms: QUOTED → BOOKED shows
@@ -309,9 +311,9 @@ to reach the same Session.
 **Reloads and returns.** A reload loses the secret by design. With the saved command still open
 the page shows the same notice and **Continue your payment** (same key; nothing is sent on its
 own). A Stripe authentication redirect returns to `?checkout=returned`. The page restores the
-bearer, cleans the URL and reads the summary. If confirmation started before a reload, the page
-shows confirming. For Elements, **Check previous payment** can reconcile with the same key and
-body. An OPEN answer in this state keeps the form closed.
+bearer, cleans the URL and reads the summary. A dispatched Elements confirmation stays locked
+across reloads. The page shows **Confirming your payment** for reported completion and
+**We couldn't confirm your payment status** for an indeterminate result.
 
 **Failures.** A missing publishable key or a Stripe.js load or mount failure leaves the saved
 command intact. Embedded offers **Try again** for load and mount failures. Elements offers
@@ -349,12 +351,13 @@ answers with the same OPEN Session, its secret is discarded unmounted. EXPIRED/F
 `PAYMENT_TERMS_CHANGED`, recovery and reconciliation answers follow the usual rules. A new payment
 is possible only after the old attempt is resolved, as a fresh reviewed decision with a new key.
 
-| Situation                                        | Page shows                                                      |
-| ------------------------------------------------ | --------------------------------------------------------------- |
-| Customer closed the form, terms unchanged        | Your payment is still open → **Continue your payment**          |
-| Accepted summary shows changed terms             | payment details have changed → **Check previous payment**       |
-| Confirmation started, commerce hasn't reconciled | Confirming your payment. Elements can check the same attempt.   |
-| No answer to the checkout request                | the existing unknown-outcome wording → **Try again** (same key) |
+| Situation                                         | Page shows                                                      |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| Customer closed the form, terms unchanged         | Your payment is still open → **Continue your payment**          |
+| Accepted summary shows changed terms              | payment details have changed → **Check previous payment**       |
+| Stripe reports completion before commerce settles | Confirming your payment                                         |
+| Elements confirmation is indeterminate            | Payment status uncertain → **Check previous payment**           |
+| No answer to the checkout request                 | the existing unknown-outcome wording → **Try again** (same key) |
 
 If a summary shows the attempt no longer underway (settled, expired, reconciliation) the form is
 removed and the authoritative state shown; a revoked link or disabled payments remove it too. It is
@@ -388,10 +391,36 @@ Elements Pay button until a fresh summary arrives. Superseded reads cannot inval
   awaits a fresh commerce summary and rechecks Stripe's total and readiness. The controller
   checks `authorizationMatches` and records the in-flight marker before
   `actions.confirm({ redirect: 'if_required' })`. Stripe uses commerce's configured return URL.
-  Field validation and explicit payment failures give actionable copy. A success or uncertain
-  outcome removes the form and starts bounded summary polling. Commerce alone confirms the
-  booking transition or updated Invoice balance.
+  Validation errors stay in the form before dispatch. The installed Stripe.js types distinguish
+  success, `paymentFailed` and an unclassified error with a null code. An explicit `paymentFailed`
+  on an open Session clears the local lock and keeps the same fields mounted for correction.
+  A reported completion removes the form and waits for commerce's ledger. Null or unfamiliar
+  codes and thrown confirmation errors remove the form, keep the lock and show the uncertainty
+  notice. Both paths refresh and poll the authoritative summary with the existing bounds.
   [Stripe Checkout confirmation](https://docs.stripe.com/js/custom_checkout/confirm)
+
+### Checking an uncertain Elements confirmation
+
+**Check previous payment** sends one deliberate request with the exact original key and body.
+Commerce retrieves the Stripe Session attached to that key, verifies its identity and
+authorization, and reconciles it. Stripe documents an open Session as one where payment
+processing has yet to start. Only a validated `OPEN` / `PENDING` Elements response for the
+original attempt and a fresh, matching commerce summary allow the controller to clear
+`completing` and mount that same Session. The form verifies Stripe's status and exact USD total
+again, and Pay requires valid fields and `canConfirm`. The customer submits again deliberately.
+[Stripe Checkout Session status](https://docs.stripe.com/api/checkout/sessions/object#checkout_session_object-status)
+
+- `PROCESSING`, `SUCCEEDED` and a previously reported completion keep the form closed. The
+  commerce summary supplies any booking transition or applied balance. The customer can check
+  the same attempt again while settlement remains unresolved.
+- `EXPIRED` or `FAILED` for the original attempt releases the lock. A fresh summary and a new
+  customer decision are required before any replacement authorization.
+- Timeouts, malformed responses and changed terms preserve the key and keep confirmation locked.
+  The status view offers a new deliberate check or contact help. Revoked links follow the
+  existing access rules.
+- The public summary describes the booking and active collection in aggregate. Without applied
+  money or a terminal answer for the original key, an empty active-payment state alone leaves
+  confirmation locked. Recovery needs no new provider-status field or endpoint.
 
 ## Recovery and reconciliation
 

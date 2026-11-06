@@ -34,6 +34,7 @@ export type NoticeKind =
 	| 'deposit-confirmed'
 	| 'payment-received'
 	| 'confirming'
+	| 'confirmation-uncertain'
 	| 'checkout-cancelled-open'
 	| 'checkout-not-completed'
 	| 'checkout-expired'
@@ -62,6 +63,7 @@ export type PendingCheckout = {
 	uiMode: CheckoutUiMode | null;
 	/** Confirmation started or Stripe reported completion; commerce has yet to confirm it. */
 	completing: boolean;
+	confirmationUncertain: boolean;
 	/**
 	 * The latest accepted summary no longer matches the terms this opened attempt was authorized
 	 * for (see `authorizationMatches`). Its form is never shown again; only a same-key check is
@@ -293,11 +295,19 @@ export function createPaymentController(deps: ControllerDeps) {
 					blocked: stored.blocked === true,
 					uiMode: stored.uiMode ?? null,
 					completing: stored.completing === true,
+					confirmationUncertain: uncertainConfirmation(stored),
 					termsChanged:
-						!!summary && stored.phase === 'redirected' && !authorizationMatches(stored, summary)
+						!!summary &&
+						(stored.phase === 'redirected' || lockedElements(stored)) &&
+						!authorizationMatches(stored, summary)
 				}
 			: null;
 	}
+
+	const lockedElements = (stored: StoredCheckout) =>
+		stored.uiMode === 'ELEMENTS' && stored.completing === true;
+	const uncertainConfirmation = (stored: StoredCheckout) =>
+		lockedElements(stored) && !stored.awaitingSettlement;
 
 	function openCheckout(
 		stored: StoredCheckout,
@@ -358,32 +368,39 @@ export function createPaymentController(deps: ControllerDeps) {
 		const matches = stored !== null && authorizationMatches(stored, summary);
 		let derived: NoticeKind | null = null;
 		let pending: PendingCheckout | null = null;
-		if (stored?.blocked) {
+		if (stored?.blocked && !lockedElements(stored)) {
 			pending = pendingOf(stored, false);
 			derived = 'key-reused';
-		} else if (stored?.phase === 'sending') {
+		} else if (stored?.phase === 'sending' && !lockedElements(stored)) {
 			// Unknown only when no request for it is in flight (a background read during a send is not).
 			pending = pendingOf(stored, !sending);
 			derived = sending ? null : 'ambiguous';
-		} else if (stored?.phase === 'redirected') {
+		} else if (stored) {
 			if (summary.paymentInProgress) {
 				pending = pendingOf(stored, false, summary);
-				derived =
-					launch && matches
-						? null // The customer is still in Stripe's form on this page.
-						: isOnPageCheckoutMode(stored.uiMode) && !matches
-							? 'checkout-invalidated'
-							: returned === 'cancelled'
-								? 'checkout-cancelled-open'
-								: returned === 'returned' ||
-									  stored.completing ||
-									  !isOnPageCheckoutMode(stored.uiMode)
-									? 'confirming'
-									: 'checkout-closed';
+				if (launch && matches) derived = null;
+				else if (isOnPageCheckoutMode(stored.uiMode) && !matches) derived = 'checkout-invalidated';
+				else if (uncertainConfirmation(stored)) derived = 'confirmation-uncertain';
+				else if (returned === 'cancelled') derived = 'checkout-cancelled-open';
+				else if (
+					returned === 'returned' ||
+					stored.completing ||
+					!isOnPageCheckoutMode(stored.uiMode)
+				)
+					derived = 'confirming';
+				else derived = 'checkout-closed';
 			} else {
-				// The attempt is no longer active: commerce has settled, expired or failed it.
 				derived = outcomeNotice(stored, summary);
-				store.forgetCheckout();
+				if (
+					lockedElements(stored) &&
+					derived === 'checkout-not-completed' &&
+					view.kind !== 'reconciliation'
+				) {
+					// The summary has no per-attempt status. Require the original key's terminal
+					// response when it shows neither applied money nor an active payment.
+					pending = pendingOf(stored, false, summary);
+					derived = 'confirmation-uncertain';
+				} else store.forgetCheckout();
 			}
 		}
 		// The form stays only while commerce still shows this tab's attempt underway on the
@@ -408,7 +425,11 @@ export function createPaymentController(deps: ControllerDeps) {
 			checkout: launch?.public ?? null,
 			summaryFresh: true
 		});
-		if (view.kind === 'in-progress') startPolling();
+		if (
+			view.kind === 'in-progress' ||
+			(pending?.completing && pending.uiMode === 'ELEMENTS' && view.kind !== 'reconciliation')
+		)
+			startPolling();
 		else stopPolling('idle');
 	}
 
@@ -464,8 +485,8 @@ export function createPaymentController(deps: ControllerDeps) {
 	}
 
 	/** Waits for the latest summary read, following any that supersede it, to its own outcome. */
-	async function settledRefresh(): Promise<RefreshOutcome> {
-		let outcome = await refresh();
+	async function settledRefresh(notice?: NoticeKind | null): Promise<RefreshOutcome> {
+		let outcome = await refresh(notice);
 		while (outcome === 'superseded' && !disposed) outcome = await latestRead;
 		return outcome;
 	}
@@ -614,11 +635,88 @@ export function createPaymentController(deps: ControllerDeps) {
 		return latest;
 	}
 
+	/** Resolve a dispatched confirmation with one deliberate, same-key provider check. */
+	async function finishConfirmationCheck(stored: StoredCheckout, result: FetchResult) {
+		if (!result.ok && result.status === 404) return linkUnavailable();
+		if (store.checkout()?.key !== stored.key) return;
+		if (!result.ok && classifyCheckoutFailure(result.status, result.error) === 'key-reused') {
+			store.saveCheckout({ ...stored, blocked: true });
+			await settledRefresh('confirmation-uncertain');
+			return;
+		}
+		const response = result.ok ? readCheckoutResponse(result.body) : null;
+		if (
+			!response ||
+			response.uiMode !== 'ELEMENTS' ||
+			(stored.attemptId !== undefined && response.attemptId !== stored.attemptId)
+		) {
+			await settledRefresh('confirmation-uncertain');
+			return;
+		}
+		if (
+			response.outcome === 'PENDING' &&
+			(response.state === 'EXPIRED' || response.state === 'FAILED')
+		) {
+			store.forgetCheckout();
+			await settledRefresh('checkout-expired');
+			return;
+		}
+		if (
+			(response.state === 'PROCESSING' && response.outcome === 'PENDING') ||
+			(response.state === 'SUCCEEDED' &&
+				['APPLIED', 'RECONCILIATION_REQUIRED'].includes(response.outcome))
+		) {
+			store.saveCheckout({
+				...stored,
+				phase: 'redirected',
+				attemptId: response.attemptId,
+				awaitingSettlement: true
+			});
+			await settledRefresh(null);
+			return;
+		}
+		const recovered = checkoutLaunch(response);
+		const outcome = await settledRefresh(null);
+		const summary = state.summary;
+		if (
+			!recovered ||
+			recovered.mode !== 'ELEMENTS' ||
+			response.outcome !== 'PENDING' ||
+			stored.awaitingSettlement ||
+			disposed ||
+			outcome !== 'applied' ||
+			summaryInFlight() ||
+			!state.summaryFresh ||
+			!summary?.paymentInProgress ||
+			state.view?.kind !== 'in-progress' ||
+			!authorizationMatches(stored, summary) ||
+			store.checkout()?.key !== stored.key
+		)
+			return;
+
+		const resumed: StoredCheckout = {
+			...stored,
+			phase: 'redirected',
+			attemptId: response.attemptId,
+			completing: undefined
+		};
+		store.saveCheckout(resumed);
+		returned = null;
+		const checkout = openCheckout(
+			resumed,
+			response.attemptId,
+			recovered.mode,
+			recovered.clientSecret
+		);
+		emit({ notice: null, checkout, pending: pendingOf(resumed, false) });
+	}
+
 	/** Sends one stored command, retrying only the identical key/body after an ambiguous result. */
 	async function send(stored: StoredCheckout, fresh = false) {
 		// An open form already holds this tab's only authorization.
 		if (sending || disposed || !token || launch) return;
 		sending = true;
+		const checkingConfirmation = lockedElements(stored);
 		const sendingCommand: StoredCheckout = {
 			...stored,
 			phase: 'sending',
@@ -626,8 +724,11 @@ export function createPaymentController(deps: ControllerDeps) {
 			completing: stored.uiMode === 'ELEMENTS' ? stored.completing : undefined
 		};
 		// Persisted before transmission: a lost response or closed tab can only resend this.
-		store.saveCheckout(sendingCommand);
-		emit({ busy: 'submitting', pending: pendingOf(sendingCommand, false), notice: null });
+		if (!checkingConfirmation) store.saveCheckout(sendingCommand);
+		emit({
+			busy: 'submitting',
+			...(checkingConfirmation ? {} : { pending: pendingOf(sendingCommand, false), notice: null })
+		});
 		const body = serializeCommand(sendingCommand.command);
 		let result: FetchResult;
 		let unknownEarlier = false;
@@ -648,11 +749,22 @@ export function createPaymentController(deps: ControllerDeps) {
 			);
 			if (disposed || !token) return;
 			const retryable =
-				!result.ok && classifyCheckoutFailure(result.status, result.error) === 'ambiguous';
+				!checkingConfirmation &&
+				!result.ok &&
+				classifyCheckoutFailure(result.status, result.error) === 'ambiguous';
 			if (!retryable || attempt >= retryDelays.length) break;
 			unknownEarlier = true;
 			await wait(retryDelays[attempt]);
 			if (disposed) return;
+		}
+		if (checkingConfirmation) {
+			try {
+				await finishConfirmationCheck(stored, result);
+			} finally {
+				sending = false;
+				if (state.busy === 'submitting') emit({ busy: null });
+			}
+			return;
 		}
 		sending = false;
 		if (result.ok) {
@@ -663,7 +775,8 @@ export function createPaymentController(deps: ControllerDeps) {
 			const opened: StoredCheckout = {
 				...sendingCommand,
 				phase: 'redirected',
-				...(response?.uiMode && { uiMode: response.uiMode })
+				...(response?.uiMode && { uiMode: response.uiMode }),
+				...(response?.uiMode === 'ELEMENTS' && { attemptId: response.attemptId })
 			};
 			if (launchable?.mode === 'HOSTED') {
 				store.saveCheckout(opened);
@@ -816,14 +929,21 @@ export function createPaymentController(deps: ControllerDeps) {
 		 * form is removed, new payments stay closed, and the page waits (with fresh bounded
 		 * polling) until commerce's summary shows the applied payment.
 		 */
-		checkoutComplete(id: number) {
+		checkoutComplete(id: number, outcome: 'submitted' | 'uncertain' = 'submitted') {
 			if (disposed || launch?.public.id !== id) return;
 			discardCheckout();
 			const stored = store.checkout();
-			if (stored) store.saveCheckout({ ...stored, completing: true });
+			if (stored)
+				store.saveCheckout({
+					...stored,
+					completing: true,
+					...(stored.uiMode === 'ELEMENTS' &&
+						outcome === 'submitted' && { awaitingSettlement: true })
+				});
+			const notice = outcome === 'uncertain' ? 'confirmation-uncertain' : 'confirming';
 			stopPolling('idle');
-			emit({ checkout: null, notice: 'confirming', pending: pendingOf(store.checkout(), false) });
-			void refresh('confirming');
+			emit({ checkout: null, notice, pending: pendingOf(store.checkout(), false) });
+			void refresh(outcome === 'uncertain' ? null : notice);
 		},
 		/**
 		 * Back to the booking overview. Closing the form neither cancels nor expires the Session
@@ -847,7 +967,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		/** Deliberately abandons a blocked command and reviews the current terms again. */
 		async startOver() {
 			const stored = store.checkout();
-			if (!stored?.blocked || sending) return;
+			if (!stored?.blocked || lockedElements(stored) || sending) return;
 			store.forgetCheckout();
 			await refresh(null);
 		},

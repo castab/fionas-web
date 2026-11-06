@@ -232,7 +232,7 @@
 						onprepare={(id) => controller?.prepareConfirmation(id) ?? Promise.resolve(false)}
 						onconfirm={(id) => controller?.beginConfirmation(id) ?? false}
 						onretryable={(id) => controller?.confirmationRetryable(id)}
-						onpending={(id) => controller?.checkoutComplete(id)}
+						onpending={(id, outcome) => controller?.checkoutComplete(id, outcome)}
 						onclose={(id) => controller?.closeCheckout(id)}
 						onrefresh={() => controller?.refresh()}
 						onrecover={(id) => controller?.checkCheckout(id)}

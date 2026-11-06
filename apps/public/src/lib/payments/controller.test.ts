@@ -62,6 +62,8 @@ function harness(
 		checkout?: Reply[];
 		uuids?: string[];
 		pollDelays?: number[];
+		setTimer?: ControllerDeps['setTimer'];
+		clearTimer?: ControllerDeps['clearTimer'];
 	} = {}
 ) {
 	const storage = options.storage === undefined ? memoryStorage() : options.storage;
@@ -116,6 +118,8 @@ function harness(
 		},
 		onState: (state) => void states.push(state),
 		pollDelays: options.pollDelays ?? [1, 1, 1],
+		setTimer: options.setTimer,
+		clearTimer: options.clearTimer,
 		retryDelays: [1, 1],
 		now: () => clock
 	};
@@ -1374,16 +1378,44 @@ describe('Elements confirmation preflight', () => {
 	});
 	const elements = { ...embeddedCheckout, uiMode: 'ELEMENTS' };
 
-	async function opened() {
+	async function opened(options: Parameters<typeof harness>[0] = {}, invoice = false) {
+		const summary = invoice ? bookedSummary() : quotedSummary();
 		const h = harness({
 			hash: `#${token}`,
-			summary: [ok(quotedSummary()), ok(underway)],
+			summary: [
+				ok(summary),
+				ok({
+					...summary,
+					canPay: false,
+					paymentInProgress: true,
+					unavailableReason: 'PAYMENT_IN_PROGRESS'
+				})
+			],
 			checkout: [ok(elements)],
-			pollDelays: []
+			pollDelays: [],
+			...options
 		});
 		await h.controller.start();
-		await h.controller.pay({ partialCents: null });
+		await h.controller.pay({ partialCents: invoice ? 20000n : null });
 		return h;
+	}
+
+	const choice = { partialCents: null };
+	const answer = (state: string, outcome = 'PENDING') => ok({ ...elements, state, outcome });
+
+	async function interrupted(h: Awaited<ReturnType<typeof opened>>) {
+		const { id } = h.state.checkout!;
+		expect(h.controller.beginConfirmation(id)).toBe(true);
+		h.controller.checkoutComplete(id, 'uncertain');
+		await flush();
+		expect(h.state.notice).toBe('confirmation-uncertain');
+		expect(h.state.checkout).toBeNull();
+		expect(h.checkoutCalls()).toHaveLength(1);
+	}
+
+	function expectSameCheck(h: Awaited<ReturnType<typeof opened>>, count = 2) {
+		expect(h.checkoutCalls()).toHaveLength(count);
+		for (const check of h.checkoutCalls().slice(1)) expect(check).toEqual(h.checkoutCalls()[0]);
 	}
 
 	it('checks commerce again and persists the in-flight marker before dispatch', async () => {
@@ -1419,23 +1451,226 @@ describe('Elements confirmation preflight', () => {
 		expect(h.store.checkout()?.key).toBe('key-1');
 	});
 
-	it('after interrupted confirmation, a reload can check the same key without reopening', async () => {
-		const first = await opened();
-		const id = first.state.checkout!.id;
-		expect(first.controller.beginConfirmation(id)).toBe(true);
-		first.controller.dispose();
-		const reloaded = harness({
-			storage: first.storage,
-			summary: [ok(underway)],
-			checkout: [ok(elements)],
-			pollDelays: []
+	it.each(['redirected', 'sending'] as const)(
+		'after interrupted confirmation, reload resumes the verified OPEN attempt (%s)',
+		async (phase) => {
+			const first = await opened();
+			const id = first.state.checkout!.id;
+			expect(first.controller.beginConfirmation(id)).toBe(true);
+			if (phase === 'sending') {
+				// A reload during an earlier release's same-key check may lack an attempt ID.
+				first.store.saveCheckout({ ...first.store.checkout()!, phase, attemptId: undefined });
+			}
+			first.controller.dispose();
+			const reloaded = harness({
+				storage: first.storage,
+				summary: [ok(underway)],
+				checkout: [ok(elements)],
+				pollDelays: []
+			});
+			await reloaded.controller.start();
+			expect(reloaded.state.notice).toBe('confirmation-uncertain');
+			expect(reloaded.checkoutCalls()).toHaveLength(0);
+			await reloaded.controller.recover(choice);
+			expect(reloaded.checkoutCalls()[0]).toEqual(first.checkoutCalls()[0]);
+			expect(reloaded.checkoutCalls()).toHaveLength(1);
+			expect(reloaded.state.checkout).toMatchObject({
+				attemptId: elements.attemptId,
+				mode: 'ELEMENTS'
+			});
+			expect(reloaded.state.pending?.completing).toBe(false);
+			expect(reloaded.store.checkout()?.phase).toBe('redirected');
+			expect(reloaded.state.notice).toBeNull();
+			await expect(reloaded.state.checkout!.clientSecret()).resolves.toBe(embeddedSecret);
+		}
+	);
+
+	it('waits for a new summary and ignores repeated clicks while checking the original authorization', async () => {
+		const h = await opened();
+		await interrupted(h);
+		const summary = deferred();
+		h.replySummary(summary.promise);
+		const checking = h.controller.recover(choice);
+		await flush();
+		expect(h.state.checkout).toBeNull();
+		expect(h.store.checkout()?.completing).toBe(true);
+		await Promise.all([
+			h.controller.recover(choice),
+			h.controller.retry(),
+			h.controller.pay(choice)
+		]);
+		expectSameCheck(h);
+		summary.settle(ok(underway));
+		await checking;
+		expect(h.state.checkout?.attemptId).toBe(elements.attemptId);
+		expect(h.store.checkout()?.completing).toBeUndefined();
+		expectSameCheck(h);
+	});
+
+	it.each(['PROCESSING', 'SUCCEEDED'])(
+		'%s keeps the form closed pending ledger confirmation',
+		async (state) => {
+			const h = await opened();
+			await interrupted(h);
+			h.replyCheckout(answer(state, state === 'SUCCEEDED' ? 'APPLIED' : 'PENDING'));
+			await h.controller.recover(choice);
+			expect(h.state.notice).toBe('confirming');
+			expect(h.state.checkout).toBeNull();
+			expect(h.store.checkout()?.awaitingSettlement).toBe(true);
+			// An anomalous later OPEN answer cannot reopen an attempt known to have advanced.
+			h.replyCheckout(ok(elements));
+			await h.controller.recover(choice);
+			expect(h.state.checkout).toBeNull();
+			expectSameCheck(h, 3);
+			h.replySummary(ok(bookedSummary()));
+			await h.controller.refresh();
+			expect(h.state.notice).toBe('deposit-confirmed');
+			expect(h.store.checkout()).toBeNull();
+		}
+	);
+
+	it.each(['EXPIRED', 'FAILED'])(
+		'%s releases the lock and requires a deliberate new payment',
+		async (state) => {
+			const h = await opened();
+			await interrupted(h);
+			h.replyCheckout(answer(state));
+			h.replySummary(ok(quotedSummary()));
+			await h.controller.recover(choice);
+			expect(h.state.notice).toBe('checkout-expired');
+			expect(h.store.checkout()).toBeNull();
+			expect(h.state.checkout).toBeNull();
+			expectSameCheck(h);
+		}
+	);
+
+	it.each([
+		'network',
+		{ status: 504, body: { code: 'unavailable' } },
+		ok({ ...elements, outcome: 'APPLIED' }),
+		ok({ ...elements, attemptId: publicId }),
+		ok({ ...openCheckout })
+	] satisfies Reply[])('keeps an unresolved check recoverable (%#)', async (reply) => {
+		const h = await opened();
+		await interrupted(h);
+		const saved = h.store.checkout();
+		h.replyCheckout(reply);
+		h.replySummary(ok(quotedSummary())); // no ledger confirmation and no per-attempt status
+		await h.controller.recover(choice);
+		expect(h.state.notice).toBe('confirmation-uncertain');
+		expect(h.state.checkout).toBeNull();
+		expect(h.store.checkout()).toEqual(saved);
+		await h.controller.pay(choice);
+		expectSameCheck(h);
+	});
+
+	it('an unavailable summary cannot unlock a verified OPEN response', async () => {
+		const h = await opened();
+		await interrupted(h);
+		h.replySummary('network');
+		await h.controller.recover(choice);
+		expect(h.state.checkout).toBeNull();
+		expect(h.store.checkout()?.completing).toBe(true);
+		expectSameCheck(h);
+	});
+
+	it('a reported Stripe completion keeps the same attempt locked even if a check returns OPEN', async () => {
+		const h = await opened();
+		const { id } = h.state.checkout!;
+		expect(h.controller.beginConfirmation(id)).toBe(true);
+		h.controller.checkoutComplete(id);
+		await flush();
+		await h.controller.recover(choice);
+		expect(h.state.notice).toBe('confirming');
+		expect(h.state.checkout).toBeNull();
+		expect(h.store.checkout()).toMatchObject({ completing: true, awaitingSettlement: true });
+		expectSameCheck(h);
+	});
+
+	it('a key conflict blocks further checks and cannot start a replacement', async () => {
+		const h = await opened();
+		await interrupted(h);
+		h.replyCheckout({ status: 409, body: { code: 'conflict', message: 'CHECKOUT_KEY_REUSED' } });
+		await h.controller.recover(choice);
+		expect(h.state.pending?.blocked).toBe(true);
+		await Promise.all([
+			h.controller.recover(choice),
+			h.controller.retry(),
+			h.controller.startOver()
+		]);
+		expect(h.store.checkout()).toMatchObject({ key: 'key-1', completing: true, blocked: true });
+		expectSameCheck(h);
+	});
+
+	it.each([
+		[
+			'Invoice amended',
+			true,
+			{ ...bookedSummary(), document: { ...bookedSummary().document, version: 7 } }
+		],
+		[
+			'manual payment',
+			true,
+			bookedSummary({ paidAmount: '1100.00', balance: '100.00', requiredAmount: '100.00' })
+		],
+		['deposit changed', false, quotedSummary({ requiredAmount: '300.00' })]
+	] as const)(
+		'%s during recovery prevents reopening an old authorization',
+		async (_name, invoice, summary) => {
+			const h = await opened({}, invoice);
+			await interrupted(h);
+			h.replySummary(
+				ok({
+					...summary,
+					paymentInProgress: true,
+					canPay: false,
+					unavailableReason: 'PAYMENT_IN_PROGRESS'
+				})
+			);
+			await h.controller.recover(choice);
+			expect(h.state.checkout).toBeNull();
+			expect(h.state.notice).toBe('checkout-invalidated');
+			expect(h.store.checkout()?.completing).toBe(true);
+			expectSameCheck(h);
+		}
+	);
+
+	it('a revoked link during recovery cannot reopen a form', async () => {
+		const h = await opened();
+		await interrupted(h);
+		h.replySummary({ status: 404, body: { code: 'not_found' } });
+		await h.controller.recover(choice);
+		expect(h.state.phase).toBe('link-unavailable');
+		expect(h.state.checkout).toBeNull();
+		expect(h.state.paymentUncertain).toBe(true);
+		expectSameCheck(h);
+	});
+
+	it('a later poll supersedes the matching recovery summary', async () => {
+		let poll: (() => void) | undefined;
+		const h = await opened({
+			pollDelays: [1],
+			setTimer(callback) {
+				poll = callback;
+				return callback;
+			},
+			clearTimer() {
+				poll = undefined;
+			}
 		});
-		await reloaded.controller.start();
-		expect(reloaded.state.notice).toBe('confirming');
-		await reloaded.controller.recover({ partialCents: null });
-		expect(reloaded.checkoutCalls()[0]).toEqual(first.checkoutCalls()[0]);
-		expect(reloaded.state.checkout).toBeNull();
-		expect(reloaded.state.pending?.completing).toBe(true);
+		await interrupted(h);
+		const older = deferred();
+		h.replySummary(older.promise, ok({ ...underway, requiredAmount: '300.00' }));
+		const checking = h.controller.recover(choice);
+		await flush();
+		poll!();
+		await flush();
+		older.settle(ok(underway));
+		await checking;
+		expect(h.state.checkout).toBeNull();
+		expect(h.state.notice).toBe('checkout-invalidated');
+		expect(h.store.checkout()?.completing).toBe(true);
+		expectSameCheck(h);
 	});
 });
 

@@ -10,6 +10,7 @@
 import {
 	IDEMPOTENCY_KEY,
 	PAYMENT_TOKEN,
+	UUID,
 	isOnPageCheckoutMode,
 	readCheckoutCommand,
 	type CheckoutCommand,
@@ -58,11 +59,12 @@ export type StoredCheckout = {
 	blocked?: boolean;
 	/** How commerce presented the opened attempt (nonsecret; wording and resume only). */
 	uiMode?: CheckoutUiMode;
-	/**
-	 * Confirmation started or Stripe reported completion. Wait for commerce to show the
-	 * payment before taking another payment action.
-	 */
+	/** Commerce attempt identity for Elements. Older saved commands are bound by the original key. */
+	attemptId?: string;
+	/** Locks confirmation across reloads until a verified outcome or safe same-key recovery. */
 	completing?: boolean;
+	/** Stripe reported completion or commerce verified the attempt advanced beyond OPEN. */
+	awaitingSettlement?: boolean;
 };
 
 export type PaymentStore = {
@@ -93,7 +95,9 @@ const isStoredCheckout = (value: unknown): value is StoredCheckout => {
 		(v.phase === 'sending' || v.phase === 'redirected') &&
 		(v.blocked === undefined || typeof v.blocked === 'boolean') &&
 		(v.uiMode === undefined || v.uiMode === 'HOSTED' || isOnPageCheckoutMode(v.uiMode)) &&
-		(v.completing === undefined || typeof v.completing === 'boolean')
+		(v.attemptId === undefined || (typeof v.attemptId === 'string' && UUID.test(v.attemptId))) &&
+		(v.completing === undefined || typeof v.completing === 'boolean') &&
+		(v.awaitingSettlement === undefined || typeof v.awaitingSettlement === 'boolean')
 	);
 };
 

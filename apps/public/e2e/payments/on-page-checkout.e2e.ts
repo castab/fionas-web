@@ -452,7 +452,7 @@ function elementsScript(cents: number, fail = false) {
 	return `
 	(() => {
 		const embedded = window.Stripe;
-		const t = window.__elementsTest = { creates: 0, destroys: 0, confirms: 0, fail: ${fail}, decline: false };
+		const t = window.__elementsTest = { creates: 0, destroys: 0, confirms: 0, fail: ${fail}, decline: false, uncertain: false };
 		window.Stripe = (key) => ({
 			...embedded(key),
 			initCheckoutElementsSdk({ clientSecret, elementsOptions }) {
@@ -517,6 +517,7 @@ function elementsScript(cents: number, fail = false) {
 							async confirm({ redirect }) {
 								if (redirect !== 'if_required') throw new Error('Unexpected redirect option');
 								t.confirms++;
+								if (t.uncertain) return { type: 'error', error: { code: null, message: 'Private test error' } };
 								return t.decline
 									? { type: 'error', error: { code: 'paymentFailed', message: 'Private test decline' } }
 									: { type: 'success', session: getSession() };
@@ -537,6 +538,7 @@ type ElementsTest = {
 	confirms: number;
 	fail: boolean;
 	decline: boolean;
+	uncertain: boolean;
 };
 const elementsState = (page: Page) =>
 	page.evaluate(() => (window as unknown as { __elementsTest: ElementsTest }).__elementsTest);
@@ -693,6 +695,55 @@ test('Elements can check the same authorization after a loading failure', async 
 	const [first, check] = await posts(request, publicId);
 	expect(check.key).toBe(first.key);
 	expect(check.body).toBe(first.body);
+});
+
+test('Elements checks and resumes the same OPEN Session after an uncertain confirmation and reload', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, quotedSummary(), 'ELEMENTS');
+	await fakeStripe(page, elementsScript(24000));
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$240.00');
+	await fakeFields(page);
+	await page.evaluate(() => {
+		(window as unknown as { __elementsTest: ElementsTest }).__elementsTest.uncertain = true;
+	});
+	const pay = page.getByRole('button', { name: 'Pay $240.00' });
+	await pay.click();
+	const notice = page.getByTestId('payment-notice');
+	await expect(notice).toContainText("We couldn't confirm your payment status");
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	expect(await elementsState(page)).toMatchObject({ confirms: 1, destroys: 2 });
+	expect(await posts(request, publicId)).toHaveLength(1);
+
+	await page.reload();
+	await expect(notice).toContainText("We couldn't confirm your payment status");
+	const check = page.getByRole('button', { name: 'Check previous payment', exact: true });
+	await update(request, publicId, { replies: [{ status: 504, body: { code: 'unavailable' } }] });
+	await check.click();
+	await expect.poll(async () => (await posts(request, publicId)).length).toBe(2);
+	await expect(check).toBeEnabled();
+	await expect(notice).toContainText("We couldn't confirm your payment status");
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+
+	await check.click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$240.00');
+	await expect(pay).toBeDisabled();
+	expect(await elementsState(page)).toMatchObject({ creates: 1, confirms: 0 });
+	const sent = await posts(request, publicId);
+	expect(sent).toHaveLength(3);
+	expect(sent[1]).toEqual(sent[0]);
+	expect(sent[2]).toEqual(sent[0]);
+	expect((await stubState(request, publicId)).secrets).toHaveLength(1);
+
+	await fakeFields(page);
+	await pay.click();
+	await expect(notice).toContainText('Confirming your payment');
+	await update(request, publicId, { summary: bookedSummary() });
+	await expect(notice).toContainText('Deposit received');
+	expect(await posts(request, publicId)).toHaveLength(3);
 });
 
 test('an old Embedded attempt resumes after the switch and a fresh payment uses Elements', async ({

@@ -95,7 +95,7 @@ type ElementsStart = {
 	prepareConfirmation(): Promise<boolean>;
 	beginConfirmation(): boolean;
 	onRetryable(): void;
-	onPending(): void;
+	onPending(outcome: 'submitted' | 'uncertain'): void;
 };
 
 /** Owns one form. Only non-sensitive readiness, totals and fixed errors leave this boundary. */
@@ -135,15 +135,15 @@ export function startCheckoutElements(start: ElementsStart) {
 		start.onChange({ kind: 'unavailable', reason });
 	}
 
-	function pending() {
+	function pending(outcome: 'submitted' | 'uncertain') {
 		if (!current()) return;
 		stop();
-		start.onPending();
+		start.onPending(outcome);
 	}
 
 	function update(session: StripeCheckoutSession, error = ready?.error ?? null) {
 		if (!current()) return;
-		if (session.status?.type === 'complete') return pending();
+		if (session.status?.type === 'complete') return pending('submitted');
 		if (session.status?.type !== 'open') return fail('expired');
 		const amount = verifiedTotal(session, start.launch.amountCents);
 		if (amount === null) return fail('amount');
@@ -180,8 +180,9 @@ export function startCheckoutElements(start: ElementsStart) {
 			readSession();
 			if (!current()) return;
 			change.receive = (session) => {
-				// During confirmation Stripe may transition the Session before its promise resolves.
-				if (!submitting) update(session);
+				// Completion can arrive while confirm() is still resolving.
+				if (session.status?.type === 'complete') pending('submitted');
+				else if (!submitting) update(session);
 			};
 			sdk.on('change', (session) => change.receive?.(session));
 			contact = sdk.createContactDetailsElement();
@@ -227,12 +228,16 @@ export function startCheckoutElements(start: ElementsStart) {
 				try {
 					const result = await checkout.confirm({ redirect: 'if_required' });
 					if (!current()) return;
-					if (result.type === 'success' || result.error.code !== 'paymentFailed') return pending();
+					if (result.type === 'success') return pending('submitted');
+					const status = checkout.getSession().status?.type;
+					if (status === 'complete') return pending('submitted');
+					if (status !== 'open' || result.error.code !== 'paymentFailed')
+						return pending('uncertain');
 					start.onRetryable();
 					error = 'declined';
 				} catch {
 					// Dispatch may have reached Stripe. Close and check the authoritative booking.
-					pending();
+					pending('uncertain');
 				}
 			} catch {
 				fail('load');

@@ -96,7 +96,7 @@
 	const body = 'm-0 text-(--text-body) [font:var(--type-body-sm)]';
 	// This tab's own earlier command can always be resent; anything else is a new decision.
 	const ownCommand = $derived(!!pending && !pending.ambiguous && !pending.blocked);
-	// When confirmation was dispatched, Elements can check the same attempt without reopening it.
+	// A dispatched Elements confirmation can only check the original attempt.
 	const completing = $derived(ownCommand && !!pending?.completing);
 	const checkOnly = $derived(completing && pending?.uiMode === 'ELEMENTS');
 	const canRecover = $derived(
@@ -242,7 +242,10 @@
 {/snippet}
 
 <Card class="flex flex-col gap-4 px-[26px] py-6 max-[600px]:px-5" data-testid="payment-action">
-	{#if pending?.blocked}
+	{#if pending?.blocked && pending.completing && pending.uiMode === 'ELEMENTS'}
+		<h2 class={heading}>We need to check your payment</h2>
+		{@render contact('For help checking the status of your previous payment, email')}
+	{:else if pending?.blocked}
 		<h2 class={heading}>Let's start this payment again</h2>
 		<p class={body}>
 			This payment request couldn't be used. Start over to review your current balance, then pay if
@@ -259,6 +262,21 @@
 		</p>
 		<Button size="lg" class="min-h-13 w-full" onclick={onretry} data-testid="retry-payment"
 			>Try again</Button
+		>
+	{:else if checkOnly && view?.kind !== 'reconciliation' && (pending?.confirmationUncertain || view?.kind !== 'in-progress')}
+		<h2 class={heading}>Check your previous payment</h2>
+		<p class={body}>
+			{invalidated
+				? 'Your booking changed after you opened this payment. Check the earlier payment before reviewing your updated balance.'
+				: 'This checks the payment you already started.'}
+		</p>
+		<Button
+			size="lg"
+			class="min-h-13 w-full"
+			disabled={busy}
+			onclick={() => onrecover({ partialCents: null })}
+			data-testid="recover-payment"
+			>{busy ? 'Checking previous payment…' : 'Check previous payment'}</Button
 		>
 	{:else if view?.kind === 'deposit-due'}
 		<div class="flex flex-col gap-1">

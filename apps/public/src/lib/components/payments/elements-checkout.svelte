@@ -25,7 +25,7 @@
 		onprepare: (id: number) => Promise<boolean>;
 		onconfirm: (id: number) => boolean;
 		onretryable: (id: number) => void;
-		onpending: (id: number) => void;
+		onpending: (id: number, outcome: 'submitted' | 'uncertain') => void;
 		onclose: (id: number) => void;
 		onrefresh: () => void;
 		onrecover: (id: number) => void;
@@ -60,7 +60,7 @@
 				prepareConfirmation: () => onprepare(current.id),
 				beginConfirmation: () => onconfirm(current.id),
 				onRetryable: () => onretryable(current.id),
-				onPending: () => onpending(current.id)
+				onPending: (outcome) => onpending(current.id, outcome)
 			});
 		});
 		confirm = form.confirm;

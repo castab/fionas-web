@@ -164,7 +164,10 @@ describe('Checkout Elements browser boundary', () => {
 		expect(h.confirm).not.toHaveBeenCalled();
 	});
 
-	it('rechecks the amount and validity after waiting for commerce', async () => {
+	it.each([
+		{ minorUnitsAmountDivisor: 1000 },
+		{ total: { ...baseSession.total, total: { minorUnitsAmount: 48001, amount: 'ignored' } } }
+	])('rechecks the amount and validity after waiting for commerce (%#)', async (changedTotal) => {
 		let allow!: (valid: boolean) => void;
 		const preflight = new Promise<boolean>((resolve) => (allow = resolve));
 		const h = fixture({ prepareConfirmation: vi.fn(() => preflight) });
@@ -174,7 +177,7 @@ describe('Checkout Elements browser boundary', () => {
 		await h.form.confirm();
 		expect(h.prepareConfirmation).toHaveBeenCalledOnce();
 		expect(h.onChange).toHaveBeenLastCalledWith(expect.objectContaining({ submitting: true }));
-		h.change({ minorUnitsAmountDivisor: 1000 });
+		h.change(changedTotal);
 		allow(true);
 		await submitting;
 		expect(h.confirm).not.toHaveBeenCalled();
@@ -209,7 +212,7 @@ describe('Checkout Elements browser boundary', () => {
 		h.form.stop();
 	});
 
-	it.each(['success', 'decline', 'interrupted', 'unclassified'] as const)(
+	it.each(['success', 'decline', 'interrupted', 'null code', 'unknown code'] as const)(
 		'handles %s without leaking provider details or dispatching twice',
 		async (outcome) => {
 			const h = fixture();
@@ -219,11 +222,16 @@ describe('Checkout Elements browser boundary', () => {
 			if (outcome === 'success')
 				h.confirm.mockResolvedValue({ type: 'success', session: baseSession });
 			else if (outcome === 'interrupted') h.confirm.mockRejectedValue(new Error(providerMessage));
-			else if (outcome === 'unclassified')
+			else if (outcome === 'null code')
 				h.confirm.mockResolvedValue({
 					type: 'error',
 					error: { code: null, message: providerMessage }
 				});
+			else if (outcome === 'unknown code')
+				h.confirm.mockResolvedValue({
+					type: 'error',
+					error: { code: 'futureCode', message: providerMessage }
+				} as unknown as StripeCheckoutConfirmResult);
 			else
 				h.confirm.mockResolvedValue({
 					type: 'error',
@@ -245,7 +253,9 @@ describe('Checkout Elements browser boundary', () => {
 				expect(h.contact.destroy).not.toHaveBeenCalled();
 				h.form.stop();
 			} else {
-				expect(h.onPending).toHaveBeenCalledOnce();
+				expect(h.onPending).toHaveBeenCalledExactlyOnceWith(
+					outcome === 'success' ? 'submitted' : 'uncertain'
+				);
 				expect(h.contact.destroy).toHaveBeenCalledOnce();
 				expect(h.payment.destroy).toHaveBeenCalledOnce();
 				h.change({ status: { type: 'complete', paymentStatus: 'paid' } });
@@ -253,6 +263,22 @@ describe('Checkout Elements browser boundary', () => {
 			}
 		}
 	);
+
+	it('observes Session completion while confirmation is in flight and ignores a later error', async () => {
+		const h = fixture();
+		await vi.waitFor(() => expect(h.onChange).toHaveBeenCalled());
+		h.change({ canConfirm: true });
+		let finish!: (result: StripeCheckoutConfirmResult) => void;
+		h.confirm.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+		const confirming = h.form.confirm();
+		await vi.waitFor(() => expect(h.confirm).toHaveBeenCalledOnce());
+		h.change({ status: { type: 'complete', paymentStatus: 'unpaid' } });
+		finish({ type: 'error', error: { code: null, message: 'Private error' } });
+		await confirming;
+		expect(h.onPending).toHaveBeenCalledExactlyOnceWith('submitted');
+		expect(h.onRetryable).not.toHaveBeenCalled();
+		expect(h.payment.destroy).toHaveBeenCalledOnce();
+	});
 
 	it('does not mount after disposal or act on a confirmation result from an invalidated launch', async () => {
 		let release!: () => void;

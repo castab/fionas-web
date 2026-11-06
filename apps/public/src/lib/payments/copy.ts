@@ -47,6 +47,13 @@ export function noticeCopy(
 				title: 'Confirming your payment',
 				body: "We're waiting for our payment processor to confirm it. This page updates on its own, so there's no need to pay again."
 			};
+		case 'confirmation-uncertain':
+			return {
+				tone: 'warning',
+				title: "We couldn't confirm your payment status",
+				body: 'Your payment may still be processing. Check its status before trying again. If the status stays unclear, contact us and we’ll help.',
+				contact: true
+			};
 		case 'checkout-cancelled-open':
 			return {
 				tone: 'info',
