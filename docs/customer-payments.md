@@ -1,37 +1,35 @@
 # Customer booking & payments
 
 Customers pay Quote deposits and Invoice balances through Stripe Checkout from one stable,
-inquiry-scoped page: `/pay/{publicId}` on the public site. Checkout is either **hosted** (the tab
-goes to Stripe and comes back) or **embedded** (Stripe's own form is mounted inside this page;
-see [Embedded Checkout](#embedded-checkout)); commerce picks the mode per attempt. Staff issue and
-manage that link from the request workspace. The backend contract is fionas-commerce PR #36
-(merged) plus PR #38 (presentation modes); its `docs/stripe-payments-frontend-handoff.md`,
-`docs/stripe-payments-operations.md` and executable OpenAPI are authoritative and are deliberately
-not copied here.
+inquiry-scoped page, `/pay/{publicId}` on the public site. Commerce picks a mode when it
+authorizes each attempt. **Hosted** sends the tab to Stripe. **Embedded** mounts Stripe's full
+form on the page. **Elements** puts Stripe's secure fields into Fiona's own payment panel.
+Staff issue and manage the link from the request workspace. The backend contract is
+fionas-commerce's executable OpenAPI and `docs/stripe-payments-frontend-handoff.md` (including PR #43).
 
 **The frontend presents and initiates payments; it never decides that money was received.**
 Commerce owns access, terms, amounts, authorizations and reconciliation; the ledger owns money.
 
 ## Where code lives
 
-| Concern                                          | File                                                                                   |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| Customer page                                    | `apps/public/src/routes/pay/[publicId=uuid]/`                                          |
-| Page state machine (refresh, checkout, recovery) | `apps/public/src/lib/payments/controller.ts`                                           |
-| Fail-closed view of the summary                  | `apps/public/src/lib/payments/view.ts`                                                 |
-| Contract types and strict readers                | `apps/public/src/lib/payments/contract.ts`                                             |
-| Exact USD cents (BigInt)                         | `apps/public/src/lib/payments/money.ts`                                                |
-| Bearer capture, tab storage, error classes       | `apps/public/src/lib/payments/checkout.ts`                                             |
-| Stripe.js boundary (load, mount, teardown)       | `apps/public/src/lib/payments/embedded.ts`                                             |
-| Embedded payment panel                           | `apps/public/src/lib/components/payments/embedded-checkout.svelte`                     |
-| Customer wording                                 | `apps/public/src/lib/payments/copy.ts`, `$lib/components/payments/`                    |
-| Public payment BFF (the only commerce access)    | `apps/public/src/lib/server/payments/bff.server.ts`, `transport.server.ts`             |
-| BFF routes                                       | `apps/public/src/routes/api/payments/[publicId=uuid]/`                                 |
-| Security headers                                 | `apps/public/src/hooks.server.ts`                                                      |
-| Staff link and attempt client, form action       | `apps/admin/src/lib/server/customer-payments.ts`, `$lib/customer-payments.ts`          |
-| Staff Customer payments card                     | `apps/admin/src/lib/components/requests/customer-payments.svelte`                      |
-| Staff diagnostics refresh endpoint               | `apps/admin/src/routes/(app)/requests/[inquiryId]/customer-payments/+server.ts`        |
-| E2E stubs                                        | `apps/public/e2e/payments/stub-commerce.mjs`, `apps/admin/e2e/payment-access-stub.mjs` |
+| Concern                                          | File                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Customer page                                    | `apps/public/src/routes/pay/[publicId=uuid]/`                                                  |
+| Page state machine (refresh, checkout, recovery) | `apps/public/src/lib/payments/controller.ts`                                                   |
+| Fail-closed view of the summary                  | `apps/public/src/lib/payments/view.ts`                                                         |
+| Contract types and strict readers                | `apps/public/src/lib/payments/contract.ts`                                                     |
+| Exact USD cents (BigInt)                         | `apps/public/src/lib/payments/money.ts`                                                        |
+| Bearer capture, tab storage, error classes       | `apps/public/src/lib/payments/checkout.ts`                                                     |
+| Stripe.js boundaries (load, mount, teardown)     | `apps/public/src/lib/payments/embedded.ts`, `elements.ts`                                      |
+| On-page payment panels                           | `apps/public/src/lib/components/payments/embedded-checkout.svelte`, `elements-checkout.svelte` |
+| Customer wording                                 | `apps/public/src/lib/payments/copy.ts`, `$lib/components/payments/`                            |
+| Public payment BFF (the only commerce access)    | `apps/public/src/lib/server/payments/bff.server.ts`, `transport.server.ts`                     |
+| BFF routes                                       | `apps/public/src/routes/api/payments/[publicId=uuid]/`                                         |
+| Security headers                                 | `apps/public/src/hooks.server.ts`                                                              |
+| Staff link and attempt client, form action       | `apps/admin/src/lib/server/customer-payments.ts`, `$lib/customer-payments.ts`                  |
+| Staff Customer payments card                     | `apps/admin/src/lib/components/requests/customer-payments.svelte`                              |
+| Staff diagnostics refresh endpoint               | `apps/admin/src/routes/(app)/requests/[inquiryId]/customer-payments/+server.ts`                |
+| E2E stubs                                        | `apps/public/e2e/payments/stub-commerce.mjs`, `apps/admin/e2e/payment-access-stub.mjs`         |
 
 ## The stable URL and bearer lifecycle
 
@@ -116,7 +114,7 @@ Content-Security-Policy: frame-ancestors 'none'; frame-src https://js.stripe.com
 
 (`PAYMENT_CSP` in `bff.server.ts`). `frame-ancestors 'none'` stops other sites framing this page;
 it doesn't limit what the page frames. `frame-src` then allows only Stripe's documented frame
-origins: Embedded Checkout and Stripe.js frames, hosted Checkout, and 3D Secure / redirect
+origins for Embedded Checkout and Elements, hosted Checkout, and 3D Secure / redirect
 authentication. The site has no `script-src` or `connect-src` policy today, so Stripe.js (fetched
 only from `https://js.stripe.com`) and its calls to Stripe aren't otherwise restricted. Anyone
 adding one site-wide (or at the CDN/host) must allow at least `script-src https://js.stripe.com
@@ -124,7 +122,7 @@ https://*.js.stripe.com`, `connect-src https://api.stripe.com https://checkout.s
 `img-src https://*.stripe.com` on `/pay`, plus SvelteKit's own inline bootstrap (nonce or hash).
 Railway and the Cloudflare proxy add no CSP today. The page also has robots and referrer meta tags
 and turns off SvelteKit link preloading. The only third-party script that may run here is official
-Stripe.js, and only after commerce opens an embedded attempt; no analytics or service worker.
+Stripe.js, loaded only after commerce opens an on-page attempt. There is no analytics or service worker.
 
 **No JavaScript.** Authorization arrives in the fragment, so the flow needs JavaScript. Without it
 the page shows a branded explanation with the contact email; secrets never move to query strings.
@@ -182,6 +180,7 @@ before sending** (`fionas.pay.{publicId}.checkout`). Double clicks are ignored i
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | 200 OPEN HOSTED with a `https://checkout.stripe.com` URL         | mark the command redirected, navigate this tab (URL never stored)                 |
 | 200 OPEN EMBEDDED with a client secret                           | mark the command redirected, mount Stripe's form here (secret in memory only)     |
+| 200 OPEN ELEMENTS with a client secret                           | mark the command redirected, mount Fiona's panel with Stripe fields               |
 | 200 OPEN HOSTED with a URL off the allowlist                     | refresh; the summary decides (OPEN → "earlier checkout still open")               |
 | 200 unknown `uiMode`, both or neither credential (malformed)     | unknown outcome: keep the command, offer only **Try again** with the same key     |
 | 200 EXPIRED / FAILED                                             | historical replay: forget the command, ask for a new deliberate payment           |
@@ -249,58 +248,54 @@ while a payment is underway and the page is visible, with bounded backoff (2, 3,
 30, 30 s, then four 60 s reads, about six minutes), then offers **Check again**. There is no
 public SSE.
 
-## Embedded Checkout
+## Checkout modes and on-page lifecycle
 
-Embedded Checkout changes where the customer types card details, not who authorizes a payment,
-records money or decides that a booking is paid. Stripe renders every card field, wallet and
-authentication step inside its own iframe; Fiona's page never has a card input.
+Stripe renders card fields, wallets and authentication in its own secure UI for all three modes.
 
-![The /pay page with the embedded payment panel (a fake Stripe form in the e2e suite)](images/embedded-checkout-desktop.png)
-
-**Two response modes.** Each checkout answer names its own immutable `uiMode`, so the page never
-assumes how commerce is currently configured. `readCheckoutResponse` / `checkoutLaunch` in
-`contract.ts`:
+Each checkout answer names its own immutable `uiMode`. The readers in `contract.ts` dispatch on
+the mode stored on the attempt.
 
 | OPEN answer                                                 | Read as                                        |
 | ----------------------------------------------------------- | ---------------------------------------------- |
 | `uiMode: HOSTED` + allowlisted `url`, no `clientSecret`     | navigate this tab (as before)                  |
 | `uiMode: EMBEDDED` + `clientSecret` (any well-formed token) | mount Stripe's form on this page               |
+| `uiMode: ELEMENTS` + `clientSecret` (any well-formed token) | mount Fiona's panel with Stripe Elements       |
 | no `uiMode` + `url`, no `clientSecret` (pre-PR #38 release) | HOSTED, for the deploy overlap only            |
 | unknown mode, both credentials, the wrong one, or neither   | refused (unknown outcome, same-key Try again)  |
 | PROCESSING / SUCCEEDED / EXPIRED / FAILED                   | state and outcome kept; any credential dropped |
 
-EMBEDDED is never inferred. The BFF re-serializes the same reader's output, so the client secret
+The BFF re-serializes the same reader's output, so the client secret
 reaches the browser only in the answer to its own authorized checkout POST; summaries, page loads,
 errors and logs never carry it.
 
-**Starting.** A deliberate Pay click works exactly as before (fresh summary, reviewed terms, one
-saved key and body). On an EMBEDDED answer the tab stays on `/pay/{publicId}`: the action card is
-replaced by **Complete your payment** with the authorized amount and Quote/Invoice revision (from
-the saved command, never a newer summary), Stripe's form, and **Back to booking overview**. Focus
-moves to the panel heading. Stripe.js is requested from `js.stripe.com` only then (`@stripe/stripe-js/pure`
-in a lazily imported chunk), never at page load or during SSR.
+**Starting.** A deliberate Pay click uses a fresh summary, reviewed terms, and one saved key and
+body. An EMBEDDED or ELEMENTS answer replaces the action card on `/pay/{publicId}` with
+**Complete your payment** and moves focus to its heading. Both load official Stripe.js from
+`js.stripe.com` using the lazy `@stripe/stripe-js/pure` loader.
 
 **Client-secret lifecycle.** The controller keeps the secret in its closure and exposes the launch
-as `{ id, attemptId, purpose, amountCents, businessRevision, clientSecret() }`. `clientSecret()`
+with mode, attempt identity, authorized cents, `isCurrent()` and `clientSecret()`. `clientSecret()`
 resolves only while that launch is current and rejects once the form is closed, completed,
-replaced, revoked or the page is disposed, so it serves Stripe's `fetchClientSecret` and nothing
-else. It is never written to sessionStorage, localStorage, cookies, URLs, history, server data,
+replaced, revoked or the page is disposed. It is never written to sessionStorage, localStorage,
+cookies, URLs, history, server data,
 logs or state that could be serialized. A secret needed again is obtained only by resending the
 original key and exact body.
 
 **Saved command.** The sessionStorage command keeps its `phase` literal `redirected` (meaning
 "commerce opened a provider Session", whether or not the tab navigated) so commands survive a
-deploy in either direction, and gains two optional nonsecret fields: `uiMode` and `completing`.
-Commands saved by the previous release (no `uiMode`) read exactly as before.
+deploy across compatible frontend releases. Elements saves the nonsecret commerce `attemptId`
+and uses `completing` to lock a dispatched confirmation. `awaitingSettlement` distinguishes a
+reported completion or provider processing from an unknown outcome. Older Elements commands
+with only `completing` are treated as uncertain and bound to the original attempt by their key.
 
-**One authorization.** While the form is open, Pay, recovery and Try again are no-ops in the
-controller; a remount, summary refresh or Stripe.js callback never sends a command. The Svelte
-component (`embedded-checkout.svelte`, keyed by launch) and `embedded.ts` mount one Stripe
-instance per launch, serialize teardown before any new instance (Stripe allows one per page),
-destroy an initialization that resolves after cleanup unmounted, and ignore late callbacks.
+**One authorization.** While a form is open, ordinary Pay and recovery are blocked. Both panels
+are keyed by launch. Embedded Checkout serializes initialization and teardown because Stripe
+allows one Embedded Checkout per page. Elements destroys its two mounted fields and detaches
+its SDK change handler's receiver. Stripe's Elements SDK does not expose a general destroy or
+unsubscribe method. Disposed launches cannot mount or act on late initialization or confirmation.
 
-**Completion.** Stripe's `onComplete` (commerce sets `redirect_on_completion=if_required`) never
-marks anything paid. The controller removes the form, marks the saved command `completing`, keeps
+**Completion.** Embedded's `onComplete` and a reported Elements completion lead to the same commerce
+summary read. The controller removes the form, marks the saved command `completing`, keeps
 new payments closed, shows **Confirming your payment** / "We're confirming your payment", and
 restarts the bounded summary polling. Only commerce's summary confirms: QUOTED → BOOKED shows
 **Deposit received. Your booking is confirmed.** with the new Invoice and balance; a higher
@@ -315,18 +310,18 @@ to reach the same Session.
 
 **Reloads and returns.** A reload loses the secret by design. With the saved command still open
 the page shows the same notice and **Continue your payment** (same key; nothing is sent on its
-own). A Stripe authentication redirect returns to `?checkout=returned`, which is handled like any
-return: restore the bearer, clean the URL, read the summary, then confirm or keep waiting. After
-`onComplete`, a reload shows confirming rather than offering the form again.
+own). A Stripe authentication redirect returns to `?checkout=returned`. The page restores the
+bearer, cleans the URL and reads the summary. A dispatched Elements confirmation stays locked
+across reloads. The page shows **Confirming your payment** for reported completion and
+**We couldn't confirm your payment status** for an indeterminate result.
 
-**Failures.** A missing or malformed `PUBLIC_STRIPE_PUBLISHABLE_KEY` shows "Online card entry
-isn't available on this page right now" with the contact email. A Stripe.js load or mount failure
-(network, blocker, CSP) shows "We couldn't load the secure payment form" with **Try again**, which
-remounts the same launch. Neither touches the saved command or creates a new authorization;
-Stripe's error text is never logged or shown.
+**Failures.** A missing publishable key or a Stripe.js load or mount failure leaves the saved
+command intact. Embedded offers **Try again** for load and mount failures. Elements offers
+**Check previous payment** to reopen or check the original Session. Provider error text stays
+out of Fiona's UI and logs.
 
-**Mode switches.** An attempt keeps its mode for its lifetime: a hosted attempt still navigates
-after commerce switches to embedded, and an embedded one still mounts after a switch back.
+**Mode switches.** Resuming an existing attempt uses its original presentation. Commerce's
+configured mode only applies when authorizing a new Session.
 
 **Changed terms.** A mounted form stays tied to the authorization that created it. Commerce keeps
 reporting `paymentInProgress` while the original Session is open, even after staff amend the
@@ -352,25 +347,80 @@ destroys the iframe, and the saved command, key, body, amount and revisions stay
 page shows **Your booking's payment details have changed** (derived again on every summary, so it
 stays while the attempt is unresolved and survives reloads) and offers only **Check previous
 payment**. That resends the original key and body so commerce can inspect the Session. If commerce
-answers with the same OPEN embedded Session, its secret is discarded unmounted; EXPIRED/FAILED,
+answers with the same OPEN Session, its secret is discarded unmounted. EXPIRED/FAILED,
 `PAYMENT_TERMS_CHANGED`, recovery and reconciliation answers follow the usual rules. A new payment
 is possible only after the old attempt is resolved, as a fresh reviewed decision with a new key.
 
-| Situation                                    | Page shows                                                      |
-| -------------------------------------------- | --------------------------------------------------------------- |
-| Customer closed the form, terms unchanged    | Your payment is still open → **Continue your payment**          |
-| Accepted summary shows changed terms         | payment details have changed → **Check previous payment**       |
-| Stripe completed, commerce hasn't reconciled | Confirming your payment (no action)                             |
-| No answer to the checkout request            | the existing unknown-outcome wording → **Try again** (same key) |
+| Situation                                         | Page shows                                                      |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| Customer closed the form, terms unchanged         | Your payment is still open → **Continue your payment**          |
+| Accepted summary shows changed terms              | payment details have changed → **Check previous payment**       |
+| Stripe reports completion before commerce settles | Confirming your payment                                         |
+| Elements confirmation is indeterminate            | Payment status uncertain → **Check previous payment**           |
+| No answer to the checkout request                 | the existing unknown-outcome wording → **Try again** (same key) |
 
 If a summary shows the attempt no longer underway (settled, expired, reconciliation) the form is
 removed and the authoritative state shown; a revoked link or disabled payments remove it too. It is
-never replaced automatically. Failed, 5xx or superseded reads change nothing, so a valid form stays
-mounted (Stripe doesn't depend on them), and only the newest accepted summary decides.
+never replaced automatically. A failed summary read leaves the form visible and disables the
+Elements Pay button until a fresh summary arrives. Superseded reads cannot invalidate a form.
 
-**Appearance.** Stripe's form uses the Stripe account's Checkout branding. Set it in the Stripe
-Dashboard to match the page (background `--cream-100` `#f6f1e4`, button/accent `--olive-700`
-`#5f5b40`) for each account and mode; fionas-web can't style the iframe.
+## Elements payment panel
+
+![Fiona's Elements payment panel with mock Stripe fields on desktop](images/checkout-elements-desktop.png)
+
+[Mobile panel with mock fields](images/checkout-elements-mobile.png)
+
+- **Stripe API.** `initCheckoutElementsSdk` uses the authorized Checkout Session secret.
+  `loadActions` provides `getSession`, `validateElements` and `confirm`. The panel mounts a
+  Contact Details Element and a Payment Element. Stripe owns email collection and validation.
+  Fiona's page never copies the entered email into its state, requests or storage. Stripe
+  supplies the methods and any eligible wallets, including their branding and disclosures.
+  [Stripe's Checkout Elements integration](https://docs.stripe.com/payments/accept-a-payment?payment-ui=elements&api-integration=checkout)
+- **Appearance.** The panel uses the shared Fiona's Card, Badge and Button. The Elements
+  Appearance API takes resolved cream, olive, text and error colors, input radius and spacing
+  from the site. `elementsOptions.fonts` supplies the existing Latin Poppins WOFF2 as a
+  `CustomFontSource` so the iframe can load the font without another network origin.
+  Stripe controls field layout and wallet branding. Hosted and Embedded still use Stripe
+  Checkout branding. [Stripe Appearance API](https://docs.stripe.com/elements/appearance-api)
+- **Amount.** Read `total.total.minorUnitsAmount`, `currency` and `minorUnitsAmountDivisor`
+  from Stripe's Session. A positive safe integer in USD with divisor 100 must equal the
+  exact cents pinned in the saved command. The panel displays that verified total, including
+  the selected amount for partial payments. Missing or changed amounts close the fields
+  and leave only same-attempt recovery.
+- **Confirmation.** Both fields must be ready and `canConfirm` true. Pay validates the fields,
+  awaits a fresh commerce summary and rechecks Stripe's total and readiness. The controller
+  checks `authorizationMatches` and records the in-flight marker before
+  `actions.confirm({ redirect: 'if_required' })`. Stripe uses commerce's configured return URL.
+  Validation errors stay in the form before dispatch. The installed Stripe.js types distinguish
+  success, `paymentFailed` and an unclassified error with a null code. An explicit `paymentFailed`
+  on an open Session clears the local lock and keeps the same fields mounted for correction.
+  A reported completion removes the form and waits for commerce's ledger. Null or unfamiliar
+  codes and thrown confirmation errors remove the form, keep the lock and show the uncertainty
+  notice. Both paths refresh and poll the authoritative summary with the existing bounds.
+  [Stripe Checkout confirmation](https://docs.stripe.com/js/custom_checkout/confirm)
+
+### Checking an uncertain Elements confirmation
+
+**Check previous payment** sends one deliberate request with the exact original key and body.
+Commerce retrieves the Stripe Session attached to that key, verifies its identity and
+authorization, and reconciles it. Stripe documents an open Session as one where payment
+processing has yet to start. Only a validated `OPEN` / `PENDING` Elements response for the
+original attempt and a fresh, matching commerce summary allow the controller to clear
+`completing` and mount that same Session. The form verifies Stripe's status and exact USD total
+again, and Pay requires valid fields and `canConfirm`. The customer submits again deliberately.
+[Stripe Checkout Session status](https://docs.stripe.com/api/checkout/sessions/object#checkout_session_object-status)
+
+- `PROCESSING`, `SUCCEEDED` and a previously reported completion keep the form closed. The
+  commerce summary supplies any booking transition or applied balance. The customer can check
+  the same attempt again while settlement remains unresolved.
+- `EXPIRED` or `FAILED` for the original attempt releases the lock. A fresh summary and a new
+  customer decision are required before any replacement authorization.
+- Timeouts, malformed responses and changed terms preserve the key and keep confirmation locked.
+  The status view offers a new deliberate check or contact help. Revoked links follow the
+  existing access rules.
+- The public summary describes the booking and active collection in aggregate. Without applied
+  money or a terminal answer for the original key, an empty active-payment state alone leaves
+  confirmation locked. Recovery needs no new provider-status field or endpoint.
 
 ## Recovery and reconciliation
 
@@ -593,25 +643,29 @@ invalidates the whole page.
 
 ## Configuration and deployment
 
-| App    | Variable                        | Purpose                                                                                                                                                                                     |
-| ------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| public | `COMMERCE_API_URL`              | Commerce origin for the payment BFF only (bare http(s) origin). Unset: payments unavailable                                                                                                 |
-| public | `ORIGIN`                        | adapter-node's public origin; must match the browser's, or checkout POSTs are refused (403)                                                                                                 |
-| public | `PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key for Embedded Checkout (`pk_test_…` / `pk_live_…`), same account and mode as commerce. Runtime (restart, no rebuild). Unset: embedded attempts show a contact message |
-| admin  | `COMMERCE_API_URL`              | Unchanged; the staff link endpoints use it                                                                                                                                                  |
+| App    | Variable                        | Purpose                                                                                                                                        |
+| ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| public | `COMMERCE_API_URL`              | Commerce origin for the payment BFF only (bare http(s) origin). Unset: payments unavailable                                                    |
+| public | `ORIGIN`                        | adapter-node's public origin; must match the browser's, or checkout POSTs are refused (403)                                                    |
+| public | `PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key for Embedded and Elements (`pk_test_…` / `pk_live_…`), same account and mode as commerce. Runtime (restart, no rebuild) |
+| admin  | `COMMERCE_API_URL`              | Unchanged; the staff link endpoints use it                                                                                                     |
 
 The public app holds no Stripe secret or restricted key, webhook secret,
 `FIONAS_PAYMENT_ACCESS_KEY`, staff credential or session; never configure them in fionas-web. The
-publishable key is the only Stripe value here; it is public by design and is needed only once
-commerce opens EMBEDDED attempts (hosted Checkout, the marketing site, `/book` and the admin
-console never use it).
+publishable key is public by design. Stripe.js uses it only for an on-page Checkout.
 
-**Rollout order.** 1) Deploy commerce PR #38 with `FIONAS_STRIPE_CHECKOUT_MODE=hosted` (the
-default). 2) Deploy this frontend with `PUBLIC_STRIPE_PUBLISHABLE_KEY` set; hosted payments are
-unchanged. 3) Switch commerce to `embedded` and verify a new attempt (below). Rolling back to
-`hosted` affects only new attempts; open embedded attempts still mount here, so keep the key set. In commerce, `FIONAS_PUBLIC_BASE_URL` must be this
-public site's exact origin (the one serving `/pay/{publicId}`), so issued links and Stripe return
-URLs point here.
+**Rollout order.**
+
+1. Deploy commerce with PR #43 and keep its current Checkout mode.
+2. Deploy the frontend with all three modes and the existing publishable key. Verify a hosted
+   payment and resume an existing Embedded attempt.
+3. Set commerce's `FIONAS_STRIPE_CHECKOUT_MODE=elements` in Stripe test mode. Start a fresh
+   authorization and complete the acceptance checklist below before enabling it in production.
+4. To roll back the mode, set commerce to `embedded` or `hosted`. Keep the three-mode frontend
+   and the publishable key available so existing Elements Sessions can recover.
+
+`FIONAS_PUBLIC_BASE_URL` in commerce must match the exact public origin serving
+`/pay/{publicId}` so issued links and Stripe return URLs point here.
 
 **Local.** Run commerce on `http://localhost:8080` with `FIONAS_STRIPE_ENABLED=true`,
 `FIONAS_STRIPE_LIVE_MODE=false`, a `sk_test_` key and `FIONAS_PUBLIC_BASE_URL=http://localhost:5173`
@@ -675,6 +729,29 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
    wait for the next poll or **Check again**: the form is removed and the current state shown.
 10. Repeat 2–3 on a phone: no horizontal scrolling; wallet buttons appear where Stripe offers them.
 
+**Elements mode** (commerce `FIONAS_STRIPE_CHECKOUT_MODE=elements` with matching Stripe test keys):
+
+1. Open a new Quote deposit attempt on desktop and mobile. Check that the page displays the
+   exact reviewed USD amount. Verify Poppins loads in both Stripe frames and check focus,
+   narrow-width layout, wallet eligibility on a supported browser and console CSP errors.
+2. Leave email or card details invalid and verify Pay stays disabled. Use the Stripe test
+   card `4242 4242 4242 4242` and a test email. Verify **Confirming your payment** until
+   commerce records the deposit and moves the Quote to BOOKED with an Invoice.
+3. Test a decline and a 3D Secure challenge with Stripe's test cards. Check that a decline
+   leaves the same form available, authentication uses the configured return URL, and
+   settlement still follows the commerce summary. [Stripe test cards](https://docs.stripe.com/testing#cards)
+4. Pay part of an Invoice and check the ledger allocation and remaining balance. Pay the
+   rest with a new reviewed payment and verify the zero balance and payment history.
+5. Close and resume an open form, then reload and continue it again. Verify one attempt
+   and an unchanged key and body. Block Stripe.js and verify recovery opens the same Session.
+6. While a form is mounted, amend the Invoice or revise the deposit. Repeat with a manual
+   payment that reduces the balance below the authorized amount. Verify the form goes away
+   and **Check previous payment** keeps the original authorization. Repeat with revoked access.
+7. Switch back to `embedded` or `hosted`. Resume an open Elements attempt and check that a
+   subsequent new attempt uses the newly configured mode.
+8. Verify the bearer is stripped from the address bar and that the Session secret, test email
+   and payment details stay out of Fiona's storage, URLs, SSR output and logs.
+
 ## Tests
 
 - Public unit: `money.test.ts`, `contract.test.ts` (summary/command/response readers and every
@@ -684,13 +761,15 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
   expired replays), `bff.server.test.ts` (forwarded headers only, no cookies/SERVICE auth, token
   never in URLs, cross-origin/cross-site refusal, body and header validation, whitelisting,
   disabled/unreachable/misconfigured, no secrets in logs, the client secret only in the checkout
-  answer, the CSP), `server-boundary.test.ts`. Embedded: `contract.test.ts` (both modes, legacy
-  hosted, unknown/contradictory/missing credentials, terminal states), `controller.test.ts`
-  (`embedded Checkout`: in-memory secret, duplicate actions, close/continue and reload with the
+  answer, the CSP), `server-boundary.test.ts`. On-page modes: `contract.test.ts` (three modes,
+  legacy hosted, invalid credentials, terminal states), `controller.test.ts`
+  (in-memory secret, duplicate actions, close/continue and reload with the
   same key, mode switching, completion never success, delayed reconciliation, deposit and partial
   Invoice confirmation, removal on settled/revoked/disabled, unknown modes), `embedded.test.ts`
   (publishable keys, one instance at a time, late initialization destroyed, failures by kind) and
   `embedded-checkout.svelte.test.ts` (browser: mount once, focus, cleanup, retry, missing key).
+  `elements.test.ts` covers appearance, both mounts, exact amount and currency checks, readiness,
+  validation, single confirmation, safe errors and late SDK callbacks.
 - Public E2E (`npm run test:e2e:payments --workspace=@fionas/public`; part of `test:e2e`; no
   Docker or NATS), desktop and mobile, against `e2e/payments/stub-commerce.mjs` with
   `checkout.stripe.com` simulated by routed pages: fragment capture and cleanup, security headers,
@@ -699,12 +778,13 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
   same URL, changed terms, confirmation only from the summary, cancelled-but-open resume, pending
   polling, new-browser recovery without loops, same-key ambiguous retry, rapid clicks, staff
   review, CLOSED history, disabled/unreachable backend, unknown codes, cross-origin refusal,
-  keyboard use, no horizontal scroll and the no-JavaScript fallback. `embedded.e2e.ts` routes
-  `js.stripe.com` to a fake Stripe.js (through the real loader) whose iframe also comes from
-  `js.stripe.com`: no Stripe load before Pay, in-page mount, no secret in storage/URL/console/HTML,
+  keyboard use, no horizontal scroll and the no-JavaScript fallback. `on-page-checkout.e2e.ts`
+  routes `js.stripe.com` to a fake Stripe.js through the real loader. It checks that Stripe
+  loads on demand, mounts on the payment page and keeps the client secret out of storage, URLs and HTML.
   completion → confirming → BOOKED, close and continue, reload, Stripe.js load failure and retry,
   mode switches and legacy hosted answers, delayed reconciliation, partial Invoice payments,
-  keyboard focus and mobile width. Set `PAYMENTS_SCREENSHOTS=<dir>` to save panel screenshots.
+  keyboard focus and mobile width. Elements adds declined-card recovery and verifies Poppins
+  loads in the mock fields. Set `PAYMENTS_SCREENSHOTS=<dir>` to save mock panel screenshots.
 - Admin unit: `customer-payments.test.ts` (including reconcile answers for exactly the submitted
   attempt, one POST each, unsupported pairs, ambiguous refusals, a reconcile 409 locking for review
   while link conflicts stay definite), `checkout-attempts.test.ts` (exact amount comparison,
@@ -728,9 +808,9 @@ Follow commerce's operations runbook for Stripe test mode and the webhook listen
 - The Checkout host allowlist is `checkout.stripe.com`; a Stripe custom Checkout domain would need
   adding to `checkoutRedirect`.
 - Polling stops after about six minutes; the customer can **Check again**. There is no public push.
-  `onComplete` restarts the bounded polling once.
-- Embedded Checkout is verified here only against a fake Stripe.js; Stripe's real iframe needs the
-  manual test-mode run above. The site has no `script-src`/`connect-src` CSP (see Headers).
+  On-page completion restarts the bounded polling.
+- Automated checkout tests use mocked Stripe.js. Verify real Stripe iframe typography, wallets
+  and authentication on the deployed HTTPS origin with the manual test-mode checklist.
 - Stripe documents no `client_secret` format, so `isClientSecret` checks structure only: one
   non-empty token of visible ASCII, at most 4,096 characters, never an `sk_`/`rk_` API key. An
   earlier `cs_…[A-Za-z0-9_]` pattern refused real secrets in development (502, "We couldn't

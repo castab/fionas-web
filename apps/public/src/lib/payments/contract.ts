@@ -53,11 +53,16 @@ export type CheckoutCommand = {
 };
 
 /** How commerce presents an attempt. Immutable per attempt: a same-key retry keeps its mode. */
-export type CheckoutUiMode = 'HOSTED' | 'EMBEDDED';
+export type OnPageCheckoutMode = 'EMBEDDED' | 'ELEMENTS';
+export type CheckoutUiMode = 'HOSTED' | OnPageCheckoutMode;
+
+export function isOnPageCheckoutMode(value: unknown): value is OnPageCheckoutMode {
+	return value === 'EMBEDDED' || value === 'ELEMENTS';
+}
 
 /**
  * A validated checkout answer. Only an OPEN attempt carries a launch credential, and exactly the
- * one its `uiMode` names: `url` for HOSTED, `clientSecret` for EMBEDDED. Both are short-lived
+ * one its `uiMode` names: `url` for HOSTED, `clientSecret` for EMBEDDED or ELEMENTS. Both are short-lived
  * credentials: never persisted, logged or put in a URL. `uiMode` is absent only for a non-OPEN
  * answer from a commerce release that predates presentation modes.
  */
@@ -72,7 +77,7 @@ export type CheckoutResponse = {
 
 /** What the page may do with an OPEN attempt: navigate this tab, or mount Stripe's form here. */
 export type CheckoutLaunch =
-	{ mode: 'HOSTED'; url: string } | { mode: 'EMBEDDED'; clientSecret: string };
+	{ mode: 'HOSTED'; url: string } | { mode: OnPageCheckoutMode; clientSecret: string };
 
 export type PaymentError = { code: string; message?: string };
 
@@ -215,10 +220,10 @@ const absent = (value: unknown) => value === undefined || value === null;
 
 /**
  * Reads a checkout answer, failing closed. An OPEN answer must name a known `uiMode` and carry
- * exactly its one credential: a HOSTED url or an EMBEDDED client secret, never both, never the
+ * exactly its one credential: a HOSTED url or an on-page client secret, never both, never the
  * other. Unknown modes and contradictory or incomplete OPEN answers are refused (null). A legacy
  * OPEN answer with no `uiMode` is read as HOSTED only when it carries a url and nothing else;
- * EMBEDDED is never inferred. A non-OPEN answer keeps its state and outcome, and any credential
+ * On-page modes are never inferred. A non-OPEN answer keeps its state and outcome, and any credential
  * on it is dropped: nothing can be launched from it.
  */
 export function readCheckoutResponse(value: unknown): CheckoutResponse | null {
@@ -249,7 +254,7 @@ export function inspectCheckoutResponse(
 	if (typeof attemptId !== 'string' || !UUID.test(attemptId)) return { problem: 'attempt_id' };
 	if (!isEnum(state)) return { problem: 'state' };
 	if (!isEnum(outcome)) return { problem: 'outcome' };
-	if (!(absent(uiMode) || uiMode === 'HOSTED' || uiMode === 'EMBEDDED'))
+	if (!(absent(uiMode) || uiMode === 'HOSTED' || isOnPageCheckoutMode(uiMode)))
 		return { problem: 'ui_mode' };
 	const mode = absent(uiMode) ? undefined : (uiMode as CheckoutUiMode);
 	if (state !== 'OPEN')
@@ -260,11 +265,11 @@ export function inspectCheckoutResponse(
 	if (!(hasSecret || absent(clientSecret))) return { problem: 'client_secret' };
 	if ((mode === 'HOSTED' || mode === undefined) && hasUrl && !hasSecret)
 		return { response: { attemptId, uiMode: 'HOSTED', url: url as string, state, outcome } };
-	if (mode === 'EMBEDDED' && hasSecret && !hasUrl)
+	if (isOnPageCheckoutMode(mode) && hasSecret && !hasUrl)
 		return {
 			response: {
 				attemptId,
-				uiMode: 'EMBEDDED',
+				uiMode: mode,
 				clientSecret: clientSecret as string,
 				state,
 				outcome
@@ -296,10 +301,11 @@ export function checkoutRedirect(response: CheckoutResponse): string | null {
 /** How to present an OPEN attempt, from its own immutable mode; null when it can't be launched. */
 export function checkoutLaunch(response: CheckoutResponse): CheckoutLaunch | null {
 	if (response.state !== 'OPEN') return null;
-	if (response.uiMode === 'EMBEDDED')
-		return isClientSecret(response.clientSecret)
-			? { mode: 'EMBEDDED', clientSecret: response.clientSecret }
+	if (isOnPageCheckoutMode(response.uiMode))
+		return absent(response.url) && isClientSecret(response.clientSecret)
+			? { mode: response.uiMode, clientSecret: response.clientSecret }
 			: null;
+	if (!absent(response.clientSecret)) return null;
 	const url = checkoutRedirect(response);
 	return url ? { mode: 'HOSTED', url } : null;
 }

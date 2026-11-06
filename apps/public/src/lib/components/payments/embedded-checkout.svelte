@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Button, Card, capsSm, cn, hintText } from '@fionas/ui';
 	import { mailtoUrl, site } from '@fionas/shared';
-	import type { EmbeddedLaunch } from '$lib/payments/controller.js';
+	import type { OnPageCheckoutLaunch } from '$lib/payments/controller.js';
 	import {
 		startEmbeddedCheckout,
 		stripeEmbeddedCheckout,
@@ -24,7 +24,7 @@
 		oncomplete,
 		onclose
 	}: {
-		launch: EmbeddedLaunch;
+		launch: OnPageCheckoutLaunch;
 		/** The configured Stripe publishable key, already validated; null when unusable. */
 		publishableKey: string | null;
 		/** Stripe.js boundary, injectable for tests. Defaults to official Stripe.js. */
@@ -57,7 +57,9 @@
 				publishableKey,
 				element,
 				clientSecret: () => current.clientSecret(),
-				onComplete: () => oncomplete(id),
+				onComplete: () => {
+					if (current.isCurrent()) oncomplete(id);
+				},
 				onReady: () => (status = 'ready'),
 				onFailure: (kind) => {
 					failure = kind;

@@ -19,7 +19,7 @@ import { requestCommercePayments, type CommerceResult } from './transport.server
  * no other browser header, cookie or URL is forwarded, and responses are re-serialized from the
  * documented customer-safe fields only.
  *
- * An embedded Checkout's client secret is one of those fields only in the checkout POST answer
+ * An on-page Checkout's client secret is one of those fields only in the checkout POST answer
  * (to the bearer holder who asked for it): summaries, page loads and errors never carry it, and
  * like the hosted URL it is never logged.
  */
@@ -33,8 +33,8 @@ export const PAYMENT_HEADERS = {
 
 /**
  * The payment routes' Content-Security-Policy (set in hooks.server.ts). Nothing may frame the
- * payment page (no clickjacking of the Pay button), and the page may frame only Stripe: Embedded
- * Checkout and Stripe.js's own frames (js.stripe.com), hosted Checkout, and 3D Secure /
+ * payment page (no clickjacking of the Pay button), and the page may frame only Stripe:
+ * Embedded Checkout, Elements and Stripe.js's own frames, hosted Checkout, and 3D Secure /
  * redirect-based authentication (hooks.stripe.com), per Stripe's documented CSP. The site sets
  * no script-src or connect-src today, so Stripe.js (requested from https://js.stripe.com only)
  * and its API calls aren't restricted further; see docs/customer-payments.md before adding one.

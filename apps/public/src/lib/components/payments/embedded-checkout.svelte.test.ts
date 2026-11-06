@@ -1,20 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import type { EmbeddedLaunch } from '$lib/payments/controller.js';
+import type { OnPageCheckoutLaunch } from '$lib/payments/controller.js';
 import type { EmbeddedFactory } from '$lib/payments/embedded.js';
 import { embeddedSecret } from '$lib/payments/testing/fixtures.js';
 import EmbeddedCheckout from './embedded-checkout.svelte';
 
 const key = 'pk_test_51FionasTestKey0123456789';
 
-function launch(overrides: Partial<EmbeddedLaunch> = {}): EmbeddedLaunch {
+function launch(overrides: Partial<OnPageCheckoutLaunch> = {}): OnPageCheckoutLaunch {
 	return {
 		id: 1,
+		mode: 'EMBEDDED',
 		attemptId: '5d0b8f8e-29c4-4d6e-9f63-0b9b4f1d2a77',
 		purpose: 'DEPOSIT',
 		amountCents: 24000n,
 		businessRevision: 4,
+		isCurrent: () => true,
 		clientSecret: () => Promise.resolve(embeddedSecret),
 		...overrides
 	};

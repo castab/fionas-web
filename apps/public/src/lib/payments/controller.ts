@@ -7,6 +7,7 @@
  */
 import {
 	checkoutLaunch,
+	isOnPageCheckoutMode,
 	readCheckoutResponse,
 	readPaymentError,
 	readPaymentSummary,
@@ -14,6 +15,7 @@ import {
 	type CheckoutCommand,
 	type CheckoutUiMode,
 	type CustomerPaymentSummary,
+	type OnPageCheckoutMode,
 	type PaymentError
 } from './contract.js';
 import {
@@ -32,11 +34,12 @@ export type NoticeKind =
 	| 'deposit-confirmed'
 	| 'payment-received'
 	| 'confirming'
+	| 'confirmation-uncertain'
 	| 'checkout-cancelled-open'
 	| 'checkout-not-completed'
 	| 'checkout-expired'
-	| 'embedded-closed'
-	| 'embedded-invalidated'
+	| 'checkout-closed'
+	| 'checkout-invalidated'
 	| 'refresh-failed'
 	| Exclude<CheckoutFailure, 'link-unavailable' | 'payments-disabled'>;
 
@@ -58,8 +61,9 @@ export type PendingCheckout = {
 	blocked: boolean;
 	/** How commerce presented the opened attempt, when known. */
 	uiMode: CheckoutUiMode | null;
-	/** Stripe.js reported an embedded completion; commerce has not confirmed it yet. */
+	/** Confirmation started or Stripe reported completion; commerce has yet to confirm it. */
 	completing: boolean;
+	confirmationUncertain: boolean;
 	/**
 	 * The latest accepted summary no longer matches the terms this opened attempt was authorized
 	 * for (see `authorizationMatches`). Its form is never shown again; only a same-key check is
@@ -107,20 +111,22 @@ export function authorizationMatches(
 }
 
 /**
- * An open embedded Checkout to show on this page. The client secret is not a field: it stays in
+ * An open Checkout to show on this page. The client secret stays in
  * the controller's closure, and `clientSecret()` hands it to Stripe.js only while this launch is
  * current (it rejects once the form was closed, completed, replaced or revoked). Nothing here can
  * be serialized into a credential, so state snapshots, logs or devtools copies never carry it.
  */
-export type EmbeddedLaunch = {
+export type OnPageCheckoutLaunch = {
 	/** Distinct per launch: re-rendering the same launch never creates another Session. */
 	readonly id: number;
+	readonly mode: OnPageCheckoutMode;
 	readonly attemptId: string;
 	readonly purpose: 'DEPOSIT' | 'INVOICE';
 	/** The amount this Session was authorized for (from the command, never a newer summary). */
 	readonly amountCents: bigint;
 	/** The Quote/Invoice revision the customer reviewed for this Session. */
 	readonly businessRevision: number;
+	isCurrent(): boolean;
 	clientSecret(): Promise<string>;
 };
 
@@ -134,8 +140,8 @@ export type PageState = {
 	polling: 'idle' | 'active' | 'exhausted';
 	/** False when sessionStorage is unavailable: leaving the page loses the link for this tab. */
 	persistent: boolean;
-	/** Stripe's embedded form, shown in place of the payment actions while it is open. */
-	embedded: EmbeddedLaunch | null;
+	/** The on-page Checkout, shown in place of the payment actions while it is open. */
+	checkout: OnPageCheckoutLaunch | null;
 	/**
 	 * The summary was read successfully just now and may back a new payment decision. A summary
 	 * kept on screen after a failed refresh is display-only; so is one older than five minutes
@@ -190,8 +196,8 @@ export const MAX_SUMMARY_AGE_MS = 5 * 60_000;
 const IN_FLIGHT: NoticeKind[] = [
 	'confirming',
 	'checkout-cancelled-open',
-	'embedded-closed',
-	'embedded-invalidated',
+	'checkout-closed',
+	'checkout-invalidated',
 	'checkout-open',
 	'processing'
 ];
@@ -225,8 +231,8 @@ export function createPaymentController(deps: ControllerDeps) {
 	let pollIndex = 0;
 	let pollDue = false;
 	let unsubscribe: (() => void) | null = null;
-	/** The open embedded launch and its client secret: memory only, never persisted or emitted. */
-	let launch: { public: EmbeddedLaunch; secret: string } | null = null;
+	/** The open launch and its client secret: memory only, never persisted or emitted. */
+	let launch: { public: OnPageCheckoutLaunch; secret: string } | null = null;
 	let launchCount = 0;
 	let state: PageState = {
 		phase: 'initializing',
@@ -237,7 +243,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		pending: null,
 		polling: 'idle',
 		persistent: store.persistent,
-		embedded: null,
+		checkout: null,
 		summaryFresh: false,
 		paymentUncertain: false
 	};
@@ -289,32 +295,47 @@ export function createPaymentController(deps: ControllerDeps) {
 					blocked: stored.blocked === true,
 					uiMode: stored.uiMode ?? null,
 					completing: stored.completing === true,
+					confirmationUncertain: uncertainConfirmation(stored),
 					termsChanged:
-						!!summary && stored.phase === 'redirected' && !authorizationMatches(stored, summary)
+						!!summary &&
+						(stored.phase === 'redirected' || lockedElements(stored)) &&
+						!authorizationMatches(stored, summary)
 				}
 			: null;
 	}
 
-	/** Shows Stripe's embedded form for this tab's opened command, holding its secret in memory. */
-	function openEmbedded(stored: StoredCheckout, attemptId: string, secret: string) {
+	const lockedElements = (stored: StoredCheckout) =>
+		stored.uiMode === 'ELEMENTS' && stored.completing === true;
+	const uncertainConfirmation = (stored: StoredCheckout) =>
+		lockedElements(stored) && !stored.awaitingSettlement;
+
+	function openCheckout(
+		stored: StoredCheckout,
+		attemptId: string,
+		mode: OnPageCheckoutMode,
+		secret: string
+	) {
 		const id = ++launchCount;
-		const embedded: EmbeddedLaunch = {
+		const isCurrent = () => launch?.public.id === id && !disposed;
+		const checkout: OnPageCheckoutLaunch = {
 			id,
+			mode,
 			attemptId,
 			purpose: stored.purpose,
 			amountCents: BigInt(stored.amountCents),
 			businessRevision: stored.command.expectedBusinessRevision,
+			isCurrent,
 			clientSecret: () =>
 				launch?.public.id === id && !disposed
 					? Promise.resolve(launch.secret)
 					: Promise.reject(new Error('This payment form is no longer active.'))
 		};
-		launch = { public: embedded, secret };
-		return embedded;
+		launch = { public: checkout, secret };
+		return checkout;
 	}
 
 	/** Forgets the client secret so the form unmounts. The saved command (and Session) remain. */
-	function discardEmbedded() {
+	function discardCheckout() {
 		launch = null;
 	}
 
@@ -347,36 +368,45 @@ export function createPaymentController(deps: ControllerDeps) {
 		const matches = stored !== null && authorizationMatches(stored, summary);
 		let derived: NoticeKind | null = null;
 		let pending: PendingCheckout | null = null;
-		if (stored?.blocked) {
+		if (stored?.blocked && !lockedElements(stored)) {
 			pending = pendingOf(stored, false);
 			derived = 'key-reused';
-		} else if (stored?.phase === 'sending') {
+		} else if (stored?.phase === 'sending' && !lockedElements(stored)) {
 			// Unknown only when no request for it is in flight (a background read during a send is not).
 			pending = pendingOf(stored, !sending);
 			derived = sending ? null : 'ambiguous';
-		} else if (stored?.phase === 'redirected') {
+		} else if (stored) {
 			if (summary.paymentInProgress) {
 				pending = pendingOf(stored, false, summary);
-				derived =
-					launch && matches
-						? null // The customer is still in Stripe's form on this page.
-						: returned === 'cancelled'
-							? 'checkout-cancelled-open'
-							: returned === 'returned' || stored.completing || stored.uiMode !== 'EMBEDDED'
-								? 'confirming'
-								: matches
-									? 'embedded-closed'
-									: 'embedded-invalidated';
+				if (launch && matches) derived = null;
+				else if (isOnPageCheckoutMode(stored.uiMode) && !matches) derived = 'checkout-invalidated';
+				else if (uncertainConfirmation(stored)) derived = 'confirmation-uncertain';
+				else if (returned === 'cancelled') derived = 'checkout-cancelled-open';
+				else if (
+					returned === 'returned' ||
+					stored.completing ||
+					!isOnPageCheckoutMode(stored.uiMode)
+				)
+					derived = 'confirming';
+				else derived = 'checkout-closed';
 			} else {
-				// The attempt is no longer active: commerce has settled, expired or failed it.
 				derived = outcomeNotice(stored, summary);
-				store.forgetCheckout();
+				if (
+					lockedElements(stored) &&
+					derived === 'checkout-not-completed' &&
+					view.kind !== 'reconciliation'
+				) {
+					// The summary has no per-attempt status. Require the original key's terminal
+					// response when it shows neither applied money nor an active payment.
+					pending = pendingOf(stored, false, summary);
+					derived = 'confirmation-uncertain';
+				} else store.forgetCheckout();
 			}
 		}
-		// The embedded form stays only while commerce still shows this tab's attempt underway on the
+		// The form stays only while commerce still shows this tab's attempt underway on the
 		// terms it was authorized for: a settled, expired, amended, partly paid or otherwise changed
 		// authorization is never left mounted. The saved command (and its key) stay for recovery.
-		if (launch && (view.kind !== 'in-progress' || !store.checkout() || !matches)) discardEmbedded();
+		if (launch && (view.kind !== 'in-progress' || !store.checkout() || !matches)) discardCheckout();
 		// An action's own result wins; a background read keeps the current notice unless the stored
 		// checkout says something newer. In-flight wording never outlives the payment it describes.
 		let notice = explicit !== undefined ? (explicit ?? derived) : (derived ?? state.notice);
@@ -392,10 +422,14 @@ export function createPaymentController(deps: ControllerDeps) {
 			view,
 			notice,
 			pending,
-			embedded: launch?.public ?? null,
+			checkout: launch?.public ?? null,
 			summaryFresh: true
 		});
-		if (view.kind === 'in-progress') startPolling();
+		if (
+			view.kind === 'in-progress' ||
+			(pending?.completing && pending.uiMode === 'ELEMENTS' && view.kind !== 'reconciliation')
+		)
+			startPolling();
 		else stopPolling('idle');
 	}
 
@@ -451,8 +485,8 @@ export function createPaymentController(deps: ControllerDeps) {
 	}
 
 	/** Waits for the latest summary read, following any that supersede it, to its own outcome. */
-	async function settledRefresh(): Promise<RefreshOutcome> {
-		let outcome = await refresh();
+	async function settledRefresh(notice?: NoticeKind | null): Promise<RefreshOutcome> {
+		let outcome = await refresh(notice);
 		while (outcome === 'superseded' && !disposed) outcome = await latestRead;
 		return outcome;
 	}
@@ -475,7 +509,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		token = null;
 		store.forgetToken();
 		store.forgetCheckout();
-		discardEmbedded();
+		discardCheckout();
 		stopPolling('idle');
 		emit({
 			phase: 'link-unavailable',
@@ -483,19 +517,19 @@ export function createPaymentController(deps: ControllerDeps) {
 			view: null,
 			notice: null,
 			pending: null,
-			embedded: null,
+			checkout: null,
 			summaryFresh: false
 		});
 	}
 
 	function paymentsDisabled() {
 		stopPolling('idle');
-		discardEmbedded();
+		discardCheckout();
 		emit({
 			phase: 'payments-disabled',
 			notice: null,
 			busy: null,
-			embedded: null,
+			checkout: null,
 			summaryFresh: false
 		});
 	}
@@ -601,20 +635,100 @@ export function createPaymentController(deps: ControllerDeps) {
 		return latest;
 	}
 
+	/** Resolve a dispatched confirmation with one deliberate, same-key provider check. */
+	async function finishConfirmationCheck(stored: StoredCheckout, result: FetchResult) {
+		if (!result.ok && result.status === 404) return linkUnavailable();
+		if (store.checkout()?.key !== stored.key) return;
+		if (!result.ok && classifyCheckoutFailure(result.status, result.error) === 'key-reused') {
+			store.saveCheckout({ ...stored, blocked: true });
+			await settledRefresh('confirmation-uncertain');
+			return;
+		}
+		const response = result.ok ? readCheckoutResponse(result.body) : null;
+		if (
+			!response ||
+			response.uiMode !== 'ELEMENTS' ||
+			(stored.attemptId !== undefined && response.attemptId !== stored.attemptId)
+		) {
+			await settledRefresh('confirmation-uncertain');
+			return;
+		}
+		if (
+			response.outcome === 'PENDING' &&
+			(response.state === 'EXPIRED' || response.state === 'FAILED')
+		) {
+			store.forgetCheckout();
+			await settledRefresh('checkout-expired');
+			return;
+		}
+		if (
+			(response.state === 'PROCESSING' && response.outcome === 'PENDING') ||
+			(response.state === 'SUCCEEDED' &&
+				['APPLIED', 'RECONCILIATION_REQUIRED'].includes(response.outcome))
+		) {
+			store.saveCheckout({
+				...stored,
+				phase: 'redirected',
+				attemptId: response.attemptId,
+				awaitingSettlement: true
+			});
+			await settledRefresh(null);
+			return;
+		}
+		const recovered = checkoutLaunch(response);
+		const outcome = await settledRefresh(null);
+		const summary = state.summary;
+		if (
+			!recovered ||
+			recovered.mode !== 'ELEMENTS' ||
+			response.outcome !== 'PENDING' ||
+			stored.awaitingSettlement ||
+			disposed ||
+			outcome !== 'applied' ||
+			summaryInFlight() ||
+			!state.summaryFresh ||
+			!summary?.paymentInProgress ||
+			state.view?.kind !== 'in-progress' ||
+			!authorizationMatches(stored, summary) ||
+			store.checkout()?.key !== stored.key
+		)
+			return;
+
+		const resumed: StoredCheckout = {
+			...stored,
+			phase: 'redirected',
+			attemptId: response.attemptId,
+			completing: undefined
+		};
+		store.saveCheckout(resumed);
+		returned = null;
+		const checkout = openCheckout(
+			resumed,
+			response.attemptId,
+			recovered.mode,
+			recovered.clientSecret
+		);
+		emit({ notice: null, checkout, pending: pendingOf(resumed, false) });
+	}
+
 	/** Sends one stored command, retrying only the identical key/body after an ambiguous result. */
 	async function send(stored: StoredCheckout, fresh = false) {
-		// An open embedded form already holds this tab's only authorization.
+		// An open form already holds this tab's only authorization.
 		if (sending || disposed || !token || launch) return;
 		sending = true;
+		const checkingConfirmation = lockedElements(stored);
 		const sendingCommand: StoredCheckout = {
 			...stored,
 			phase: 'sending',
 			blocked: undefined,
-			completing: undefined
+			completing: stored.uiMode === 'ELEMENTS' ? stored.completing : undefined
 		};
 		// Persisted before transmission: a lost response or closed tab can only resend this.
-		store.saveCheckout(sendingCommand);
-		emit({ busy: 'submitting', pending: pendingOf(sendingCommand, false), notice: null });
+		if (!checkingConfirmation) store.saveCheckout(sendingCommand);
+		emit({
+			busy: 'submitting',
+			...(checkingConfirmation ? {} : { pending: pendingOf(sendingCommand, false), notice: null })
+		});
 		const body = serializeCommand(sendingCommand.command);
 		let result: FetchResult;
 		let unknownEarlier = false;
@@ -633,13 +747,24 @@ export function createPaymentController(deps: ControllerDeps) {
 				},
 				CHECKOUT_TIMEOUT_MS
 			);
-			if (disposed) return;
+			if (disposed || !token) return;
 			const retryable =
-				!result.ok && classifyCheckoutFailure(result.status, result.error) === 'ambiguous';
+				!checkingConfirmation &&
+				!result.ok &&
+				classifyCheckoutFailure(result.status, result.error) === 'ambiguous';
 			if (!retryable || attempt >= retryDelays.length) break;
 			unknownEarlier = true;
 			await wait(retryDelays[attempt]);
 			if (disposed) return;
+		}
+		if (checkingConfirmation) {
+			try {
+				await finishConfirmationCheck(stored, result);
+			} finally {
+				sending = false;
+				if (state.busy === 'submitting') emit({ busy: null });
+			}
+			return;
 		}
 		sending = false;
 		if (result.ok) {
@@ -650,7 +775,8 @@ export function createPaymentController(deps: ControllerDeps) {
 			const opened: StoredCheckout = {
 				...sendingCommand,
 				phase: 'redirected',
-				...(response?.uiMode && { uiMode: response.uiMode })
+				...(response?.uiMode && { uiMode: response.uiMode }),
+				...(response?.uiMode === 'ELEMENTS' && { attemptId: response.attemptId })
 			};
 			if (launchable?.mode === 'HOSTED') {
 				store.saveCheckout(opened);
@@ -658,17 +784,27 @@ export function createPaymentController(deps: ControllerDeps) {
 				deps.navigate(launchable.url);
 				return;
 			}
-			if (response && launchable?.mode === 'EMBEDDED') {
+			if (response && launchable && isOnPageCheckoutMode(launchable.mode)) {
 				// The customer stays here. Only nonsecret metadata is saved; the secret stays in memory.
 				store.saveCheckout(opened);
 				// A same-key check of an authorization the latest summary already showed stale reaches
 				// the original Session, but its form is never shown again: the secret is dropped here.
-				if (state.summary && !authorizationMatches(opened, state.summary)) {
+				if (
+					opened.completing ||
+					state.phase !== 'ready' ||
+					!state.summary ||
+					!authorizationMatches(opened, state.summary)
+				) {
 					emit({ busy: null });
 					return refresh(null);
 				}
-				const embedded = openEmbedded(opened, response.attemptId, launchable.clientSecret);
-				emit({ busy: null, notice: null, embedded, pending: pendingOf(opened, false) });
+				const checkout = openCheckout(
+					opened,
+					response.attemptId,
+					launchable.mode,
+					launchable.clientSecret
+				);
+				emit({ busy: null, notice: null, checkout, pending: pendingOf(opened, false) });
 				return refresh(null);
 			}
 			emit({ busy: null });
@@ -685,10 +821,20 @@ export function createPaymentController(deps: ControllerDeps) {
 		const failure = classifyCheckoutFailure(result.status, result.error);
 		// Disabled payments are refused before commerce looks at the key, so they say nothing about
 		// an earlier send of this command: only a brand-new command refused at once is discarded.
-		const keep =
-			keepsCommand(failure) || (failure === 'payments-disabled' && (!fresh || unknownEarlier));
-		if (!keep) store.forgetCheckout();
 		if (failure === 'key-reused') store.saveCheckout({ ...sendingCommand, blocked: true });
+		else if (
+			stored.uiMode === 'ELEMENTS' &&
+			stored.phase === 'redirected' &&
+			!keepsCommand(failure)
+		)
+			// A refused check does not resolve an already opened Session. Let the summary decide
+			// when it is safe to release the command.
+			store.saveCheckout(stored);
+		else if (
+			!keepsCommand(failure) &&
+			!(failure === 'payments-disabled' && (!fresh || unknownEarlier))
+		)
+			store.forgetCheckout();
 		if (failure === 'link-unavailable') return linkUnavailable();
 		if (failure === 'payments-disabled') return paymentsDisabled();
 		return refresh(failure);
@@ -745,34 +891,83 @@ export function createPaymentController(deps: ControllerDeps) {
 			await send(stored);
 		},
 		/**
-		 * Stripe.js reported that the embedded Checkout completed. That never proves payment: the
+		 * Preflight for the custom Pay button. Always check commerce again before asking Stripe to
+		 * confirm, following any concurrent summary read to the latest accepted result.
+		 */
+		async prepareConfirmation(id: number) {
+			if (disposed || launch?.public.id !== id || launch.public.mode !== 'ELEMENTS') return false;
+			return (await settledRefresh()) === 'applied' && launch?.public.id === id;
+		},
+		/** The last synchronous gate before calling Stripe. Persist uncertainty before dispatch. */
+		beginConfirmation(id: number) {
+			const stored = store.checkout();
+			if (
+				disposed ||
+				launch?.public.id !== id ||
+				launch.public.mode !== 'ELEMENTS' ||
+				!stored ||
+				stored.completing ||
+				!state.summaryFresh ||
+				summaryInFlight() ||
+				!state.summary ||
+				state.view?.kind !== 'in-progress' ||
+				now() - loadedAt > MAX_SUMMARY_AGE_MS ||
+				!authorizationMatches(stored, state.summary)
+			)
+				return false;
+			store.saveCheckout({ ...stored, completing: true });
+			return true;
+		},
+		/** Stripe returned a buyer error; the same mounted Session can accept corrected details. */
+		confirmationRetryable(id: number) {
+			if (disposed || launch?.public.id !== id) return;
+			const stored = store.checkout();
+			if (stored?.completing) store.saveCheckout({ ...stored, completing: undefined });
+		},
+		/**
+		 * Stripe reported completion or confirmation was interrupted. The
 		 * form is removed, new payments stay closed, and the page waits (with fresh bounded
 		 * polling) until commerce's summary shows the applied payment.
 		 */
-		embeddedComplete(id: number) {
+		checkoutComplete(id: number, outcome: 'submitted' | 'uncertain' = 'submitted') {
 			if (disposed || launch?.public.id !== id) return;
-			discardEmbedded();
+			discardCheckout();
 			const stored = store.checkout();
-			if (stored) store.saveCheckout({ ...stored, completing: true });
+			if (stored)
+				store.saveCheckout({
+					...stored,
+					completing: true,
+					...(stored.uiMode === 'ELEMENTS' &&
+						outcome === 'submitted' && { awaitingSettlement: true })
+				});
+			const notice = outcome === 'uncertain' ? 'confirmation-uncertain' : 'confirming';
 			stopPolling('idle');
-			emit({ embedded: null, notice: 'confirming', pending: pendingOf(store.checkout(), false) });
-			void refresh('confirming');
+			emit({ checkout: null, notice, pending: pendingOf(store.checkout(), false) });
+			void refresh(outcome === 'uncertain' ? null : notice);
 		},
 		/**
 		 * Back to the booking overview. Closing the form neither cancels nor expires the Session
 		 * and proves nothing about money: the saved command stays, and continuing resends that
 		 * same key and body to reach the same Session.
 		 */
-		closeEmbedded() {
-			if (disposed || !launch) return;
-			discardEmbedded();
-			emit({ embedded: null });
+		closeCheckout(id?: number) {
+			if (disposed || !launch || (id !== undefined && launch.public.id !== id)) return;
+			discardCheckout();
+			emit({ checkout: null });
 			void refresh(null);
+		},
+		/** An unavailable Elements form can only check its own saved authorization. */
+		async checkCheckout(id: number) {
+			const stored = store.checkout();
+			if (disposed || launch?.public.id !== id || !stored || stored.blocked) return;
+			discardCheckout();
+			emit({ checkout: null });
+			await send(stored);
 		},
 		/** Deliberately abandons a blocked command and reviews the current terms again. */
 		async startOver() {
 			const stored = store.checkout();
-			if (!stored?.blocked || sending) return;
+			if (!stored?.blocked || lockedElements(stored) || sending) return;
 			store.forgetCheckout();
 			await refresh(null);
 		},
@@ -784,7 +979,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		},
 		dispose() {
 			disposed = true;
-			discardEmbedded();
+			discardCheckout();
 			abort.abort();
 			if (pollTimer !== null) clearTimer(pollTimer);
 			unsubscribe?.();
