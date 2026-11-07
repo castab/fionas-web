@@ -57,8 +57,8 @@ export function noticeCopy(
 		case 'checkout-cancelled-open':
 			return {
 				tone: 'info',
-				title: 'Checkout was cancelled',
-				body: 'That checkout may stay open for a little while. You can go back to it below, or wait for it to expire before starting a new payment.'
+				title: 'You returned from checkout',
+				body: 'Your previous checkout may still be open. Review your payment options below.'
 			};
 		case 'checkout-closed':
 			// The form was closed or the page reloaded: the Session may still be open, and the
@@ -80,8 +80,8 @@ export function noticeCopy(
 		case 'checkout-not-completed':
 			return {
 				tone: 'info',
-				title: "Your last checkout wasn't completed",
-				body: "It doesn't show as paid on your booking. Review your balance below whenever you're ready, and contact us if anything looks off.",
+				title: 'Review your current payment status',
+				body: 'Check your balance and payment history below. Contact us if anything looks off.',
 				contact: true
 			};
 		case 'checkout-expired':
@@ -123,8 +123,34 @@ export function noticeCopy(
 				body: 'Something went wrong with this payment request. Start over to review your current balance.',
 				contact: true
 			};
-		case 'reconciliation-pending':
+		case 'restart-key-reused':
+			return {
+				tone: 'error',
+				title: "We couldn't confirm this checkout request",
+				body: 'Contact us to check your previous payment before you pay again.',
+				contact: true
+			};
+		case 'restart-changed':
+			return {
+				tone: 'warning',
+				title: 'Your checkout details have changed',
+				body: 'Review your current amount and payment options below before continuing.'
+			};
+		case 'restart-storage-unavailable':
+			return {
+				tone: 'warning',
+				title: "We couldn't save your checkout request",
+				body: 'Reopen your link in a browser that lets this page remember your payment, or contact us.',
+				contact: true
+			};
 		case 'reconciliation-required':
+			return {
+				tone: 'warning',
+				title: "We couldn't confirm the previous checkout status",
+				body: STATUS_UNKNOWN_MESSAGE,
+				contact: true
+			};
+		case 'reconciliation-pending':
 			return {
 				tone: 'warning',
 				title: 'A payment needs staff review',
@@ -135,7 +161,7 @@ export function noticeCopy(
 			return {
 				tone: 'info',
 				title: 'An earlier checkout is still open',
-				body: 'If you still have it open, you can finish there. Otherwise it expires on its own within about an hour; check back after that.'
+				body: 'Review your payment options below. If the status stays unclear, contact us for help.'
 			};
 		case 'processing':
 			return {

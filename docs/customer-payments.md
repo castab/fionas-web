@@ -75,7 +75,8 @@ Exactly two narrow endpoints, not a proxy. Before any commerce call the BFF vali
 exactly one 43-character `X-Fionas-Payment-Token`, and (POST) a same-origin `Origin`,
 `Sec-Fetch-Site` when present, `application/json`, an `Idempotency-Key` of 1–128
 `[A-Za-z0-9_-]`, a body of at most 1 KiB, and a command of exactly `expectedDocumentVersion`,
-`expectedBusinessRevision` and optional integer `amountMinor` (50–99,999,999). Anything else
+`expectedBusinessRevision`, optional integer `amountMinor` (50–99,999,999), and optional opaque
+`restartToken`. Anything else
 (currency, totals, purpose, terms, proposal ids) is refused. The command is re-serialized
 canonically.
 
@@ -131,17 +132,17 @@ the page shows a branded explanation with the contact email; secrets never move 
 
 `paymentView(summary)` derives what the customer can do; anything unknown fails closed:
 
-| Summary                                                            | View             | Action                                  |
-| ------------------------------------------------------------------ | ---------------- | --------------------------------------- |
-| QUOTED, DEPOSIT, QUOTE, canPay                                     | `deposit-due`    | Pay the exact deposit (no amount input) |
-| BOOKED/SERVED, INVOICE, INVOICE, canPay                            | `balance-due`    | Pay the balance, or a different amount  |
-| `paymentInProgress`                                                | `in-progress`    | Wait (polled); optional recovery check  |
-| `reconciliationPending`                                            | `reconciliation` | Contact staff; no collection            |
-| `NO_PAYMENT_DUE`                                                   | `no-balance`     | Paid up, or a credit                    |
-| `CLOSED`                                                           | `closed`         | Read-only history                       |
-| `BELOW_STRIPE_MINIMUM` / deposit `ABOVE_STRIPE_MAXIMUM`            | `staff-assist`   | Contact staff                           |
-| `NOT_PUBLISHED`                                                    | `not-ready`      | Wait for the quote                      |
-| `UNSUPPORTED_CURRENCY`, unknown reason/lifecycle/mode, incoherence | `unavailable`    | Contact staff                           |
+| Summary                                                            | View             | Action                                      |
+| ------------------------------------------------------------------ | ---------------- | ------------------------------------------- |
+| QUOTED, DEPOSIT, QUOTE, canPay                                     | `deposit-due`    | Pay the exact deposit (no amount input)     |
+| BOOKED/SERVED, INVOICE, INVOICE, canPay                            | `balance-due`    | Pay the balance, or a different amount      |
+| `paymentInProgress`                                                | `in-progress`    | Wait (polled); optional recovery or restart |
+| `reconciliationPending`                                            | `reconciliation` | Contact staff; no collection                |
+| `NO_PAYMENT_DUE`                                                   | `no-balance`     | Paid up, or a credit                        |
+| `CLOSED`                                                           | `closed`         | Read-only history                           |
+| `BELOW_STRIPE_MINIMUM` / deposit `ABOVE_STRIPE_MAXIMUM`            | `staff-assist`   | Contact staff                               |
+| `NOT_PUBLISHED`                                                    | `not-ready`      | Wait for the quote                          |
+| `UNSUPPORTED_CURRENCY`, unknown reason/lifecycle/mode, incoherence | `unavailable`    | Contact staff                               |
 
 Page phases around it: initializing, link required, link incomplete, link unavailable, backend
 unreachable (with Try again) and online payments unavailable. Busy states (`submitting`,
@@ -176,6 +177,9 @@ generates one `crypto.randomUUID()` key, and **saves the key and exact body in s
 before sending** (`fionas.pay.{publicId}.checkout`). Double clicks are ignored in the controller
 (not only by disabling the button), and while a saved command exists the ordinary Pay is hidden.
 
+These results describe ordinary checkout. The restart-specific rules are in
+[Customer-initiated checkout restart](#customer-initiated-checkout-restart).
+
 | Result                                                           | Handling                                                                          |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | 200 OPEN HOSTED with a `https://checkout.stripe.com` URL         | mark the command redirected, navigate this tab (URL never stored)                 |
@@ -202,7 +206,7 @@ request timed out.
 
 **Fresh summaries only.** `summaryFresh` separates a summary kept on screen for reading from one
 that may back a new financial decision. It is true only after the latest read succeeded; a failed
-refresh keeps the figures visible but disables Pay and fresh-key recovery behind **We couldn't
+refresh keeps the figures visible but disables Pay, fresh-key recovery, and restart behind **We couldn't
 confirm your current balance, so paying is paused** with **Check again**. A summary older than five
 minutes (`MAX_SUMMARY_AGE_MS`) is re-read when the customer clicks Pay: unchanged terms proceed in
 the same click; changed terms (document version, business revision, purpose or amount) stop with
@@ -471,17 +475,48 @@ redirected command, the page offers a separate **Check previous payment and cont
   currently reviewed versions (and, for an Invoice, the chosen amount). Commerce checks the old
   Session first and authorizes a replacement only after confirmed expiry/failure.
 
-| Recovery code                      | Customer sees                                                    |
-| ---------------------------------- | ---------------------------------------------------------------- |
-| `checkout_in_progress`             | An earlier checkout is still open (expires within about an hour) |
-| `payment_processing`               | A payment is being confirmed; don't start another                |
-| `payment_state_changed`            | An earlier payment was recorded; review the new balance          |
-| `checkout_recovery_conflict`       | Status just changed; review and retry deliberately               |
-| `checkout_reconciliation_required` | A payment needs staff review; contact us                         |
+| Recovery code                      | Customer sees                                                   |
+| ---------------------------------- | --------------------------------------------------------------- |
+| `checkout_in_progress`             | An earlier checkout is still open. Review the available options |
+| `payment_processing`               | A payment is being confirmed; don't start another               |
+| `payment_state_changed`            | An earlier payment was recorded; review the new balance         |
+| `checkout_recovery_conflict`       | Status just changed; review and retry deliberately              |
+| `checkout_reconciliation_required` | Checkout status is uncertain. Contact staff if unresolved       |
 
-None of these claims a key or starts a retry loop. `reconciliationPending` shows "We received a
+An ordinary recovery conflict never starts a fresh-key loop. `reconciliationPending` shows "We received a
 payment that needs staff review. Please contact Fiona's before paying again." and offers no payment
 until commerce clears it. BOOKED is shown only when commerce says BOOKED.
+
+### Customer-initiated checkout restart
+
+An authorized summary can include `checkoutRestartToken` when an OPEN or CREATING attempt is
+the only blocker to collection. With that hint, the booking overview offers **Restart checkout**
+alongside the available continue or status-check action. The old browser key is optional, so a
+customer can reopen the original link in another tab. The review shows the approved Quote deposit
+in full or the current Invoice balance and the existing exact-cent amount chooser. A balance above
+Stripe's per-payment maximum requires a partial amount.
+
+Opening the review is read-only. The final button submits the reviewed versions, the selected
+amount for an Invoice, and the opaque `restartToken` through the existing BFF with a fresh UUID key.
+The five-minute summary policy still applies, and a changed target or terms require a new review.
+Commerce verifies the targeted checkout with Stripe and only authorizes a replacement after
+confirming the previous Session expired unpaid. Its answer may include `replacedAttemptId`.
+An OPEN replacement uses its own Hosted, Embedded or Elements launch. Returning to the overview
+unmounts the previous form and discards its in-memory credential before any replacement can mount.
+
+A deliberate restart can supersede a saved open command after the new key and exact body have
+been saved to sessionStorage. If storage fails, the earlier command stays intact and the page
+does not send the restart. Unknown POST outcomes and unresolved local Stripe confirmations keep
+their earlier recovery lock. **Try again** reuses the committed key and exact body, including
+the original restart token and amount. The token is retained only as part of that tab's saved
+command and is excluded from URLs, logs and analytics. Stripe credentials stay out of storage.
+An ambiguous response or provider reconciliation conflict gets bounded exact-key retries.
+An unresolved reconciliation conflict or key reuse requires staff help and preserves the command.
+
+Processing payments remain pending. A capture, stale terms or competing attempt triggers a
+summary read and requires a new decision under the current eligibility. Historical EXPIRED or
+FAILED replays also return to review. If a fresh summary has no restart token, the page falls
+back to its existing status and recovery controls.
 
 ## Staff link management
 

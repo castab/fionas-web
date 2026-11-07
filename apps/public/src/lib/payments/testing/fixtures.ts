@@ -2,6 +2,14 @@
 export const publicId = 'b8251ea0-c07c-4aad-bceb-644ed075c0a1';
 export const token = 'A'.repeat(21) + '_-' + 'z'.repeat(20);
 export const otherToken = 'B'.repeat(43);
+export const restartToken = `99ba495c-4747-4dc4-87ed-69357de3cba9.${token}.${otherToken}`;
+export const restartEligible = {
+	canPay: false,
+	paymentInProgress: true,
+	unavailableReason: 'PAYMENT_IN_PROGRESS',
+	checkoutRecoveryAvailable: true,
+	checkoutRestartToken: restartToken
+};
 
 export function quotedSummary(overrides: Record<string, unknown> = {}) {
 	return {

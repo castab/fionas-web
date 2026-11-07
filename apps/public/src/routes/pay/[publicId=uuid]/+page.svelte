@@ -244,6 +244,7 @@
 				current={ready}
 				onpay={(choice) => controller?.pay(choice)}
 				onrecover={(choice) => controller?.recover(choice)}
+				onrestart={(review, choice) => controller?.restart(review, choice)}
 				onretry={() => controller?.retry()}
 				onstartover={() => controller?.startOver()}
 				onrefresh={() => controller?.refresh()}

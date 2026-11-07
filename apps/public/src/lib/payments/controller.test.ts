@@ -19,6 +19,8 @@ import {
 	otherToken,
 	publicId,
 	quotedSummary,
+	restartEligible,
+	restartToken,
 	token
 } from './testing/fixtures.js';
 
@@ -156,6 +158,302 @@ function harness(
 }
 
 const ok = (body: unknown) => ({ status: 200, body });
+
+describe('deliberate checkout restart', () => {
+	const invoice = bookedSummary(restartEligible);
+	const deposit = quotedSummary(restartEligible);
+	const allDue = { partialCents: null };
+	const partial = { partialCents: 15000n };
+	const replacedAttemptId = '99ba495c-4747-4dc4-87ed-69357de3cba9';
+	const review = (h: ReturnType<typeof harness>) => {
+		const view = h.state.view;
+		if (view?.kind !== 'in-progress' || !view.restart) throw new Error('No restart review');
+		return view.restart;
+	};
+	const setup = (options: Parameters<typeof harness>[0] = {}) =>
+		harness({ hash: `#${token}`, summary: [ok(invoice)], pollDelays: [], ...options });
+
+	it.each(['HOSTED', 'EMBEDDED', 'ELEMENTS'] as const)(
+		'launches a %s replacement with the new Invoice amount and a fresh key',
+		async (mode) => {
+			const response = mode === 'HOSTED' ? openCheckout : { ...embeddedCheckout, uiMode: mode };
+			const h = setup({ checkout: [ok({ ...response, replacedAttemptId })] });
+			h.store.saveCheckout({
+				key: 'original',
+				command: { expectedDocumentVersion: 6, expectedBusinessRevision: 8, amountMinor: 25000 },
+				purpose: 'INVOICE',
+				amountCents: '25000',
+				paidBefore: '240.00',
+				lifecycleBefore: 'BOOKED',
+				phase: 'redirected',
+				uiMode: 'ELEMENTS',
+				attemptId: replacedAttemptId
+			});
+			await h.controller.start();
+			await h.controller.pay(partial);
+			expect(h.checkoutCalls()).toHaveLength(0);
+			await h.controller.restart(review(h), partial);
+			expect(h.checkoutCalls()[0]).toMatchObject({
+				headers: { 'idempotency-key': 'key-1' },
+				body: `{"expectedDocumentVersion":6,"expectedBusinessRevision":8,"amountMinor":15000,"restartToken":"${restartToken}"}`
+			});
+			expect(h.store.checkout()).toMatchObject({ key: 'key-1', amountCents: '15000' });
+			if (mode === 'HOSTED') expect(h.navigated).toEqual([openCheckout.url]);
+			else {
+				expect(h.state.checkout).toMatchObject({
+					mode,
+					attemptId: response.attemptId,
+					amountCents: 15000n
+				});
+				expect(await h.state.checkout?.clientSecret()).toBe(embeddedSecret);
+			}
+			expect(JSON.stringify(h.store.checkout())).not.toContain(embeddedSecret);
+			h.controller.dispose();
+		}
+	);
+
+	it('restarts a deposit without an amount and coalesces repeated submits', async () => {
+		const h = setup({ summary: [ok(deposit)], checkout: [ok(openCheckout)] });
+		await h.controller.start();
+		const reviewed = review(h);
+		await h.controller.restart(reviewed, partial);
+		expect(h.checkoutCalls()).toHaveLength(0);
+		await Promise.all([
+			h.controller.restart(reviewed, allDue),
+			h.controller.restart(reviewed, allDue)
+		]);
+		expect(h.checkoutCalls()).toHaveLength(1);
+		expect(JSON.parse(h.checkoutCalls()[0].body!)).toEqual({
+			expectedDocumentVersion: 3,
+			expectedBusinessRevision: 4,
+			restartToken
+		});
+	});
+
+	it('requires a permitted partial amount when the full Invoice balance exceeds Stripe limits', async () => {
+		const h = setup({
+			summary: [ok({ ...invoice, balance: '1200000.00', requiredAmount: '1200000.00' })],
+			checkout: [ok(openCheckout)]
+		});
+		await h.controller.start();
+		for (const choice of [allDue, { partialCents: 49n }, { partialCents: 100_000_000n }])
+			await h.controller.restart(review(h), choice);
+		expect(h.checkoutCalls()).toHaveLength(0);
+		await h.controller.restart(review(h), { partialCents: 50n });
+		expect(JSON.parse(h.checkoutCalls()[0].body!).amountMinor).toBe(50);
+	});
+
+	it('binds a full Invoice restart to the exact reviewed cents', async () => {
+		const h = setup({ checkout: [ok(openCheckout)] });
+		await h.controller.start();
+		await h.controller.restart(review(h), allDue);
+		expect(JSON.parse(h.checkoutCalls()[0].body!).amountMinor).toBe(96000);
+	});
+
+	it.each([
+		[404, 'not_found', 'link-unavailable'],
+		[503, 'stripe_disabled', 'payments-disabled']
+	])('shows %s without launching a replacement', async (status, code, phase) => {
+		const h = setup({ checkout: [{ status, body: { code } }] });
+		await h.controller.start();
+		await h.controller.restart(review(h), partial);
+		expect(h.checkoutCalls()).toHaveLength(1);
+		expect(h.state.phase).toBe(phase);
+		expect(h.state.paymentUncertain).toBe(true);
+		expect(h.navigated).toEqual([]);
+		expect(h.store.checkout()?.command.restartToken).toBe(
+			status === 503 ? restartToken : undefined
+		);
+	});
+
+	it('stores the exact command before sending and recovers it after the page closes mid-request', async () => {
+		const pending = deferred();
+		const h = setup({ checkout: [pending.promise] });
+		await h.controller.start();
+		const request = h.controller.restart(review(h), partial);
+		await flush();
+		const original = h.checkoutCalls()[0];
+		expect(paymentStore(publicId, h.storage).checkout()).toMatchObject({
+			key: original.headers['idempotency-key'],
+			phase: 'sending',
+			command: JSON.parse(original.body!)
+		});
+		h.controller.dispose();
+		pending.settle(ok(openCheckout));
+		await request;
+
+		const back = setup({ storage: h.storage, hash: '', checkout: [ok(openCheckout)] });
+		await back.controller.start();
+		expect(back.state.pending?.ambiguous).toBe(true);
+		await back.controller.restart(review(back), { partialCents: 10000n });
+		expect(back.checkoutCalls()).toHaveLength(0);
+		await back.controller.retry();
+		expect(back.checkoutCalls()).toEqual([original]);
+		expect(back.navigated).toEqual([openCheckout.url]);
+	});
+
+	it.each([
+		{ checkoutRestartToken: restartToken.replace(/B+$/, 'C'.repeat(43)) },
+		{ balance: '200.00', requiredAmount: '200.00' }
+	])(
+		'requires a new review when the target or terms change during freshness check (%j)',
+		async (change) => {
+			const h = setup({ summary: [ok(invoice), ok({ ...invoice, ...change })] });
+			await h.controller.start();
+			const reviewed = review(h);
+			h.advance(MAX_SUMMARY_AGE_MS + 1);
+			await h.controller.restart(reviewed, partial);
+			expect(h.summaryCalls()).toHaveLength(2);
+			expect(h.checkoutCalls()).toHaveLength(0);
+			expect(h.state.notice).toBe('restart-changed');
+		}
+	);
+
+	it('blocks restart while an earlier Elements confirmation is unresolved', async () => {
+		const h = setup({
+			summary: [ok(bookedSummary()), ok(invoice)],
+			checkout: [ok({ ...embeddedCheckout, uiMode: 'ELEMENTS' })]
+		});
+		await h.controller.start();
+		await h.controller.pay({ partialCents: 25000n });
+		const original = h.state.checkout!;
+		expect(h.controller.beginConfirmation(original.id)).toBe(true);
+		h.controller.closeCheckout(original.id);
+		await flush();
+		await h.controller.restart(review(h), partial);
+		expect(h.checkoutCalls()).toHaveLength(1);
+		expect(h.store.checkout()?.completing).toBe(true);
+		expect(original.isCurrent()).toBe(false);
+	});
+
+	it('requires a new ordinary payment decision if the previous session expires during review', async () => {
+		const h = setup({ summary: [ok(invoice), ok(bookedSummary())], checkout: [ok(openCheckout)] });
+		await h.controller.start();
+		const reviewed = review(h);
+		h.advance(MAX_SUMMARY_AGE_MS + 1);
+		await h.controller.restart(reviewed, partial);
+		expect(h.checkoutCalls()).toHaveLength(0);
+		expect(h.state.view?.kind).toBe('balance-due');
+		await h.controller.pay(partial);
+		expect(JSON.parse(h.checkoutCalls()[0].body!)).not.toHaveProperty('restartToken');
+	});
+
+	it('keeps the earlier command intact if a replacement cannot be persisted', async () => {
+		const h = setup();
+		const previous: StoredCheckout = {
+			key: 'original',
+			command: { expectedDocumentVersion: 6, expectedBusinessRevision: 8, amountMinor: 25000 },
+			purpose: 'INVOICE',
+			amountCents: '25000',
+			paidBefore: '240.00',
+			lifecycleBefore: 'BOOKED',
+			phase: 'redirected'
+		};
+		h.store.saveCheckout(previous);
+		await h.controller.start();
+		h.storage!.setItem = () => {
+			throw new Error('quota');
+		};
+		await h.controller.restart(review(h), partial);
+		expect(h.checkoutCalls()).toHaveLength(0);
+		expect(h.state.notice).toBe('restart-storage-unavailable');
+		expect(h.store.checkout()).toEqual(previous);
+	});
+
+	it.each([
+		['payment_terms_changed', 'restart-changed'],
+		['checkout_recovery_conflict', 'recovery-conflict'],
+		['checkout_in_progress', 'checkout-open'],
+		['payment_processing', 'processing'],
+		['payment_state_changed', 'state-changed']
+	])('refreshes without another POST on %s', async (code, notice) => {
+		const summary =
+			code === 'payment_state_changed'
+				? bookedSummary({ reconciliationPending: true })
+				: { ...invoice, checkoutRestartToken: undefined };
+		const h = setup({
+			summary: [ok(invoice), ok(summary)],
+			checkout: [{ status: 409, body: { code } }]
+		});
+		await h.controller.start();
+		await h.controller.restart(review(h), partial);
+		expect(h.checkoutCalls()).toHaveLength(1);
+		expect(h.state.notice).toBe(notice);
+		expect(h.state.view).not.toHaveProperty('restart');
+		expect(h.store.checkout()).toBeNull();
+	});
+
+	it.each([
+		[500, 'internal_failure', 'ambiguous'],
+		[409, 'checkout_reconciliation_required', 'reconciliation-required']
+	])(
+		'bounds %s retries to the original restart key and exact body',
+		async (status, code, notice) => {
+			const h = setup({ checkout: [{ status, body: { code } }] });
+			await h.controller.start();
+			await h.controller.restart(review(h), partial);
+			const sent = h.checkoutCalls();
+			expect(sent).toHaveLength(3);
+			expect(
+				sent.every(
+					(call) => call.body === sent[0].body && call.headers['idempotency-key'] === 'key-1'
+				)
+			).toBe(true);
+			expect(h.state.notice).toBe(notice);
+			expect(h.store.checkout()?.command.restartToken).toBe(restartToken);
+			if (status === 409) {
+				await h.controller.retry();
+				expect(h.checkoutCalls()).toHaveLength(3);
+				expect(h.state.pending?.restartNeedsHelp).toBe(true);
+			}
+		}
+	);
+
+	it('preserves the original command after a restart key conflict', async () => {
+		const h = setup({ checkout: [{ status: 409, body: { code: 'checkout_key_reused' } }] });
+		await h.controller.start();
+		await h.controller.restart(review(h), partial);
+		await h.controller.startOver();
+		await h.controller.retry();
+		expect(h.checkoutCalls()).toHaveLength(1);
+		expect(h.state.notice).toBe('restart-key-reused');
+		expect(h.store.checkout()).toMatchObject({
+			key: 'key-1',
+			blocked: true,
+			command: { restartToken }
+		});
+	});
+
+	it.each(['EXPIRED', 'FAILED'])(
+		'treats %s as a historical result and requires a new decision',
+		async (state) => {
+			const h = setup({
+				summary: [ok(invoice), ok(bookedSummary())],
+				checkout: [ok({ ...openCheckout, state })]
+			});
+			await h.controller.start();
+			await h.controller.restart(review(h), partial);
+			expect(h.state.notice).toBe('checkout-expired');
+			expect(h.store.checkout()).toBeNull();
+			expect(h.navigated).toEqual([]);
+			expect(h.checkoutCalls()).toHaveLength(1);
+		}
+	);
+
+	it.each([
+		{ ...openCheckout, state: 'FUTURE_STATE' },
+		{ ...openCheckout, uiMode: 'ELEMENTS', url: undefined },
+		{ ...openCheckout, url: 'https://unexpected.test/checkout' }
+	])('keeps a restart with an unsupported answer recoverable by exact key', async (response) => {
+		const h = setup({ checkout: [ok(response)] });
+		await h.controller.start();
+		await h.controller.restart(review(h), partial);
+		expect(h.state.pending?.ambiguous).toBe(true);
+		expect(h.store.checkout()?.command.restartToken).toBe(restartToken);
+		expect(h.state.checkout).toBeNull();
+		expect(h.navigated).toEqual([]);
+	});
+});
 
 describe('bearer capture', () => {
 	it('captures a fragment bearer into tab storage, cleans the URL and loads the summary', async () => {

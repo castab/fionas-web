@@ -13,6 +13,7 @@ import {
 	readPaymentSummary,
 	serializeCommand,
 	type CheckoutCommand,
+	type CheckoutResponse,
 	type CheckoutUiMode,
 	type CustomerPaymentSummary,
 	type OnPageCheckoutMode,
@@ -28,7 +29,7 @@ import {
 	type StoredCheckout
 } from './checkout.js';
 import { decimalToCents, STRIPE_MAX_CENTS, STRIPE_MIN_CENTS } from './money.js';
-import { paymentView, type PayableTerms, type PaymentView } from './view.js';
+import { paymentView, type PayableTerms, type PaymentView, type RestartReview } from './view.js';
 
 export type NoticeKind =
 	| 'deposit-confirmed'
@@ -41,6 +42,9 @@ export type NoticeKind =
 	| 'checkout-closed'
 	| 'checkout-invalidated'
 	| 'refresh-failed'
+	| 'restart-changed'
+	| 'restart-storage-unavailable'
+	| 'restart-key-reused'
 	| Exclude<CheckoutFailure, 'link-unavailable' | 'payments-disabled'>;
 
 export type PagePhase =
@@ -59,6 +63,8 @@ export type PendingCheckout = {
 	ambiguous: boolean;
 	/** CHECKOUT_KEY_REUSED: never resent; the customer must deliberately start over. */
 	blocked: boolean;
+	/** A restart with a durable conflict or unresolved provider outcome needs staff help. */
+	restartNeedsHelp: boolean;
 	/** How commerce presented the opened attempt, when known. */
 	uiMode: CheckoutUiMode | null;
 	/** Confirmation started or Stripe reported completion; commerce has yet to confirm it. */
@@ -209,6 +215,21 @@ type FetchResult =
 	| { ok: true; status: number; body: unknown }
 	| { ok: false; status: number | null; error: PaymentError | null };
 
+function restartOutcomeKnown(response: CheckoutResponse): boolean {
+	switch (response.state) {
+		case 'OPEN':
+			return response.outcome === 'PENDING' && checkoutLaunch(response) !== null;
+		case 'PROCESSING':
+		case 'EXPIRED':
+		case 'FAILED':
+			return response.outcome === 'PENDING';
+		case 'SUCCEEDED':
+			return response.outcome === 'APPLIED' || response.outcome === 'RECONCILIATION_REQUIRED';
+		default:
+			return false;
+	}
+}
+
 export function createPaymentController(deps: ControllerDeps) {
 	const setTimer = deps.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
 	const clearTimer =
@@ -293,8 +314,10 @@ export function createPaymentController(deps: ControllerDeps) {
 					amountCents: BigInt(stored.amountCents),
 					ambiguous,
 					blocked: stored.blocked === true,
+					restartNeedsHelp:
+						!!stored.command.restartToken && !!(stored.blocked || stored.reconciliationRequired),
 					uiMode: stored.uiMode ?? null,
-					completing: stored.completing === true,
+					completing: stored.completing === true || stored.awaitingSettlement === true,
 					confirmationUncertain: uncertainConfirmation(stored),
 					termsChanged:
 						!!summary &&
@@ -368,9 +391,12 @@ export function createPaymentController(deps: ControllerDeps) {
 		const matches = stored !== null && authorizationMatches(stored, summary);
 		let derived: NoticeKind | null = null;
 		let pending: PendingCheckout | null = null;
-		if (stored?.blocked && !lockedElements(stored)) {
+		if (stored?.reconciliationRequired) {
 			pending = pendingOf(stored, false);
-			derived = 'key-reused';
+			derived = 'reconciliation-required';
+		} else if (stored?.blocked && !lockedElements(stored)) {
+			pending = pendingOf(stored, false);
+			derived = stored.command.restartToken ? 'restart-key-reused' : 'key-reused';
 		} else if (stored?.phase === 'sending' && !lockedElements(stored)) {
 			// Unknown only when no request for it is in flight (a background read during a send is not).
 			pending = pendingOf(stored, !sending);
@@ -576,7 +602,11 @@ export function createPaymentController(deps: ControllerDeps) {
 		}
 	}
 
-	function buildCommand(terms: PayableTerms, choice: AmountChoice): StoredCheckout | null {
+	function buildCommand(
+		terms: PayableTerms,
+		choice: AmountChoice,
+		restartToken?: string
+	): StoredCheckout | null {
 		const summary = state.summary;
 		if (!summary) return null;
 		const command: CheckoutCommand = {
@@ -592,7 +622,9 @@ export function createPaymentController(deps: ControllerDeps) {
 				command.amountMinor = Number(cents);
 				amount = cents;
 			} else if (!terms.fullAllowed) return null;
+			else if (restartToken) command.amountMinor = Number(amount);
 		} else if (choice.partialCents !== null) return null; // A deposit is always paid in full.
+		if (restartToken) command.restartToken = restartToken;
 		return {
 			key: deps.uuid(),
 			command,
@@ -612,7 +644,8 @@ export function createPaymentController(deps: ControllerDeps) {
 	 * MAX_SUMMARY_AGE_MS is re-read first, and if its terms moved the customer must review again.
 	 */
 	async function currentTerms(
-		pick: (view: PaymentView | null) => PayableTerms | null
+		pick: (view: PaymentView | null) => PayableTerms | null,
+		changed: NoticeKind = 'terms-changed'
 	): Promise<PayableTerms | null> {
 		const reviewed = pick(state.view);
 		// A read in flight may replace these terms: never decide on the one it will supersede.
@@ -629,7 +662,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		if (disposed || outcome !== 'applied' || summaryInFlight() || !state.summaryFresh) return null;
 		const latest = pick(state.view);
 		if (!latest || termsKey(latest) !== termsKey(reviewed)) {
-			emit({ notice: 'terms-changed' });
+			emit({ notice: changed });
 			return null;
 		}
 		return latest;
@@ -717,6 +750,7 @@ export function createPaymentController(deps: ControllerDeps) {
 		if (sending || disposed || !token || launch) return;
 		sending = true;
 		const checkingConfirmation = lockedElements(stored);
+		const restart = stored.command.restartToken !== undefined;
 		const sendingCommand: StoredCheckout = {
 			...stored,
 			phase: 'sending',
@@ -724,7 +758,12 @@ export function createPaymentController(deps: ControllerDeps) {
 			completing: stored.uiMode === 'ELEMENTS' ? stored.completing : undefined
 		};
 		// Persisted before transmission: a lost response or closed tab can only resend this.
-		if (!checkingConfirmation) store.saveCheckout(sendingCommand);
+		if (!checkingConfirmation && !store.saveCheckout(sendingCommand, fresh && restart)) {
+			sending = false;
+			emit({ notice: 'restart-storage-unavailable' });
+			return;
+		}
+		if (fresh && restart) returned = null;
 		emit({
 			busy: 'submitting',
 			...(checkingConfirmation ? {} : { pending: pendingOf(sendingCommand, false), notice: null })
@@ -748,14 +787,14 @@ export function createPaymentController(deps: ControllerDeps) {
 				CHECKOUT_TIMEOUT_MS
 			);
 			if (disposed || !token) return;
+			const failure = result.ok ? null : classifyCheckoutFailure(result.status, result.error);
 			const retryable =
 				!checkingConfirmation &&
-				!result.ok &&
-				classifyCheckoutFailure(result.status, result.error) === 'ambiguous';
+				(failure === 'ambiguous' || (restart && failure === 'reconciliation-required'));
 			if (!retryable || attempt >= retryDelays.length) break;
 			unknownEarlier = true;
 			await wait(retryDelays[attempt]);
-			if (disposed) return;
+			if (disposed || !token) return;
 		}
 		if (checkingConfirmation) {
 			try {
@@ -772,11 +811,18 @@ export function createPaymentController(deps: ControllerDeps) {
 			// Each attempt names its own immutable mode: one opened before a configuration change
 			// keeps launching the way it was created.
 			const launchable = response && checkoutLaunch(response);
+			if (restart && (!response || !restartOutcomeKnown(response))) {
+				emit({ busy: null });
+				return refresh('ambiguous');
+			}
 			const opened: StoredCheckout = {
 				...sendingCommand,
 				phase: 'redirected',
 				...(response?.uiMode && { uiMode: response.uiMode }),
-				...(response?.uiMode === 'ELEMENTS' && { attemptId: response.attemptId })
+				...(response?.uiMode === 'ELEMENTS' && { attemptId: response.attemptId }),
+				...((response?.state === 'PROCESSING' || response?.state === 'SUCCEEDED') && {
+					awaitingSettlement: true
+				})
 			};
 			if (launchable?.mode === 'HOSTED') {
 				store.saveCheckout(opened);
@@ -815,13 +861,22 @@ export function createPaymentController(deps: ControllerDeps) {
 				return refresh('checkout-expired');
 			}
 			store.saveCheckout(opened);
-			return refresh(response.state === 'OPEN' ? 'checkout-open' : undefined);
+			return refresh(
+				response.state === 'OPEN'
+					? 'checkout-open'
+					: response.state === 'PROCESSING'
+						? 'processing'
+						: undefined
+			);
 		}
 		emit({ busy: null });
 		const failure = classifyCheckoutFailure(result.status, result.error);
+		if (failure === 'link-unavailable') return linkUnavailable();
 		// Disabled payments are refused before commerce looks at the key, so they say nothing about
 		// an earlier send of this command: only a brand-new command refused at once is discarded.
 		if (failure === 'key-reused') store.saveCheckout({ ...sendingCommand, blocked: true });
+		else if (restart && failure === 'reconciliation-required')
+			store.saveCheckout({ ...sendingCommand, reconciliationRequired: true });
 		else if (
 			stored.uiMode === 'ELEMENTS' &&
 			stored.phase === 'redirected' &&
@@ -832,12 +887,36 @@ export function createPaymentController(deps: ControllerDeps) {
 			store.saveCheckout(stored);
 		else if (
 			!keepsCommand(failure) &&
-			!(failure === 'payments-disabled' && (!fresh || unknownEarlier))
+			!(failure === 'payments-disabled' && (restart || !fresh || unknownEarlier)) &&
+			!(restart && failure === 'refused')
 		)
 			store.forgetCheckout();
-		if (failure === 'link-unavailable') return linkUnavailable();
 		if (failure === 'payments-disabled') return paymentsDisabled();
-		return refresh(failure);
+		return refresh(
+			restart && failure === 'terms-changed'
+				? 'restart-changed'
+				: restart && failure === 'key-reused'
+					? 'restart-key-reused'
+					: failure
+		);
+	}
+
+	function canRestart() {
+		const stored = store.checkout();
+		return (
+			!disposed &&
+			!sending &&
+			!preparing &&
+			!isBusy() &&
+			!launch &&
+			state.phase === 'ready' &&
+			state.notice !== 'processing' &&
+			(!stored ||
+				(stored.phase === 'redirected' &&
+					!stored.blocked &&
+					!stored.completing &&
+					!stored.awaitingSettlement))
+		);
 	}
 
 	return {
@@ -866,6 +945,24 @@ export function createPaymentController(deps: ControllerDeps) {
 			const stored = buildCommand(terms, choice);
 			if (stored) await send(stored, true);
 		},
+		/** Replaces the reviewed attempt only on a separate, deliberate customer decision. */
+		async restart(review: RestartReview, choice: AmountChoice) {
+			if (!canRestart()) return;
+			const reviewedTerms = (view: PaymentView | null) => {
+				const latest = view?.kind === 'in-progress' ? view.restart : undefined;
+				return latest?.token === review.token && termsKey(latest.terms) === termsKey(review.terms)
+					? latest.terms
+					: null;
+			};
+			if (!reviewedTerms(state.view)) {
+				emit({ notice: 'restart-changed' });
+				return;
+			}
+			const terms = await currentTerms(reviewedTerms, 'restart-changed');
+			if (!terms || !canRestart() || summaryInFlight()) return;
+			const stored = buildCommand(terms, choice, review.token);
+			if (stored) await send(stored, true);
+		},
 		/**
 		 * "Check previous payment and continue": resends this tab's original command when it has
 		 * one, otherwise one deliberate fresh command against the current reviewed terms. Recovery
@@ -875,7 +972,7 @@ export function createPaymentController(deps: ControllerDeps) {
 			if (sending || preparing || isBusy() || launch) return;
 			const stored = store.checkout();
 			// This tab's own command: resending it is always safe (same key, same authorization).
-			if (stored && !stored.blocked) return send(stored);
+			if (stored && !stored.blocked && !stored.reconciliationRequired) return send(stored);
 			if (stored) return;
 			const terms = await currentTerms((view) =>
 				view?.kind === 'in-progress' ? view.recovery : null
@@ -887,7 +984,16 @@ export function createPaymentController(deps: ControllerDeps) {
 		/** Resends the identical stored command after an ambiguous outcome. */
 		async retry() {
 			const stored = store.checkout();
-			if (!stored || stored.blocked || sending || isBusy() || launch) return;
+			if (
+				!stored ||
+				stored.blocked ||
+				stored.reconciliationRequired ||
+				sending ||
+				preparing ||
+				isBusy() ||
+				launch
+			)
+				return;
 			await send(stored);
 		},
 		/**
@@ -959,7 +1065,14 @@ export function createPaymentController(deps: ControllerDeps) {
 		/** An unavailable Elements form can only check its own saved authorization. */
 		async checkCheckout(id: number) {
 			const stored = store.checkout();
-			if (disposed || launch?.public.id !== id || !stored || stored.blocked) return;
+			if (
+				disposed ||
+				launch?.public.id !== id ||
+				!stored ||
+				stored.blocked ||
+				stored.reconciliationRequired
+			)
+				return;
 			discardCheckout();
 			emit({ checkout: null });
 			await send(stored);
@@ -967,7 +1080,8 @@ export function createPaymentController(deps: ControllerDeps) {
 		/** Deliberately abandons a blocked command and reviews the current terms again. */
 		async startOver() {
 			const stored = store.checkout();
-			if (!stored?.blocked || lockedElements(stored) || sending) return;
+			if (!stored?.blocked || stored.command.restartToken || lockedElements(stored) || sending)
+				return;
 			store.forgetCheckout();
 			await refresh(null);
 		},

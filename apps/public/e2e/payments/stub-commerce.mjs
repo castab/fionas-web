@@ -67,11 +67,34 @@ async function checkout(req, res, scenario) {
 	if (reply?.status) return send(res, reply.status, reply.body);
 	const previous = scenario.keys.get(key);
 	if (previous) {
-		if (previous.body !== raw)
+		if (previous.body !== raw) {
+			if (JSON.parse(previous.body).restartToken || JSON.parse(raw).restartToken)
+				return send(res, 409, { code: 'checkout_key_reused' });
 			return send(res, 409, { code: 'conflict', message: 'CHECKOUT_KEY_REUSED' });
+		}
 		return send(res, 200, previous.response);
 	}
-	if (scenario.summary.paymentInProgress && !reply?.replace)
+	const command = JSON.parse(raw);
+	let replacedAttemptId;
+	if (command.restartToken) {
+		if (!scenario.active || command.restartToken !== scenario.summary.checkoutRestartToken)
+			return send(res, 409, { code: 'checkout_recovery_conflict' });
+		const document = scenario.summary.document;
+		if (
+			command.expectedDocumentVersion !== document.version ||
+			command.expectedBusinessRevision !== document.businessRevision
+		)
+			return send(res, 409, { code: 'payment_terms_changed' });
+		const old = scenario.active.response;
+		replacedAttemptId = old.attemptId;
+		scenario.active.response = {
+			attemptId: old.attemptId,
+			uiMode: old.uiMode,
+			state: 'EXPIRED',
+			outcome: 'PENDING'
+		};
+	}
+	if (scenario.summary.paymentInProgress && !replacedAttemptId && !reply?.replace)
 		return send(res, 409, {
 			code: 'checkout_in_progress',
 			message: 'The existing Checkout is still open'
@@ -98,8 +121,13 @@ async function checkout(req, res, scenario) {
 					outcome: 'PENDING'
 				};
 	scenario.secrets.push(response.clientSecret ?? response.url);
-	scenario.keys.set(key, { body: raw, response });
+	if (replacedAttemptId) response.replacedAttemptId = replacedAttemptId;
+	scenario.active = { body: raw, response };
+	scenario.keys.set(key, scenario.active);
 	scenario.summary = inProgress(scenario.summary);
+	if (scenario.restart)
+		scenario.summary.checkoutRestartToken = `${attemptId}.${bearer()}.${bearer()}`;
+	if (reply?.dropAfterCommit) return req.socket.destroy();
 	send(res, 200, response);
 }
 
@@ -115,6 +143,7 @@ createServer(async (req, res) => {
 			token: bearer(),
 			summary: body.summary,
 			replies: body.replies ?? [],
+			restart: body.restart === true,
 			mode: body.mode ?? null,
 			// How new attempts are presented: HOSTED (default), EMBEDDED, ELEMENTS or LEGACY.
 			uiMode: body.uiMode ?? 'HOSTED',
@@ -131,7 +160,15 @@ createServer(async (req, res) => {
 		const scenario = scenarios.get(control[1]);
 		if (!scenario) return send(res, 404);
 		if (req.method === 'GET')
-			return send(res, 200, { calls: scenario.calls, secrets: scenario.secrets });
+			return send(res, 200, {
+				calls: scenario.calls,
+				secrets: scenario.secrets,
+				attempts: [...scenario.keys.values()].map(({ response }) => ({
+					id: response.attemptId,
+					state: response.state,
+					replacedAttemptId: response.replacedAttemptId
+				}))
+			});
 		const body = JSON.parse((await readBody(req)) || '{}');
 		if (body.summary) scenario.summary = body.summary;
 		if (body.replies) scenario.replies.push(...body.replies);

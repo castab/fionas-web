@@ -3,7 +3,7 @@
 	import { mailtoUrl, site } from '@fionas/shared';
 	import type { AmountChoice, PageState } from '$lib/payments/controller.js';
 	import { isOnPageCheckoutMode } from '$lib/payments/contract.js';
-	import type { PayableTerms } from '$lib/payments/view.js';
+	import { documentLabel, type PayableTerms, type RestartReview } from '$lib/payments/view.js';
 	import { STAFF_REVIEW_MESSAGE } from '$lib/payments/copy.js';
 	import {
 		amountProblemMessage,
@@ -12,12 +12,12 @@
 		STRIPE_MIN_CENTS,
 		validatePartialAmount
 	} from '$lib/payments/money.js';
-	import { documentLabel } from '$lib/payments/view.js';
 
 	let {
 		current,
 		onpay,
 		onrecover,
+		onrestart,
 		onretry,
 		onstartover,
 		onrefresh
@@ -25,6 +25,7 @@
 		current: PageState;
 		onpay: (choice: AmountChoice) => void;
 		onrecover: (choice: AmountChoice) => void;
+		onrestart: (review: RestartReview, choice: AmountChoice) => void;
 		onretry: () => void;
 		onstartover: () => void;
 		onrefresh: () => void;
@@ -35,11 +36,27 @@
 	const busy = $derived(current.busy === 'submitting' || current.busy === 'redirecting');
 	const pending = $derived(current.pending);
 	const label = $derived(summary ? documentLabel(summary) : null);
+	const restart = $derived(
+		view?.kind === 'in-progress' &&
+			!pending?.ambiguous &&
+			!pending?.blocked &&
+			!pending?.completing &&
+			!pending?.restartNeedsHelp &&
+			current.notice !== 'processing'
+			? view.restart
+			: undefined
+	);
+	let reviewedRestart = $state.raw<RestartReview | null>(null);
+	const restartReview = $derived(
+		restart && reviewedRestart?.token === restart.token ? reviewedRestart : null
+	);
 
 	// The terms an amount chooser applies to: the balance due, or the terms a recovery check would
 	// use when this tab has no earlier command of its own.
 	const invoiceTerms = $derived.by((): (PayableTerms & { purpose: 'INVOICE' }) | null => {
 		if (view?.kind === 'balance-due') return view.terms;
+		if (restartReview)
+			return restartReview.terms.purpose === 'INVOICE' ? restartReview.terms : null;
 		if (view?.kind === 'in-progress' && view.recovery?.purpose === 'INVOICE' && !pending)
 			return view.recovery;
 		return null;
@@ -88,6 +105,23 @@
 		if (selected) onrecover(selected);
 	}
 
+	function reviewRestart(review: RestartReview) {
+		mode = 'full';
+		amountInput = '';
+		touched = false;
+		reviewedRestart = review;
+	}
+
+	function submitRestart(event: SubmitEvent) {
+		event.preventDefault();
+		if (!restartReview || busy || stale || current.busy === 'refreshing') return;
+		const selected = choice();
+		if (!selected) return;
+		const review = restartReview;
+		reviewedRestart = null;
+		onrestart(review, selected);
+	}
+
 	const heading = 'm-0 font-sans text-lg leading-[1.35] font-bold text-(--text-heading)';
 	const option =
 		'flex min-h-14 cursor-pointer items-center gap-3 rounded-input border px-4 py-3 transition-colors duration-(--dur-fast) ease-out';
@@ -97,7 +131,9 @@
 	// This tab's own earlier command can always be resent; anything else is a new decision.
 	const ownCommand = $derived(!!pending && !pending.ambiguous && !pending.blocked);
 	// A dispatched Elements confirmation can only check the original attempt.
-	const completing = $derived(ownCommand && !!pending?.completing);
+	const completing = $derived(
+		current.notice === 'processing' || (ownCommand && !!pending?.completing)
+	);
 	const checkOnly = $derived(completing && pending?.uiMode === 'ELEMENTS');
 	const canRecover = $derived(
 		view?.kind === 'in-progress' && (!completing || checkOnly) && (!!view.recovery || ownCommand)
@@ -107,7 +143,10 @@
 		ownCommand && isOnPageCheckoutMode(pending?.uiMode) && !!pending?.termsChanged
 	);
 	const resumesCheckout = $derived(
-		ownCommand && !completing && isOnPageCheckoutMode(pending?.uiMode) && !pending?.termsChanged
+		ownCommand &&
+			!completing &&
+			(isOnPageCheckoutMode(pending?.uiMode) || (restart && pending?.uiMode === 'HOSTED')) &&
+			!pending?.termsChanged
 	);
 	// A summary kept after a failed refresh is display-only: no new payment against it.
 	const stale = $derived(!current.summaryFresh);
@@ -242,7 +281,19 @@
 {/snippet}
 
 <Card class="flex flex-col gap-4 px-[26px] py-6 max-[600px]:px-5" data-testid="payment-action">
-	{#if pending?.blocked && pending.completing && pending.uiMode === 'ELEMENTS'}
+	{#if reviewedRestart && !restartReview}
+		<p class={body} role="status">
+			Your checkout details changed. Review your current payment options below.
+		</p>
+	{/if}
+	{#if view?.kind === 'reconciliation'}
+		<h2 class={heading}>A payment needs staff review</h2>
+		<p class={body} data-testid="reconciliation-message">{STAFF_REVIEW_MESSAGE}</p>
+		{@render contact('Reach us at')}
+	{:else if pending?.restartNeedsHelp}
+		<h2 class={heading}>We need to check your previous checkout</h2>
+		{@render contact('Before paying again, email us for help at')}
+	{:else if pending?.blocked && pending.completing && pending.uiMode === 'ELEMENTS'}
 		<h2 class={heading}>We need to check your payment</h2>
 		{@render contact('For help checking the status of your previous payment, email')}
 	{:else if pending?.blocked}
@@ -263,7 +314,7 @@
 		<Button size="lg" class="min-h-13 w-full" onclick={onretry} data-testid="retry-payment"
 			>Try again</Button
 		>
-	{:else if checkOnly && view?.kind !== 'reconciliation' && (pending?.confirmationUncertain || view?.kind !== 'in-progress')}
+	{:else if checkOnly && (pending?.confirmationUncertain || view?.kind !== 'in-progress')}
 		<h2 class={heading}>Check your previous payment</h2>
 		<p class={body}>
 			{invalidated
@@ -328,9 +379,43 @@
 				You'll enter your card details securely with Stripe.
 			</p>
 		</form>
+	{:else if restartReview}
+		{@const amount =
+			restartReview.terms.purpose === 'INVOICE' ? payCents : restartReview.terms.amountCents}
+		<h2 class={heading}>Review your new checkout</h2>
+		<p class={body}>
+			We'll close the previous checkout if our payment processor confirms it is unpaid, then open a
+			new checkout for the amount below.
+		</p>
+		{@render staleGate()}
+		<form onsubmit={submitRestart} class="flex flex-col gap-4" aria-busy={busy} novalidate>
+			{#if restartReview.terms.purpose === 'INVOICE'}
+				{@render amountChooser(restartReview.terms)}
+			{:else}
+				<p class={body}>
+					Approved deposit due <strong>{formatCents(restartReview.terms.amountCents)}</strong>
+				</p>
+			{/if}
+			<Button
+				type="submit"
+				size="lg"
+				class="min-h-13 w-full whitespace-normal"
+				disabled={busy || stale || current.busy === 'refreshing'}
+				data-testid="submit-restart"
+				>{amount === null
+					? 'Restart checkout'
+					: `Restart checkout for ${formatCents(amount)}`}</Button
+			>
+			<Button variant="ghost" class="min-h-11 self-start" onclick={() => (reviewedRestart = null)}
+				>Back to payment options</Button
+			>
+		</form>
 	{:else if view?.kind === 'in-progress'}
 		<div class="flex flex-col gap-1">
-			{#if completing}
+			{#if restart}
+				<h2 class={heading}>Your previous checkout is still open</h2>
+				<p class={body}>Restarting closes the previous unpaid checkout before opening a new one.</p>
+			{:else if completing}
 				<h2 class={heading}>We're confirming your payment</h2>
 				<p class={body}>
 					We're waiting for our payment processor to confirm it, so there's no need to pay again.
@@ -363,14 +448,14 @@
 					<p class={body}>You can check the status of this same payment below.</p>
 				{:else if invoiceTerms}
 					<p class={body}>
-						We'll check that earlier payment first. If it's still open you can go back to it; if it
-						expired, we'll start a new checkout for the amount you choose.
+						We'll check that earlier payment first. If its checkout has expired, we'll open a new
+						one for the amount you choose.
 					</p>
 					{@render amountChooser(invoiceTerms)}
 				{:else}
 					<p class={body}>
-						We'll check that earlier payment first. If it's still open you can go back to it; if it
-						expired, you can continue with a new checkout.
+						We'll check that earlier payment first. If its checkout has expired, you can continue
+						with a new checkout.
 					</p>
 				{/if}
 				<Button
@@ -384,11 +469,24 @@
 						invalidated || checkOnly
 							? 'Check previous payment'
 							: resumesCheckout
-								? 'Continue your payment'
+								? restart
+									? 'Continue previous payment'
+									: 'Continue your payment'
 								: 'Check previous payment and continue'
 					)}</Button
 				>
 			</form>
+		{/if}
+		{#if restart}
+			{#if !canRecover || ownCommand}{@render staleGate()}{/if}
+			<Button
+				variant={canRecover ? 'secondary' : 'primary'}
+				size="lg"
+				class="min-h-13 w-full"
+				disabled={busy || stale || current.busy === 'refreshing'}
+				onclick={() => reviewRestart(restart)}
+				data-testid="review-restart">Restart checkout</Button
+			>
 		{/if}
 		<p class={cn(hintText, 'm-0')} role="status" data-testid="polling-status">
 			{current.polling === 'active'
@@ -406,10 +504,6 @@
 				onclick={onrefresh}>Check again</Button
 			>
 		{/if}
-	{:else if view?.kind === 'reconciliation'}
-		<h2 class={heading}>A payment needs staff review</h2>
-		<p class={body} data-testid="reconciliation-message">{STAFF_REVIEW_MESSAGE}</p>
-		{@render contact('Reach us at')}
 	{:else if view?.kind === 'no-balance'}
 		<h2 class={heading}>{view.creditCents ? 'You have a credit' : "You're all paid up"}</h2>
 		<p class={body}>
