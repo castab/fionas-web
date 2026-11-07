@@ -16,7 +16,9 @@ import {
 	embeddedSecret,
 	legacyOpenCheckout,
 	openCheckout,
-	quotedSummary
+	quotedSummary,
+	restartEligible,
+	restartToken
 } from './testing/fixtures.js';
 
 const view = (value: Record<string, unknown>) => paymentView(readPaymentSummary(value)!);
@@ -85,6 +87,30 @@ describe('payment summary contract', () => {
 });
 
 describe('payment view', () => {
+	it('offers restart independently of the recovery hint and canPay', () => {
+		expect(
+			view(bookedSummary({ ...restartEligible, checkoutRecoveryAvailable: false }))
+		).toMatchObject({
+			kind: 'in-progress',
+			recovery: null,
+			restart: { token: restartToken, terms: { purpose: 'INVOICE', amountCents: 96000n } }
+		});
+	});
+
+	it.each([
+		{ checkoutRestartToken: undefined },
+		{ checkoutRestartToken: 'untrusted' },
+		{ checkoutRestartToken: null },
+		{ reconciliationPending: true },
+		{ unavailableReason: 'NO_PAYMENT_DUE' },
+		{ unavailableReason: 'UNSUPPORTED_CURRENCY' },
+		{ lifecycle: 'CLOSED' },
+		{ paymentInProgress: false },
+		{ balance: '0.00' }
+	])('suppresses restart for an absent or invalid token or incoherent terms (%j)', (overrides) => {
+		expect(view(bookedSummary({ ...restartEligible, ...overrides }))).not.toHaveProperty('restart');
+	});
+
 	it('labels the document without generated version numbers, keeping revisions internal', () => {
 		const summary = readPaymentSummary(quotedSummary())!;
 		expect(documentLabel(summary)).toBe('Quote');
@@ -156,6 +182,32 @@ describe('payment view', () => {
 });
 
 describe('checkout contract', () => {
+	it('round-trips only a well-formed opaque restart token', () => {
+		const command = {
+			expectedDocumentVersion: 6,
+			expectedBusinessRevision: 8,
+			amountMinor: 15000,
+			restartToken
+		};
+		expect(readCheckoutCommand(JSON.parse(serializeCommand(command)))).toEqual(command);
+		for (const malformed of [
+			null,
+			'token',
+			restartToken + '!',
+			restartToken.replace(/^.{36}/, '-'.repeat(36))
+		])
+			expect(readCheckoutCommand({ ...command, restartToken: malformed })).toBeNull();
+	});
+
+	it('validates the optional replaced attempt ID', () => {
+		const replacedAttemptId = embeddedCheckout.attemptId;
+		expect(readCheckoutResponse({ ...openCheckout, replacedAttemptId })).toMatchObject({
+			replacedAttemptId
+		});
+		expect(readCheckoutResponse(openCheckout)).not.toHaveProperty('replacedAttemptId');
+		expect(readCheckoutResponse({ ...openCheckout, replacedAttemptId: 'invalid' })).toBeNull();
+	});
+
 	it('redirects only to an OPEN Stripe-hosted HTTPS Checkout', () => {
 		const response = readCheckoutResponse(openCheckout)!;
 		expect(checkoutRedirect(response)).toBe(openCheckout.url);

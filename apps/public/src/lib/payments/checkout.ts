@@ -57,6 +57,8 @@ export type StoredCheckout = {
 	phase: 'sending' | 'redirected';
 	/** Set after CHECKOUT_KEY_REUSED: never resent, only deliberately discarded. */
 	blocked?: boolean;
+	/** The provider outcome remained uncertain after bounded recovery of a restart. */
+	reconciliationRequired?: boolean;
 	/** How commerce presented the opened attempt (nonsecret; wording and resume only). */
 	uiMode?: CheckoutUiMode;
 	/** Commerce attempt identity for Elements. Older saved commands are bound by the original key. */
@@ -74,7 +76,7 @@ export type PaymentStore = {
 	saveToken(token: string): void;
 	forgetToken(): void;
 	checkout(): StoredCheckout | null;
-	saveCheckout(checkout: StoredCheckout): void;
+	saveCheckout(checkout: StoredCheckout, requirePersistence?: boolean): boolean;
 	forgetCheckout(): void;
 };
 
@@ -94,6 +96,7 @@ const isStoredCheckout = (value: unknown): value is StoredCheckout => {
 		v.lifecycleBefore.length <= 64 &&
 		(v.phase === 'sending' || v.phase === 'redirected') &&
 		(v.blocked === undefined || typeof v.blocked === 'boolean') &&
+		(v.reconciliationRequired === undefined || typeof v.reconciliationRequired === 'boolean') &&
 		(v.uiMode === undefined || v.uiMode === 'HOSTED' || isOnPageCheckoutMode(v.uiMode)) &&
 		(v.attemptId === undefined || (typeof v.attemptId === 'string' && UUID.test(v.attemptId))) &&
 		(v.completing === undefined || typeof v.completing === 'boolean') &&
@@ -108,7 +111,7 @@ const isStoredCheckout = (value: unknown): value is StoredCheckout => {
 export function paymentStore(publicId: string, storage: Storage | null): PaymentStore {
 	const tokenKey = `fionas.pay.${publicId}.token`;
 	const checkoutKey = `fionas.pay.${publicId}.checkout`;
-	const memory = new Map<string, string>();
+	const memory = new Map<string, string | null>();
 	let persistent = false;
 	try {
 		if (storage) {
@@ -121,24 +124,29 @@ export function paymentStore(publicId: string, storage: Storage | null): Payment
 		persistent = false;
 	}
 	const get = (key: string) => {
-		if (!persistent) return memory.get(key) ?? null;
+		if (memory.has(key)) return memory.get(key) ?? null;
+		if (!persistent) return null;
 		try {
 			return storage!.getItem(key);
 		} catch {
-			return memory.get(key) ?? null;
+			return null;
 		}
 	};
-	const set = (key: string, value: string) => {
-		memory.set(key, value);
-		if (!persistent) return;
-		try {
-			storage!.setItem(key, value);
-		} catch {
-			// Quota or policy failure: keep the in-memory copy for this page's lifetime.
+	const set = (key: string, value: string, requirePersistence = false) => {
+		if (persistent) {
+			try {
+				storage!.setItem(key, value);
+			} catch {
+				if (requirePersistence) return false;
+			}
+		} else if (requirePersistence) {
+			return false;
 		}
+		memory.set(key, value);
+		return true;
 	};
 	const remove = (key: string) => {
-		memory.delete(key);
+		memory.set(key, null);
 		if (!persistent) return;
 		try {
 			storage!.removeItem(key);
@@ -166,7 +174,8 @@ export function paymentStore(publicId: string, storage: Storage | null): Payment
 				return null;
 			}
 		},
-		saveCheckout: (checkout) => set(checkoutKey, JSON.stringify(checkout)),
+		saveCheckout: (checkout, requirePersistence) =>
+			set(checkoutKey, JSON.stringify(checkout), requirePersistence),
 		forgetCheckout: () => remove(checkoutKey)
 	};
 }
@@ -216,6 +225,10 @@ export function classifyCheckoutFailure(
 				return 'processing';
 			case 'payment_state_changed':
 				return 'state-changed';
+			case 'payment_terms_changed':
+				return 'terms-changed';
+			case 'checkout_key_reused':
+				return 'key-reused';
 			case 'checkout_recovery_conflict':
 				return 'recovery-conflict';
 			case 'checkout_reconciliation_required':

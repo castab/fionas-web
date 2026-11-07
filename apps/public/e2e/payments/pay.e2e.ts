@@ -153,7 +153,7 @@ test('a cancelled Checkout that is still open resumes with the same key, never a
 	await page.getByRole('button', { name: 'Pay deposit $240.00' }).click();
 	await expect(page).toHaveURL(/checkout\.stripe\.com/);
 	await page.getByRole('link', { name: "Back to Fiona's" }).click();
-	await expect(page.getByTestId('payment-notice')).toContainText('Checkout was cancelled');
+	await expect(page.getByTestId('payment-notice')).toContainText('You returned from checkout');
 	await expect(page.getByTestId('pay')).toHaveCount(0);
 	await page.getByRole('button', { name: 'Check previous payment and continue' }).click();
 	await expect(page).toHaveURL(/checkout\.stripe\.com/);

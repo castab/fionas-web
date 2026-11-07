@@ -23,7 +23,7 @@ export type PaymentView =
 	| { kind: 'deposit-due'; terms: PayableTerms & { purpose: 'DEPOSIT' } }
 	| { kind: 'balance-due'; terms: PayableTerms & { purpose: 'INVOICE' } }
 	/** Another payment may be underway; `recovery` terms exist only when a check is offered. */
-	| { kind: 'in-progress'; recovery: PayableTerms | null }
+	| { kind: 'in-progress'; recovery: PayableTerms | null; restart?: RestartReview }
 	| { kind: 'reconciliation' }
 	| { kind: 'no-balance'; creditCents: bigint | null }
 	| { kind: 'closed' }
@@ -32,6 +32,8 @@ export type PaymentView =
 	| { kind: 'unavailable' };
 
 const ACTIVE = ['QUOTED', 'BOOKED', 'SERVED'];
+
+export type RestartReview = { token: string; terms: PayableTerms };
 
 /**
  * The coherent payable terms in this summary, ignoring only whether another payment is underway.
@@ -75,11 +77,23 @@ export function paymentView(summary: CustomerPaymentSummary): PaymentView {
 	if (lifecycle === 'CLOSED') return { kind: 'closed' };
 	if (!ACTIVE.includes(lifecycle)) return { kind: 'unavailable' };
 	if (summary.reconciliationPending) return { kind: 'reconciliation' };
-	if (summary.paymentInProgress)
+	if (summary.paymentInProgress) {
+		const terms = payableTerms(summary);
+		const token = summary.checkoutRestartToken;
+		const restart =
+			!summary.canPay &&
+			summary.unavailableReason === 'PAYMENT_IN_PROGRESS' &&
+			token &&
+			terms &&
+			(terms.purpose === 'DEPOSIT' || decimalToCents(summary.balance) === terms.amountCents)
+				? { token, terms }
+				: undefined;
 		return {
 			kind: 'in-progress',
-			recovery: summary.checkoutRecoveryAvailable ? payableTerms(summary) : null
+			recovery: summary.checkoutRecoveryAvailable ? terms : null,
+			...(restart && { restart })
 		};
+	}
 	if (!summary.canPay) {
 		switch (summary.unavailableReason) {
 			case 'NO_PAYMENT_DUE': {

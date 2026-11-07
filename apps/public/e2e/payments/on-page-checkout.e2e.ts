@@ -14,8 +14,15 @@ type Summary = ReturnType<typeof quotedSummary>;
 type UiMode = 'HOSTED' | 'EMBEDDED' | 'ELEMENTS' | 'LEGACY';
 type Call = { method: string; url: string; key?: string; body?: string };
 
-async function scenario(request: APIRequestContext, summary: Summary, uiMode: UiMode) {
-	const response = await request.post(`${stub}/__test__/scenario`, { data: { summary, uiMode } });
+async function scenario(
+	request: APIRequestContext,
+	summary: Summary,
+	uiMode: UiMode,
+	restart = false
+) {
+	const response = await request.post(`${stub}/__test__/scenario`, {
+		data: { summary, uiMode, restart }
+	});
 	expect(response.ok()).toBe(true);
 	return (await response.json()) as { publicId: string; token: string };
 }
@@ -26,6 +33,7 @@ async function stubState(request: APIRequestContext, publicId: string) {
 	return (await (await request.get(`${stub}/__test__/scenario/${publicId}`)).json()) as {
 		calls: Call[];
 		secrets: string[];
+		attempts: { id: string; state: string; replacedAttemptId?: string }[];
 	};
 }
 const posts = async (request: APIRequestContext, publicId: string) =>
@@ -449,7 +457,7 @@ test('a staff amendment while the form is open removes it; checking reuses the s
 // The fake consumes the actual Appearance API config and font in its iframes. Its fields
 // contain placeholders only, and its confirm function never contacts a provider.
 function elementsScript(
-	cents: number,
+	cents: number | number[],
 	fail = false,
 	wallets: { applePay?: boolean; googlePay?: boolean } = {}
 ) {
@@ -471,7 +479,7 @@ function elementsScript(
 				const getSession = () => ({
 					currency: 'usd',
 					minorUnitsAmountDivisor: 100,
-					total: { total: { minorUnitsAmount: ${cents}, amount: 'untrusted display amount' } },
+					total: { total: { minorUnitsAmount: ${Array.isArray(cents) ? `(${JSON.stringify(cents)})[t.creates - 1]` : cents}, amount: 'untrusted display amount' } },
 					status: { type: 'open' },
 					canConfirm: values.contact && values.payment
 				});
@@ -598,6 +606,132 @@ async function fakeFields(page: Page) {
 		.getByLabel('Card number')
 		.fill('Mock payment details');
 }
+
+test('restarts an abandoned $250 Elements checkout for $150 with a fresh form', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, bookedSummary(), 'ELEMENTS', true);
+	await fakeStripe(page, elementsScript([25000, 15000, 15000]));
+	await open(page, publicId, token);
+	await page.getByRole('radio', { name: 'A different amount' }).check();
+	await page.getByLabel('Amount (USD)').fill('250');
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('elements-amount')).toHaveText('$250.00');
+	await fakeFields(page);
+	await expect(page.getByRole('button', { name: 'Pay $250.00' })).toBeEnabled();
+	await page.getByRole('button', { name: 'Back to booking overview' }).click();
+	await expect(page.getByTestId('elements-checkout')).toHaveCount(0);
+	expect(await elementsState(page)).toMatchObject({ destroys: 2, confirms: 0 });
+	await expect(page.getByRole('button', { name: 'Continue previous payment' })).toBeVisible();
+	await page.getByTestId('review-restart').click();
+	await page.getByRole('radio', { name: 'A different amount' }).check();
+	await page.getByLabel('Amount (USD)').fill('150');
+	const before = await stubState(request, publicId);
+	expect(before.attempts).toEqual([{ id: expect.any(String), state: 'OPEN' }]);
+	expect(await posts(request, publicId)).toHaveLength(1);
+
+	// The replacement authorizes successfully, but Stripe's form fails to initialize once.
+	await page.evaluate(() => {
+		(window as unknown as { __elementsTest: ElementsTest }).__elementsTest.fail = true;
+	});
+	await page.getByTestId('submit-restart').click();
+	const panel = page.getByTestId('elements-checkout');
+	await expect(panel.getByRole('alert')).toContainText("We couldn't load the secure payment form");
+	const [previous, replacement] = (await stubState(request, publicId)).attempts;
+	expect(previous.state).toBe('EXPIRED');
+	expect(replacement).toMatchObject({ state: 'OPEN', replacedAttemptId: previous.id });
+	await page.evaluate(() => {
+		(window as unknown as { __elementsTest: ElementsTest }).__elementsTest.fail = false;
+	});
+	await panel.getByRole('button', { name: 'Check previous payment' }).click();
+	await expect(panel.getByTestId('elements-amount')).toHaveText('$150.00');
+	const pay = panel.getByRole('button', { name: 'Pay $150.00' });
+	await expect(pay).toBeDisabled();
+	await fakeFields(page);
+	await expect(pay).toBeEnabled();
+	expect(await elementsState(page)).toMatchObject({ creates: 3, confirms: 0 });
+	const [original, restart, recovery] = await posts(request, publicId);
+	expect(restart.key).not.toBe(original.key);
+	expect(JSON.parse(restart.body!)).toMatchObject({
+		amountMinor: 15000,
+		restartToken: expect.any(String)
+	});
+	expect(recovery).toEqual(restart);
+	expect((await stubState(request, publicId)).attempts).toHaveLength(2);
+});
+
+test('a second tab restarts the Invoice and recovers the replacement after its response is lost', async ({
+	page,
+	context,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, bookedSummary(), 'EMBEDDED', true);
+	await fakeStripe(page);
+	await open(page, publicId, token);
+	await page.getByRole('radio', { name: 'A different amount' }).check();
+	await page.getByLabel('Amount (USD)').fill('250');
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('embedded-amount')).toHaveText('$250.00');
+	await page.getByRole('button', { name: 'Back to booking overview' }).click();
+
+	// Hold this tab's restart in transit so the second tab can replace the same target first.
+	let releaseFirstTab!: () => void;
+	const firstTabCanSend = new Promise<void>((resolve) => (releaseFirstTab = resolve));
+	await page.route('**/api/payments/*/checkout-sessions', async (route) => {
+		await firstTabCanSend;
+		await route.continue();
+	});
+	await page.getByTestId('review-restart').click();
+	await page.getByTestId('submit-restart').click();
+
+	const secondTab = await context.newPage();
+	await fakeStripe(secondTab);
+	await open(secondTab, publicId, token);
+	await expect(
+		secondTab.getByRole('button', { name: 'Continue previous payment', exact: true })
+	).toHaveCount(0);
+	await secondTab.getByTestId('review-restart').click();
+	await secondTab.getByRole('radio', { name: 'A different amount' }).check();
+	await secondTab.getByLabel('Amount (USD)').fill('150');
+	await update(request, publicId, { replies: [{ dropAfterCommit: true }] });
+	await secondTab.getByTestId('submit-restart').click();
+	await expect(secondTab.getByTestId('embedded-amount')).toHaveText('$150.00');
+	releaseFirstTab();
+	await expect(page.getByTestId('payment-notice')).toContainText(
+		'Your payment status just changed'
+	);
+	await expect(page.getByTestId('review-restart')).toBeVisible();
+	const [original, restart, retry, competing] = await posts(request, publicId);
+	expect(JSON.parse(original.body!)).not.toHaveProperty('restartToken');
+	expect(restart.key).not.toBe(original.key);
+	expect(retry).toEqual(restart);
+	expect(competing.key).not.toBe(restart.key);
+	expect(JSON.parse(competing.body!).restartToken).toBe(JSON.parse(restart.body!).restartToken);
+	expect((await stubState(request, publicId)).attempts).toHaveLength(2);
+	await expect(secondTab).toHaveURL(new RegExp(`/pay/${publicId}$`));
+});
+
+test('restarting a Quote deposit reviews the approved amount without amount options', async ({
+	page,
+	request
+}) => {
+	const { publicId, token } = await scenario(request, quotedSummary(), 'EMBEDDED', true);
+	await fakeStripe(page);
+	await open(page, publicId, token);
+	await page.getByTestId('pay').click();
+	await expect(page.getByTestId('embedded-amount')).toHaveText('$240.00');
+	await page.getByRole('button', { name: 'Back to booking overview' }).click();
+	await page.getByTestId('review-restart').click();
+	await expect(page.getByText('Approved deposit due')).toContainText('$240.00');
+	await expect(page.getByRole('radio')).toHaveCount(0);
+	await page.getByTestId('submit-restart').click();
+	await expect(page.getByTestId('embedded-amount')).toHaveText('$240.00');
+	const [original, restart] = await posts(request, publicId);
+	expect(restart.key).not.toBe(original.key);
+	expect(JSON.parse(restart.body!)).toMatchObject({ restartToken: expect.any(String) });
+	expect(JSON.parse(restart.body!)).not.toHaveProperty('amountMinor');
+});
 
 test('Elements deposit stays pending until commerce records it', async ({ page, request }) => {
 	const logs: string[] = [];

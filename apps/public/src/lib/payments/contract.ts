@@ -41,6 +41,7 @@ export type CustomerPaymentSummary = {
 	reconciliationPending: boolean;
 	/** Optional in the contract; absent means false. */
 	checkoutRecoveryAvailable: boolean;
+	checkoutRestartToken?: string;
 	history: PaymentReceipt[];
 };
 
@@ -50,6 +51,8 @@ export type CheckoutCommand = {
 	expectedBusinessRevision: number;
 	/** A partial Invoice payment in integer cents. Omitted for a deposit or a whole balance. */
 	amountMinor?: number;
+	/** Opaque review of a specific previous attempt, supplied only for deliberate restart. */
+	restartToken?: string;
 };
 
 /** How commerce presents an attempt. Immutable per attempt: a same-key retry keeps its mode. */
@@ -68,6 +71,7 @@ export function isOnPageCheckoutMode(value: unknown): value is OnPageCheckoutMod
  */
 export type CheckoutResponse = {
 	attemptId: string;
+	replacedAttemptId?: string;
 	uiMode?: CheckoutUiMode;
 	url?: string;
 	clientSecret?: string;
@@ -92,6 +96,9 @@ export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 /** The bearer commerce issues: 32 random bytes, base64url without padding. */
 export const PAYMENT_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{1,128}$/;
+const RESTART_TOKEN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\.[A-Za-z0-9_-]{43}){2}$/;
+const isRestartToken = (value: unknown): value is string =>
+	typeof value === 'string' && RESTART_TOKEN.test(value);
 const ENUM = /^[A-Z][A-Z_]{0,63}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
@@ -175,7 +182,8 @@ export function readPaymentSummary(value: unknown): CustomerPaymentSummary | nul
 		unavailableReason,
 		paymentInProgress,
 		reconciliationPending,
-		checkoutRecoveryAvailable
+		checkoutRecoveryAvailable,
+		checkoutRestartToken
 	} = value;
 	if (
 		!document ||
@@ -212,6 +220,7 @@ export function readPaymentSummary(value: unknown): CustomerPaymentSummary | nul
 		paymentInProgress,
 		reconciliationPending,
 		checkoutRecoveryAvailable: checkoutRecoveryAvailable === true,
+		...(isRestartToken(checkoutRestartToken) && { checkoutRestartToken }),
 		history: history as PaymentReceipt[]
 	};
 }
@@ -238,6 +247,7 @@ export function readCheckoutResponse(value: unknown): CheckoutResponse | null {
 export type CheckoutResponseProblem =
 	| 'not_object'
 	| 'attempt_id'
+	| 'replaced_attempt_id'
 	| 'state'
 	| 'outcome'
 	| 'ui_mode'
@@ -250,29 +260,37 @@ export function inspectCheckoutResponse(
 	value: unknown
 ): { response: CheckoutResponse } | { problem: CheckoutResponseProblem } {
 	if (!isObject(value)) return { problem: 'not_object' };
-	const { attemptId, uiMode, url, clientSecret, state, outcome } = value;
+	const { attemptId, replacedAttemptId, uiMode, url, clientSecret, state, outcome } = value;
 	if (typeof attemptId !== 'string' || !UUID.test(attemptId)) return { problem: 'attempt_id' };
+	if (
+		!absent(replacedAttemptId) &&
+		(typeof replacedAttemptId !== 'string' || !UUID.test(replacedAttemptId))
+	)
+		return { problem: 'replaced_attempt_id' };
 	if (!isEnum(state)) return { problem: 'state' };
 	if (!isEnum(outcome)) return { problem: 'outcome' };
 	if (!(absent(uiMode) || uiMode === 'HOSTED' || isOnPageCheckoutMode(uiMode)))
 		return { problem: 'ui_mode' };
 	const mode = absent(uiMode) ? undefined : (uiMode as CheckoutUiMode);
-	if (state !== 'OPEN')
-		return { response: { attemptId, ...(mode && { uiMode: mode }), state, outcome } };
+	const attempt = {
+		attemptId,
+		...(typeof replacedAttemptId === 'string' && { replacedAttemptId }),
+		state,
+		outcome
+	};
+	if (state !== 'OPEN') return { response: { ...attempt, ...(mode && { uiMode: mode }) } };
 	const hasUrl = typeof url === 'string' && url.length > 0 && url.length <= 4096;
 	const hasSecret = isClientSecret(clientSecret);
 	if (!(hasUrl || absent(url))) return { problem: 'url' };
 	if (!(hasSecret || absent(clientSecret))) return { problem: 'client_secret' };
 	if ((mode === 'HOSTED' || mode === undefined) && hasUrl && !hasSecret)
-		return { response: { attemptId, uiMode: 'HOSTED', url: url as string, state, outcome } };
+		return { response: { ...attempt, uiMode: 'HOSTED', url: url as string } };
 	if (isOnPageCheckoutMode(mode) && hasSecret && !hasUrl)
 		return {
 			response: {
-				attemptId,
+				...attempt,
 				uiMode: mode,
-				clientSecret: clientSecret as string,
-				state,
-				outcome
+				clientSecret: clientSecret as string
 			}
 		};
 	return { problem: 'credentials' };
@@ -316,12 +334,18 @@ export function readCheckoutCommand(value: unknown): CheckoutCommand | null {
 	const keys = Object.keys(value);
 	if (
 		!keys.every((key) =>
-			['expectedDocumentVersion', 'expectedBusinessRevision', 'amountMinor'].includes(key)
+			[
+				'expectedDocumentVersion',
+				'expectedBusinessRevision',
+				'amountMinor',
+				'restartToken'
+			].includes(key)
 		)
 	)
 		return null;
-	const { expectedDocumentVersion, expectedBusinessRevision, amountMinor } = value;
+	const { expectedDocumentVersion, expectedBusinessRevision, amountMinor, restartToken } = value;
 	if (!isCount(expectedDocumentVersion, 1) || !isCount(expectedBusinessRevision, 1)) return null;
+	if (restartToken !== undefined && !isRestartToken(restartToken)) return null;
 	if (
 		amountMinor !== undefined &&
 		(!Number.isSafeInteger(amountMinor) ||
@@ -332,7 +356,8 @@ export function readCheckoutCommand(value: unknown): CheckoutCommand | null {
 	return {
 		expectedDocumentVersion,
 		expectedBusinessRevision,
-		...(amountMinor !== undefined && { amountMinor: amountMinor as number })
+		...(amountMinor !== undefined && { amountMinor: amountMinor as number }),
+		...(restartToken !== undefined && { restartToken })
 	};
 }
 
@@ -341,7 +366,8 @@ export function serializeCommand(command: CheckoutCommand): string {
 	return JSON.stringify({
 		expectedDocumentVersion: command.expectedDocumentVersion,
 		expectedBusinessRevision: command.expectedBusinessRevision,
-		...(command.amountMinor !== undefined && { amountMinor: command.amountMinor })
+		...(command.amountMinor !== undefined && { amountMinor: command.amountMinor }),
+		...(command.restartToken !== undefined && { restartToken: command.restartToken })
 	});
 }
 

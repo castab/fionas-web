@@ -6,6 +6,8 @@ import {
 	openCheckout,
 	publicId,
 	quotedSummary,
+	restartEligible,
+	restartToken,
 	token
 } from '$lib/payments/testing/fixtures.js';
 
@@ -172,6 +174,41 @@ describe('summary BFF', () => {
 });
 
 describe('checkout BFF', () => {
+	it('relays a restart review and command only through the authorized BFF bodies', async () => {
+		reply = () => Response.json(quotedSummary(restartEligible));
+		expect(await (await paymentSummary(summaryEvent())).json()).toMatchObject({
+			checkoutRestartToken: restartToken
+		});
+		reply = () => Response.json({ ...openCheckout, replacedAttemptId: embeddedCheckout.attemptId });
+		const response = await createCheckout(
+			checkoutEvent(
+				{},
+				JSON.stringify({
+					restartToken,
+					expectedBusinessRevision: 4,
+					expectedDocumentVersion: 3
+				})
+			)
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ replacedAttemptId: embeddedCheckout.attemptId });
+		expect(sent[1].init.body).toBe(`${command.slice(0, -1)},"restartToken":"${restartToken}"}`);
+		expect(sent[1].url).not.toContain(restartToken);
+		expect(JSON.stringify(headersOf(sent[1].init))).not.toContain(restartToken);
+		const invalid = await createCheckout(
+			checkoutEvent(
+				{},
+				JSON.stringify({
+					expectedDocumentVersion: 3,
+					expectedBusinessRevision: 4,
+					restartToken: 'invalid'
+				})
+			)
+		);
+		expect(invalid.status).toBe(400);
+		expect(sent).toHaveLength(2);
+	});
+
 	it('forwards the bearer, one Idempotency-Key and the canonical command only', async () => {
 		reply = () => Response.json(openCheckout);
 		const response = await createCheckout(
