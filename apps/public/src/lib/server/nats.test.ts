@@ -126,6 +126,53 @@ describe('isNatsReady', () => {
 		expect(vi.mocked(connect).mock.calls[0][0]).not.toHaveProperty('token');
 	});
 
+	it('passes no TLS options without a configured CA', async () => {
+		vi.mocked(connect).mockResolvedValue(fakeConnection().nc);
+		expect(await isNatsReady()).toBe(true);
+		expect(vi.mocked(connect).mock.calls[0][0]).not.toHaveProperty('tls');
+	});
+
+	it('trusts an inline NATS_TLS_CA for this connection, with any auth method', async () => {
+		const pem = '-----BEGIN CERTIFICATE-----\nTESTONLY\n-----END CERTIFICATE-----';
+		state.env.NATS_URL = 'tls://nats.internal.test:4222';
+		state.env.NATS_TLS_CA = `\n${pem}\n`;
+		state.env.NATS_TOKEN = 'test-only-preshared-token';
+		vi.mocked(connect).mockResolvedValue(fakeConnection().nc);
+		expect(await isNatsReady()).toBe(true);
+		expect(connect).toHaveBeenCalledWith(
+			expect.objectContaining({ tls: { ca: pem }, token: state.env.NATS_TOKEN })
+		);
+		expect(logged()).not.toContain('TESTONLY');
+	});
+
+	it('turns literal \\n escapes in NATS_TLS_CA into line breaks', async () => {
+		state.env.NATS_TLS_CA = '-----BEGIN CERTIFICATE-----\\nTESTONLY\\n-----END CERTIFICATE-----\\n';
+		vi.mocked(connect).mockResolvedValue(fakeConnection().nc);
+		expect(await isNatsReady()).toBe(true);
+		expect(vi.mocked(connect).mock.calls[0][0]?.tls).toEqual({
+			ca: '-----BEGIN CERTIFICATE-----\nTESTONLY\n-----END CERTIFICATE-----'
+		});
+	});
+
+	it('passes NATS_TLS_CA_FILE to the transport, and prefers the inline CA', async () => {
+		state.env.NATS_TLS_CA_FILE = '/run/secrets/test-only-ca.pem';
+		const first = fakeConnection();
+		vi.mocked(connect).mockResolvedValueOnce(first.nc);
+		expect(await isNatsReady()).toBe(true);
+		expect(vi.mocked(connect).mock.calls[0][0]?.tls).toEqual({
+			caFile: '/run/secrets/test-only-ca.pem'
+		});
+		expect(logged()).not.toContain('test-only-ca.pem');
+
+		// A CA change is a settings change: the old connection is replaced.
+		state.env.NATS_TLS_CA = 'test-only-inline-pem';
+		vi.mocked(connect).mockResolvedValueOnce(fakeConnection().nc);
+		expect(await isNatsReady()).toBe(true);
+		expect(first.nc.isClosed()).toBe(true);
+		expect(connect).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(connect).mock.calls[1][0]?.tls).toEqual({ ca: 'test-only-inline-pem' });
+	});
+
 	it('is not ready without NATS_URL, and says so once', async () => {
 		delete state.env.NATS_URL;
 		expect(await isNatsReady()).toBe(false);
