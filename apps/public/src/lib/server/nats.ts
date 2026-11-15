@@ -10,11 +10,17 @@ import { jetstream } from '@nats-io/jetstream';
  * - NATS_CREDS_FILE: a .creds file (decentralized JWT auth; preferred in production), or
  * - NATS_TOKEN: a preshared token, or
  * - NATS_USER + NATS_PASSWORD
+ * - NATS_TLS_CA (the PEM text itself, which takes precedence) or NATS_TLS_CA_FILE (a path):
+ *   optional. The CA bundle that verifies the server's TLS certificate, for a broker with a
+ *   private CA. It is trusted for this NATS connection only, never process-wide. Without it, TLS
+ *   uses Node's default trust. The client upgrades to TLS whenever the server requires it, and a
+ *   `tls://` NATS_URL makes the intent explicit.
  *
  * The connection opens lazily when /book first loads or submits (so the marketing site starts
  * without NATS), reconnects on its own, is rebuilt if the settings change, and drains when
  * SvelteKit shuts down. Connection changes are logged as `[nats] …`. Server URLs, users,
- * credentials and the creds path are never logged or returned: NATS_URL may embed credentials.
+ * credentials and the creds and CA paths are never logged or returned: NATS_URL may embed
+ * credentials.
  */
 
 /** NATS couldn't be used at all (unconfigured, unreachable, closed or draining): nothing was sent. */
@@ -45,7 +51,26 @@ export type JetStreamPublish = (
 
 const CONNECT_TIMEOUT_MS = 3000;
 
-type Settings = { servers: string[]; creds?: string; token?: string; user?: string; pass?: string };
+type Tls = { ca: string } | { caFile: string };
+type Settings = {
+	servers: string[];
+	tls?: Tls;
+	creds?: string;
+	token?: string;
+	user?: string;
+	pass?: string;
+};
+
+/**
+ * The private CA that verifies the server, if one is configured. Single-line hosts may store the
+ * PEM with literal `\n` escapes; PEM never contains a backslash, so they are always line breaks.
+ */
+function tlsFromEnv(): Tls | undefined {
+	const ca = env.NATS_TLS_CA?.replaceAll('\\n', '\n').trim();
+	if (ca) return { ca };
+	const caFile = env.NATS_TLS_CA_FILE?.trim();
+	return caFile ? { caFile } : undefined;
+}
 
 function settingsFromEnv(): Settings | null {
 	const servers = (env.NATS_URL ?? '')
@@ -53,24 +78,28 @@ function settingsFromEnv(): Settings | null {
 		.map((s) => s.trim())
 		.filter(Boolean);
 	if (servers.length === 0) return null;
+	const tls = tlsFromEnv();
+	const base = tls ? { servers, tls } : { servers };
 	const creds = env.NATS_CREDS_FILE?.trim();
-	if (creds) return { servers, creds };
+	if (creds) return { ...base, creds };
 	const token = env.NATS_TOKEN;
-	if (token) return { servers, token };
+	if (token) return { ...base, token };
 	return {
-		servers,
+		...base,
 		user: env.NATS_USER?.trim() || undefined,
 		pass: env.NATS_PASSWORD || undefined
 	};
 }
 
-async function open({ servers, creds, token, user, pass }: Settings): Promise<NatsConnection> {
+async function open({ servers, tls, creds, token, user, pass }: Settings): Promise<NatsConnection> {
 	return connect({
 		servers,
 		name: 'fionas-web',
 		timeout: CONNECT_TIMEOUT_MS,
 		// Keep trying after a drop; a publish meanwhile times out and is reported as unknown.
 		maxReconnectAttempts: -1,
+		// The transport reads caFile itself when it dials; a CA is trusted for this connection only.
+		...(tls ? { tls } : {}),
 		...(creds
 			? { authenticator: credsAuthenticator(readFileSync(creds)) }
 			: token
