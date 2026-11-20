@@ -52,6 +52,7 @@ Why it has to be this way:
 | Request review + Quote, revision and amendment actions | `apps/admin/src/routes/(app)/requests/[inquiryId]/`, `$lib/server/editor-actions.ts` |
 | Request workspace behavior                             | `docs/admin-request-workspace.md`                                                    |
 | Sign out                                               | `apps/admin/src/routes/logout/+server.ts`                                            |
+| Staff push (devices, test, service worker)             | `docs/admin-push-notifications.md`, `src/lib/server/notifications.ts`                |
 | Temporary sign-in toast (to be removed)                | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte`                   |
 
 Anything under `src/lib/server/` is server-only (SvelteKit refuses to bundle it into the client). New
@@ -159,7 +160,7 @@ E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `
 Quote + deposit + proposal issuance, the Quote revision and Invoice amendment preview and publication routes
 (`quote-revision-preview`, `proposals/quote-revisions`, `invoice-revision-preview`, `invoice-revisions`),
 `GET /financial-documents/{documentId}/history` and `.../deposit-requirement/history`, `POST /financial-documents/{documentId}/payments`, and
-`POST /inquiries/{inquiryId}/served` and `/close` (Origin check, `Secure; HttpOnly` cookie, plus the usernames
+`POST /inquiries/{inquiryId}/served` and `/close`, the six staff push routes under `/staff/notifications/` (`e2e/push-stub.mjs`) (Origin check, `Secure; HttpOnly` cookie, plus the usernames
 `ratelimited` and `outage` to simulate login 429 and 500). Dashboard scenarios and read counters are
 session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
 Request projections and atomic proposal mutations also have session-isolated state, including stale and
@@ -169,7 +170,7 @@ rate limited per IP, so don't point automated tests at it.
 
 ## Conversation boundary
 
-See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. A validated `idempotencyKey` is accepted only with a named, path-bound `capability`: `conversationReply` (`…/conversation/replies`) and `financialEmailSend` (`…/financial-emails`), both POST with a 100-second timeout and no retry; `financialEmailPreview` (`…/financial-emails/preview`, no key) waits 30 seconds for the provider thread lookup. All other calls keep eight seconds. No arbitrary browser headers pass through, and admin-local cookies (`fionas_reply_intent`, `fionas_fe*`) are stripped from the forwarded `Cookie`, so commerce receives only the staff session. Neither admin tier accesses Resend directly. Quote/Invoice emails: [admin-financial-emails.md](admin-financial-emails.md).
+See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. A validated `idempotencyKey` is accepted only with a named, path-bound `capability`: `conversationReply` (`…/conversation/replies`) and `financialEmailSend` (`…/financial-emails`), both POST with a 100-second timeout and no retry; `financialEmailPreview` (`…/financial-emails/preview`, no key) waits 30 seconds for the provider thread lookup; `staffTestNotification` (`/staff/notifications/test`) carries the browser's per-click key with the usual eight seconds ([admin-push-notifications.md](admin-push-notifications.md)). All other calls keep eight seconds. No arbitrary browser headers pass through, and admin-local cookies (`fionas_reply_intent`, `fionas_fe*`) are stripped from the forwarded `Cookie`, so commerce receives only the staff session. Neither admin tier accesses Resend directly. Quote/Invoice emails: [admin-financial-emails.md](admin-financial-emails.md).
 
 ## Request-scoped SSE exception
 
@@ -183,6 +184,16 @@ release. Retryable 200 placeholders differ from terminal 204s; only real timelin
 an authoritative conversation read. No page-level invalidation or browser commerce connection exists.
 See [Live timeline updates](admin-conversation.md#live-timeline-updates) for classification, lifecycle,
 composer safety, backend enablement and the deployment proxy verification checklist.
+
+## Staff push JSON exception
+
+The five same-origin staff push endpoints under `/settings/notifications/` (config, subscriptions,
+`subscriptions/[subscriptionId]`, test, `test/[notificationId]`) still resolve `/auth/me`, but a
+signed-out caller gets `401 {"code":"unauthenticated"}` with `no-store` instead of `303 /login`, so
+the page, the shell and the service worker never receive HTML from a `fetch`. The match is an exact
+`event.route.id` list; every other route, including the Notifications page, keeps the redirect.
+`/service-worker.js`, `/manifest.webmanifest` and `/icons/*` are static and served before hooks.
+See [admin-push-notifications.md](admin-push-notifications.md#hooks-exception-json-401-instead-of-a-login-redirect).
 
 ## Customer payment links
 

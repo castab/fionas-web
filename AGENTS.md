@@ -34,6 +34,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Customer payments (`/pay`, BFF, staff link)    | `docs/customer-payments.md`, `apps/public/src/lib/payments/`, `$lib/server/payments/`, `customer-payments.svelte`                                  |
 | Previous checkout release, attempt status      | `docs/customer-payments.md#previous-checkouts-after-a-revision`, `$lib/checkout-attempts.ts`                                                       |
 | Quote/Invoice emails (preview, send, recovery) | `docs/admin-financial-emails.md`, `$lib/financial-email.ts`, `$lib/server/financial-email-*.ts`, `components/requests/financial-email/`            |
+| Staff push (enroll, test, service worker)      | `docs/admin-push-notifications.md`, `$lib/server/notifications.ts`, `$lib/push-*.ts`, `src/service-worker.ts`, `routes/(app)/settings/`            |
 | Gallery                                        | `apps/public/src/routes/gallery/`, `$lib/server/presentation-service/`                                                                             |
 | Landing page                                   | `apps/public/src/routes/+page.svelte`, `$lib/components/`                                                                                          |
 
@@ -112,4 +113,12 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   only that, never rebased or re-keyed. UNKNOWN/ambiguous outcomes lock to Reconcile; never clear UNKNOWN on a refresh;
   a commerce UNKNOWN without a local record fails closed. Accepted is not Delivered. Sends never acknowledge mail.
   Customers never see generated version labels; staff Activity does. `ADMIN_RECOVERY_SECRET` is shared by all instances.
+- Admin staff Web Push (`docs/admin-push-notifications.md`): the page, shell and service worker call only the same-origin
+  `/settings/notifications/*` endpoints, which forward whitelisted subscription fields (never raw browser JSON) and answer
+  our own copy, `no-store`. Signed out, exactly those JSON routes answer 401 instead of the login redirect. The test send
+  uses one browser key per click (reused for that click's retries) via the `staffTestNotification` capability. "This
+  device" lives in IndexedDB only, and every re-enrollment resends its label (commerce replaces it). The service worker
+  has no `fetch` handler and caches nothing (admin pages are private), and a notification click opens only a
+  same-origin relative path (`safeNotificationPath`), never an absolute URL from a payload. Sign-out cleanup is best
+  effort and bounded; the logout form stays a plain POST.
 - Admin live timeline updates use `$lib/server/timeline-updates.ts` and the exact GET `/requests/[inquiryId]/updates` hook exception; commerce's SSE handshake owns authorization. Native EventSource only invalidates the authoritative conversation read. Preserve retryable placeholders versus terminal 204, initial revision-zero synchronization, serialized pending refreshes, local composer/recovery state and disclosure keys. Never refresh on open or automatically invalidate the whole workspace; changed financial history re-reads only the staff request (`/requests/[inquiryId]/staff-request`) to update Right now in place, never while a review panel or form result holds a reviewed snapshot (then it says Reload to review). Deploy commerce `FIONAS_TIMELINE_UPDATES_ENABLED=true` with V7/V8; see `docs/admin-conversation.md` for proxy checks and limitations.

@@ -1,8 +1,19 @@
-import { redirect, type Handle } from '@sveltejs/kit';
+import { json, redirect, type Handle } from '@sveltejs/kit';
 import { getCurrentUser } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
 
 const LOGIN_PATH = '/login';
+/**
+ * The staff push JSON endpoints, called by the Notifications page, the signed-in shell and the
+ * service worker. Signed out, they answer a JSON 401 instead of an HTML redirect to /login.
+ */
+const PUSH_JSON_ROUTES = new Set([
+	'/(app)/settings/notifications/config',
+	'/(app)/settings/notifications/subscriptions',
+	'/(app)/settings/notifications/subscriptions/[subscriptionId]',
+	'/(app)/settings/notifications/test',
+	'/(app)/settings/notifications/test/[notificationId]'
+]);
 
 /**
  * Resolve the signed-in staff member on every request by forwarding the browser's session cookie to
@@ -21,6 +32,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 	);
 
 	const onLogin = event.url.pathname === LOGIN_PATH;
+	if (!event.locals.user && event.route.id && PUSH_JSON_ROUTES.has(event.route.id)) {
+		return json(
+			{ code: 'unauthenticated', message: 'Your session has ended. Sign in again.' },
+			{ status: 401, headers: { 'cache-control': 'no-store' } }
+		);
+	}
 	if (!event.locals.user && !onLogin) redirect(303, LOGIN_PATH);
 	if (event.locals.user && onLogin) redirect(303, '/');
 

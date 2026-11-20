@@ -176,6 +176,41 @@ describe('request', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
+	it('sends the staff test push key only on its own route, with the usual timeout', async () => {
+		const fetch = vi.fn(async () => respond({ status: 202, body: {} }));
+		const timeout = vi.spyOn(AbortSignal, 'timeout');
+		await request(config(fetch), '/staff/notifications/test', {
+			method: 'POST',
+			json: { subscriptionId: 'x' },
+			idempotencyKey: 'click-1',
+			capability: 'staffTestNotification'
+		});
+		const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('http://api.test/staff/notifications/test');
+		expect(init.headers).toMatchObject({ 'idempotency-key': 'click-1' });
+		expect(timeout).toHaveBeenLastCalledWith(8000);
+		timeout.mockRestore();
+		const refused = [
+			{ path: '/staff/notifications/test', capability: 'staffTestNotification' },
+			{ path: '/staff/notifications/test', idempotencyKey: 'k' },
+			{
+				path: '/staff/notifications/subscriptions',
+				capability: 'staffTestNotification',
+				idempotencyKey: 'k'
+			},
+			{
+				path: '/staff/notifications/test',
+				capability: 'staffTestNotification',
+				idempotencyKey: 'k'.repeat(129)
+			}
+		] as const;
+		for (const { path, ...options } of refused)
+			await expect(request(config(fetch), path, { method: 'POST', ...options })).rejects.toThrow(
+				TypeError
+			);
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
 	it('forwards the staff session but never admin-local recovery cookies', async () => {
 		const fetch = vi.fn(async () => respond({ status: 204 }));
 		await request(config(fetch), '/auth/me', {
