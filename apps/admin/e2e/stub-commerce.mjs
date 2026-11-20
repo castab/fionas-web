@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { conversationRoute } from './conversation-stub.mjs';
 import { paymentAccessRoute } from './payment-access-stub.mjs';
 import { financialEmailRoute } from './financial-email-stub.mjs';
+import { pushRoute } from './push-stub.mjs';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
 import {
@@ -402,6 +403,19 @@ createServer(async (req, res) => {
 	if (await paymentAccessRoute(req, res, currentSession, pathname, send, readJson, trustedOrigin))
 		return;
 	if (await financialEmailRoute(req, res, currentSession, pathname, send, readJson, trustedOrigin))
+		return;
+	if (
+		await pushRoute(
+			req,
+			res,
+			sessionToken(req),
+			currentSession,
+			pathname,
+			send,
+			readJson,
+			trustedOrigin
+		)
+	)
 		return;
 	const requestMatch = /^\/staff\/requests\/([^/]+)$/.exec(pathname);
 	if (req.method === 'GET' && requestMatch) {

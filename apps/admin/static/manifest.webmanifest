@@ -1,0 +1,21 @@
+{
+	"id": "/",
+	"name": "Fiona's Admin",
+	"short_name": "Fiona's Admin",
+	"description": "Fiona's Ice Cream staff console.",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"theme_color": "#5f5b40",
+	"background_color": "#ede5d3",
+	"icons": [
+		{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+		{ "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+		{
+			"src": "/icons/icon-maskable-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "maskable"
+		}
+	]
+}

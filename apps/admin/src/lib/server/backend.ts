@@ -29,14 +29,16 @@ export type RequestOptions = {
 	conversationReply?: boolean;
 	/**
 	 * A named, path-bound capability. Each allows exactly one POST route: the two staff email sends
-	 * (which require an Idempotency-Key and wait for the provider), and the write-free financial
-	 * email preview (which performs a provider thread lookup).
+	 * (which require an Idempotency-Key and wait for the provider), the write-free financial email
+	 * preview (which performs a provider thread lookup), and the staff test push (which requires an
+	 * Idempotency-Key and keeps the usual timeout).
 	 */
 	capability?: Capability;
 };
 
 const TIMEOUT_MS = 8000;
-type Capability = 'conversationReply' | 'financialEmailSend' | 'financialEmailPreview';
+type Capability =
+	'conversationReply' | 'financialEmailSend' | 'financialEmailPreview' | 'staffTestNotification';
 /**
  * The explicit Idempotency-Key allowlist. A lookup plus two bounded provider attempts can take 90s,
  * so the sends wait 100s; configure ingress for at least 110s (docs/admin-conversation.md).
@@ -56,6 +58,12 @@ const CAPABILITIES: Record<Capability, { path: RegExp; timeout: number; key: boo
 		path: /^\/staff\/requests\/[^/]+\/financial-emails\/preview$/,
 		timeout: 30000,
 		key: false
+	},
+	// Queues one push and answers 202 after its job commits; the same key returns the same test.
+	staffTestNotification: {
+		path: /^\/staff\/notifications\/test$/,
+		timeout: TIMEOUT_MS,
+		key: true
 	}
 };
 /**

@@ -1,9 +1,10 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Wordmark, focusRing } from '@fionas/ui';
 	import { initials, roleLabel, staffHandle } from '$lib/staff.js';
+	import { releaseThisDevice, syncThisDevice, within } from '$lib/push-client.js';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
@@ -16,6 +17,27 @@
 	const onDashboard = $derived(page.url.pathname === '/');
 	const onRequestsIndex = $derived(page.url.pathname === '/requests');
 	const inRequests = $derived(onRequestsIndex || page.url.pathname.startsWith('/requests/'));
+
+	const onNotifications = $derived(page.url.pathname === '/settings/notifications');
+
+	// Re-enroll this browser's push subscription once per page load, without blocking rendering.
+	onMount(() => void syncThisDevice());
+
+	let signingOut = $state(false);
+	/**
+	 * Before the plain logout POST: remove this device from the account and unsubscribe, best
+	 * effort and bounded, so the next person on this browser starts clean. Without JavaScript the
+	 * form simply posts.
+	 */
+	async function signOut(event: SubmitEvent & { currentTarget: HTMLFormElement }) {
+		// A second submit (or one after a back/forward restore) just posts; logout is idempotent.
+		if (signingOut) return;
+		event.preventDefault();
+		const form = event.currentTarget;
+		signingOut = true;
+		await within(releaseThisDevice(), 2000, undefined);
+		form.submit();
+	}
 
 	const pillButton = `inline-flex cursor-pointer items-center justify-center rounded-full border-2 border-transparent bg-olive-700 font-sans text-[11px] leading-[1.4] font-semibold text-cream-200 uppercase transition-colors duration-(--dur-fast) ease-(--ease-out) hover:bg-olive-800 active:translate-y-px ${focusRing}`;
 	const menuItem = `flex w-full cursor-pointer items-center gap-2.5 rounded-sm border-0 bg-transparent p-2.5 text-left font-sans text-[13px] leading-[1.4] font-semibold transition-colors duration-(--dur-fast) ease-(--ease-out) ${focusRing}`;
@@ -54,6 +76,29 @@
 {/snippet}
 
 {#snippet accountActions()}
+	<a
+		href={resolve('/(app)/settings/notifications')}
+		aria-current={onNotifications ? 'page' : undefined}
+		data-testid="notifications-link"
+		onclick={(event) => event.currentTarget.closest('details')?.removeAttribute('open')}
+		class={`${menuItem} text-olive-800 no-underline hover:bg-cream-300/60 hover:text-olive-800`}
+	>
+		<svg
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.8"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path>
+			<path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path>
+		</svg>
+		Notifications
+	</a>
 	<button
 		disabled
 		title="Account settings · Coming next"
@@ -76,7 +121,7 @@
 		</svg>
 		Account settings
 	</button>
-	<form method="POST" action={resolve('/logout')}>
+	<form method="POST" action={resolve('/logout')} onsubmit={signOut}>
 		<button type="submit" class={`${menuItem} text-rust-600 hover:bg-rust-600/10`}>
 			<svg
 				width="16"
@@ -93,7 +138,7 @@
 				<path d="m16 17 5-5-5-5"></path>
 				<path d="M21 12H9"></path>
 			</svg>
-			Sign out
+			{signingOut ? 'Signing out…' : 'Sign out'}
 		</button>
 	</form>
 {/snippet}
