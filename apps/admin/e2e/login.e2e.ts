@@ -39,7 +39,7 @@ test.describe('signed out', () => {
 
 	test('the sign-in section is centered vertically in the viewport', async ({ page }) => {
 		await page.goto('/login');
-		const logo = await page.getByRole('img', { name: 'fionas ice cream' }).boundingBox();
+		const logo = await page.getByRole('img', { name: "Fiona's Ice Cream" }).boundingBox();
 		const card = await page.locator('form').boundingBox();
 		const viewport = page.viewportSize();
 		if (!logo || !card || !viewport) throw new Error('sign-in section not rendered');

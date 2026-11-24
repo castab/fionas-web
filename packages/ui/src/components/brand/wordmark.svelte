@@ -3,12 +3,12 @@
 	import type { SVGAttributes } from 'svelte/elements';
 
 	/**
-	 * The vector "fionas / ICE CREAM" wordmark (logo_underline.svg), filled with currentColor
+	 * The vector "fiona's / ICE CREAM" wordmark (logo_underline.svg), filled with currentColor
 	 * so it can be recoloured with a text-* class: olive on cream, cream on olive.
 	 */
 	let {
 		class: className,
-		label = 'fionas ice cream',
+		label = "Fiona's Ice Cream",
 		...restProps
 	}: SVGAttributes<SVGSVGElement> & { label?: string } = $props();
 </script>
