@@ -24,7 +24,7 @@ test('the landing page renders the hero and brand chrome', async ({ page }) => {
 		'Classic hand-scooped ice cream and sweet treats!'
 	);
 	await expect(page.getByText('Booking late 2026')).toHaveCount(0);
-	await expect(page.getByRole('img', { name: 'fionas ice cream' }).first()).toBeVisible();
+	await expect(page.getByRole('img', { name: "Fiona's Ice Cream" }).first()).toBeVisible();
 	await expect(page.getByRole('link', { name: 'Follow on Instagram' })).toHaveAttribute(
 		'href',
 		'https://www.instagram.com/fionasicecream/'

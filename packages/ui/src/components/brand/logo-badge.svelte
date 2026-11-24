@@ -6,7 +6,7 @@
 	/** The stylized circular badge lockup: cream lettering baked onto an olive disc. */
 	let {
 		class: className,
-		alt = 'fionas ice cream',
+		alt = "Fiona's Ice Cream",
 		...restProps
 	}: Omit<HTMLImgAttributes, 'src'> = $props();
 </script>

@@ -11,7 +11,7 @@
 	<div class="mx-auto flex max-w-(--container-max) items-center gap-6 px-8 py-3.5 max-[480px]:px-5">
 		<a
 			href={resolve('/')}
-			aria-label="fionas ice cream — home"
+			aria-label="Fiona's Ice Cream — home"
 			class={cn('inline-flex shrink-0', focusRing)}
 		>
 			<Wordmark class="h-10.5 text-olive-900" aria-hidden="true" />
