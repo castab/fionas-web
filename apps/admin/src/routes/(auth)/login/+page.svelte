@@ -46,6 +46,13 @@
 		};
 	});
 
+	/** Passkeys are switched off in this deployment: no button, no autofill, no error. */
+	function passkeysOff() {
+		passkeysAvailable = false;
+		autofill = false;
+		cancelCeremony();
+	}
+
 	async function signedIn() {
 		toast.success(loginSuccessMessage);
 		await goto(resolve('/'), { invalidateAll: true });
@@ -60,6 +67,7 @@
 		const outcome = await signInWithPasskey({ autofill: true });
 		if (destroyed) return;
 		if (outcome.ok) return signedIn();
+		if (outcome.failure?.code === 'passkeys_disabled') return passkeysOff();
 		if (outcome.failure) {
 			passkeyError = outcome.failure.message;
 			void runAutofill();
@@ -74,6 +82,7 @@
 		const outcome = await signInWithPasskey();
 		passkeyBusy = false;
 		if (outcome.ok) return signedIn();
+		if (outcome.failure?.code === 'passkeys_disabled') return passkeysOff();
 		if (outcome.failure) passkeyError = outcome.failure.message;
 		void runAutofill();
 	}

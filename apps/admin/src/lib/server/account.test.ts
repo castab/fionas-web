@@ -25,11 +25,9 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 	});
 
 const account = {
-	id: 'u1',
-	username: 'brayan',
-	displayName: 'Brayan',
-	roles: ['commerce.administrator'],
 	authenticatedAt: '2026-11-25T18:00:00Z',
+	recentAuthenticationUntil: '2026-11-25T18:10:00Z',
+	passkeysEnabled: true,
 	passkeyCount: 0
 };
 
@@ -47,7 +45,8 @@ describe('readStaffAccount', () => {
 	});
 
 	it('treats an unreadable answer as unavailable', async () => {
-		const { config } = backend(json(200, { id: 'u1' }));
+		// The profile lives in /auth/me, never here: an old-style profile body doesn't read.
+		const { config } = backend(json(200, { id: 'u1', username: 'brayan', passkeyCount: 0 }));
 		expect(await readStaffAccount(config, null)).toMatchObject({ ok: false, status: 503 });
 	});
 });
@@ -70,6 +69,13 @@ describe('changePassword', () => {
 			currentPassword: 'old',
 			newPassword: 'a much longer one'
 		});
+	});
+
+	it('reports a wrong current password by its code', async () => {
+		const { config } = backend(json(403, { code: 'current_password_incorrect', message: 'm' }));
+		expect(
+			await changePassword(config, 'c', { currentPassword: 'a', newPassword: 'b' })
+		).toMatchObject({ ok: false, status: 403, code: 'current_password_incorrect' });
 	});
 
 	it('reports the status, code and wait time of a failure', async () => {

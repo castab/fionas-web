@@ -176,8 +176,8 @@ describe('passkey sign-in', () => {
 		expect(calls[0].headers.cookie).toBe('__Host-fionas_session="old"');
 	});
 
-	it('keeps passkey_unknown distinct from the uniform 401', async () => {
-		const unknown = backend(json(401, { code: 'passkey_unknown', message: 'm' }));
+	it('reads commerce’s 404 for an unregistered passkey as passkey_unknown', async () => {
+		const unknown = backend(json(404, { code: 'not_found', message: 'm' }));
 		const credential = parseAuthenticationCredential(assertion)!;
 		expect(await finishPasskeySignIn(unknown.config, null, ceremonyId, credential)).toMatchObject({
 			ok: false,
@@ -187,6 +187,15 @@ describe('passkey sign-in', () => {
 		const failure = await finishPasskeySignIn(other.config, null, ceremonyId, credential);
 		expect(failure).toMatchObject({ ok: false, code: 'unauthenticated' });
 		expect(JSON.stringify(failure)).not.toContain('PRIVATE');
+	});
+
+	it('reports passkeys switched off in this deployment', async () => {
+		const { config } = backend(json(503, { code: 'passkeys_disabled', message: 'm' }));
+		expect(await startPasskeySignIn(config)).toMatchObject({
+			ok: false,
+			status: 503,
+			code: 'passkeys_disabled'
+		});
 	});
 });
 
@@ -348,6 +357,23 @@ describe('managing passkeys', () => {
 		expect(calls[0].body).toEqual({ ceremonyId, credential });
 	});
 
+	it('maps a registration conflict by where it happened', async () => {
+		const conflict = () => json(409, { code: 'conflict', message: 'm' });
+		const start = backend(conflict());
+		expect(await startPasskeyRegistration(start.config, cookie)).toMatchObject({
+			code: 'passkey_conflict',
+			message: 'You can have up to 20 passkeys. Remove one to add another.'
+		});
+		const finish = backend(conflict());
+		const credential = parseRegistrationCredential(attestation)!;
+		expect(
+			await finishPasskeyRegistration(finish.config, cookie, ceremonyId, credential, null)
+		).toMatchObject({
+			code: 'passkey_conflict',
+			message: 'That passkey is already on your account, or you’ve reached 20 passkeys.'
+		});
+	});
+
 	it('renames with a normalized name and refuses bad ids or names locally', async () => {
 		const { config, calls } = backend(json(200, { ...passkey, name: 'Phone' }));
 		expect(await renamePasskey(config, cookie, passkeyId, '  Phone ')).toMatchObject({
@@ -368,14 +394,25 @@ describe('managing passkeys', () => {
 		expect(calls).toHaveLength(1);
 	});
 
-	it('removes a passkey', async () => {
-		const { config, calls } = backend(noContent());
-		expect(await removePasskey(config, cookie, passkeyId)).toEqual({
+	it('clears a name by sending an empty string, since commerce requires the field', async () => {
+		const { config, calls } = backend(json(200, passkey));
+		await renamePasskey(config, cookie, passkeyId, '   ');
+		await renamePasskey(config, cookie, passkeyId, null);
+		expect(calls.map((call) => call.body)).toEqual([{ name: '' }, { name: '' }]);
+	});
+
+	it('removes a passkey and reads the remaining ones from the answer', async () => {
+		const { config, calls } = backend(
+			json(200, { rpId: 'admin.test', userHandle: 'aGFuZGxl', passkeys: [] })
+		);
+		expect(await removePasskey(config, cookie, passkeyId)).toMatchObject({
 			ok: true,
-			data: null,
-			setCookies: []
+			data: { rpId: 'admin.test', userHandle: 'aGFuZGxl', passkeys: [] }
 		});
-		expect(calls[0]).toMatchObject({ method: 'DELETE' });
+		expect(calls[0]).toMatchObject({
+			url: `http://api.test/staff/passkeys/${passkeyId}`,
+			method: 'DELETE'
+		});
 	});
 });
 
@@ -384,12 +421,12 @@ describe('our JSON answers', () => {
 		const response = passkeyResponse({
 			ok: false,
 			status: 409,
-			code: 'passkey_limit_reached',
+			code: 'passkey_conflict',
 			message: 'copy'
 		});
 		expect(response.status).toBe(409);
 		expect(response.headers.get('cache-control')).toBe('no-store');
-		expect(await response.json()).toEqual({ code: 'passkey_limit_reached', message: 'copy' });
+		expect(await response.json()).toEqual({ code: 'passkey_conflict', message: 'copy' });
 		expect((await passkeyResponse({ ok: true, data: null, setCookies: [] })).status).toBe(204);
 	});
 

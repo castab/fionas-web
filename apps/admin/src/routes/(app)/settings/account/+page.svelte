@@ -27,11 +27,8 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	const profile = $derived({
-		displayName: data.account?.displayName ?? data.user.displayName,
-		username: data.account?.username ?? data.user.username,
-		roles: data.account?.roles ?? data.user.roles
-	});
+	// Who the person is comes from /auth/me, which the signed-in layout already read.
+	const profile = $derived(data.user);
 
 	// The server's list, replaced in place after every change on this page.
 	let list = $derived(data.passkeys);
@@ -137,10 +134,12 @@
 			return;
 		}
 		removeOpen = false;
-		const fresh = await refresh();
+		// Commerce answers the remaining passkeys; an already-removed one needs a fresh read.
+		const remaining = outcome.ok ? outcome.data : await refresh();
+		if (remaining) list = remaining;
 		status = 'Passkey removed.';
 		// Lets password managers hide the passkey this site no longer accepts.
-		if (fresh) await signalAcceptedCredentials(fresh);
+		if (remaining) await signalAcceptedCredentials(remaining);
 	}
 
 	// --- Confirm it's you -----------------------------------------------------------------------
@@ -271,55 +270,61 @@
 		<p class={note}>Ask an administrator to change your name or role.</p>
 	</Card>
 
-	<Card
-		variant="flat"
-		class="flex flex-col gap-3 p-[18px]"
-		role="region"
-		aria-labelledby="passkeys-title"
-		data-testid="passkeys"
-	>
-		<div class="flex flex-wrap items-center justify-between gap-2">
-			<h2 id="passkeys-title" class={caps}>Passkeys</h2>
-			{#if supported && list}
-				<Button
-					size="sm"
-					onclick={() => create()}
-					disabled={creating || atLimit}
-					data-testid="create-passkey"
-				>
-					{creating ? 'Creating…' : 'Create a passkey'}
-				</Button>
+	<!-- Hidden, without an error, when passkeys are switched off in this deployment. -->
+	{#if data.passkeysEnabled}
+		<Card
+			variant="flat"
+			class="flex flex-col gap-3 p-[18px]"
+			role="region"
+			aria-labelledby="passkeys-title"
+			data-testid="passkeys"
+		>
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<h2 id="passkeys-title" class={caps}>Passkeys</h2>
+				{#if supported && list}
+					<Button
+						size="sm"
+						onclick={() => create()}
+						disabled={creating || atLimit}
+						data-testid="create-passkey"
+					>
+						{creating ? 'Creating…' : 'Create a passkey'}
+					</Button>
+				{/if}
+			</div>
+
+			{#if !supported}
+				<p class={body}>
+					This browser can’t use passkeys. You can still sign in with your password.
+				</p>
 			{/if}
-		</div>
 
-		{#if !supported}
-			<p class={body}>This browser can’t use passkeys. You can still sign in with your password.</p>
-		{/if}
-
-		{#if list === null}
-			<p class={note}>Your passkeys couldn’t load. Reload the page to try again.</p>
-		{:else if passkeys.length === 0}
-			<p class={body} data-testid="no-passkeys">
-				A passkey lets you sign in with your fingerprint, face, or screen lock instead of a
-				password. It’s saved by your password manager or device, and it can’t be phished or guessed.
-			</p>
-		{:else}
-			<ul class="m-0 flex list-none flex-col divide-y divide-(--border-soft) p-0">
-				{#each passkeys as passkey (passkey.id)}
-					{@render passkeyRow(passkey)}
-				{/each}
-			</ul>
-			<p class={note}>Your password still works if you lose your passkeys.</p>
-		{/if}
-		{#if atLimit}
-			<p class={note}>You can have up to {PASSKEY_LIMIT} passkeys. Remove one to add another.</p>
-		{/if}
-		{#if createError}
-			<p role="alert" class="m-0 text-sm text-rust-600" data-testid="create-error">
-				{createError}
-			</p>
-		{/if}
-	</Card>
+			{#if list === null}
+				<p class={note}>Your passkeys couldn’t load. Reload the page to try again.</p>
+			{:else if passkeys.length === 0}
+				<p class={body} data-testid="no-passkeys">
+					A passkey lets you sign in with your fingerprint, face, or screen lock instead of a
+					password. It’s saved by your password manager or device, and it can’t be phished or
+					guessed.
+				</p>
+			{:else}
+				<ul class="m-0 flex list-none flex-col divide-y divide-(--border-soft) p-0">
+					{#each passkeys as passkey (passkey.id)}
+						{@render passkeyRow(passkey)}
+					{/each}
+				</ul>
+				<p class={note}>Your password still works if you lose your passkeys.</p>
+			{/if}
+			{#if atLimit}
+				<p class={note}>You can have up to {PASSKEY_LIMIT} passkeys. Remove one to add another.</p>
+			{/if}
+			{#if createError}
+				<p role="alert" class="m-0 text-sm text-rust-600" data-testid="create-error">
+					{createError}
+				</p>
+			{/if}
+		</Card>
+	{/if}
 
 	<Card
 		variant="flat"

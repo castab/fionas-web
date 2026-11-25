@@ -24,7 +24,9 @@ export const PASSKEY_NAME_MAX = 64;
 export const PASSKEY_LIMIT = 20;
 /** The password policy commerce applies (NIST style: length only). */
 export const PASSWORD_MIN = 12;
-export const PASSWORD_MAX = 1024;
+export const PASSWORD_MAX = 256;
+/** Commerce reports a missing AAGUID as all zeros. */
+const ZERO_AAGUID = '00000000-0000-0000-0000-000000000000';
 
 export type Passkey = {
 	id: string;
@@ -37,13 +39,16 @@ export type Passkey = {
 	createdAt: string;
 	lastUsedAt: string | null;
 };
-export type PasskeyList = { userHandle: string | null; passkeys: Passkey[] };
+/** `GET /staff/passkeys` and the `DELETE` answer: the relying party, user handle and passkeys. */
+export type PasskeyList = { rpId: string | null; userHandle: string | null; passkeys: Passkey[] };
+/**
+ * `GET /staff/account`: the session's sign-in state only. Who the person is comes from
+ * `/auth/me` (`locals.user`).
+ */
 export type StaffAccount = {
-	id: string;
-	username: string;
-	displayName: string;
-	roles: string[];
 	authenticatedAt: string;
+	recentAuthenticationUntil: string;
+	passkeysEnabled: boolean;
 	passkeyCount: number;
 };
 
@@ -55,10 +60,14 @@ const isInstant = (value: unknown): value is string =>
 	isText(value, 64) && !Number.isNaN(Date.parse(value));
 const isBase64url = (value: unknown, max = 2048): value is string =>
 	typeof value === 'string' && value.length <= max && BASE64URL.test(value);
+const absent = (value: unknown): value is null | undefined => value === null || value === undefined;
 
-/** Normalizes a passkey name: trimmed, 1–64 characters, no control characters; '' → null. */
+/**
+ * Normalizes a passkey name: trimmed, inner whitespace collapsed, 1–64 characters, no control
+ * characters. Blank means "no name" (null); undefined means invalid.
+ */
 export function normalizePasskeyName(value: unknown): string | null | undefined {
-	if (value === null || value === undefined) return null;
+	if (absent(value)) return null;
 	if (typeof value !== 'string') return undefined;
 	const name = value.trim().replace(/\s+/g, ' ');
 	if (!name) return null;
@@ -73,25 +82,25 @@ export function readPasskey(value: unknown): Passkey | null {
 		!isText(id, 64) ||
 		!UUID.test(id) ||
 		!isBase64url(credentialId) ||
-		!(name === null || name === undefined || isText(name, PASSKEY_NAME_MAX)) ||
-		!(aaguid === null || aaguid === undefined || (isText(aaguid, 64) && UUID.test(aaguid))) ||
+		!(absent(name) || isText(name, PASSKEY_NAME_MAX)) ||
+		!(absent(aaguid) || (isText(aaguid, 64) && UUID.test(aaguid))) ||
 		!(transports === undefined || Array.isArray(transports)) ||
 		typeof backupEligible !== 'boolean' ||
 		typeof backedUp !== 'boolean' ||
 		!isInstant(value.createdAt) ||
-		!(value.lastUsedAt === null || value.lastUsedAt === undefined || isInstant(value.lastUsedAt))
+		!(absent(value.lastUsedAt) || isInstant(value.lastUsedAt))
 	)
 		return null;
 	return {
 		id,
 		credentialId,
-		name: name ?? null,
-		aaguid: aaguid ?? null,
+		name: absent(name) ? null : name,
+		aaguid: absent(aaguid) || aaguid === ZERO_AAGUID ? null : aaguid,
 		transports: (transports ?? []).filter((t): t is string => isText(t, 32)),
 		backupEligible,
 		backedUp,
 		createdAt: value.createdAt,
-		lastUsedAt: (value.lastUsedAt as string | null | undefined) ?? null
+		lastUsedAt: absent(value.lastUsedAt) ? null : value.lastUsedAt
 	};
 }
 
@@ -99,34 +108,29 @@ export function readPasskeyList(value: unknown): PasskeyList | null {
 	if (!isRecord(value) || !Array.isArray(value.passkeys)) return null;
 	const passkeys = value.passkeys.map(readPasskey);
 	if (passkeys.some((p) => p === null)) return null;
-	const userHandle = value.userHandle;
-	if (!(userHandle === null || userHandle === undefined || isBase64url(userHandle, 128)))
+	const { rpId, userHandle } = value;
+	if (!(absent(userHandle) || isBase64url(userHandle, 128)) || !(absent(rpId) || isText(rpId, 253)))
 		return null;
-	return { userHandle: userHandle ?? null, passkeys: passkeys as Passkey[] };
+	return {
+		rpId: absent(rpId) ? null : rpId,
+		userHandle: absent(userHandle) ? null : userHandle,
+		passkeys: passkeys as Passkey[]
+	};
 }
 
 export function readAccount(value: unknown): StaffAccount | null {
 	if (!isRecord(value)) return null;
-	const { id, username, displayName, roles, authenticatedAt, passkeyCount } = value;
+	const { authenticatedAt, recentAuthenticationUntil, passkeysEnabled, passkeyCount } = value;
 	if (
-		!isText(id, 64) ||
-		!isText(username) ||
-		!isText(displayName) ||
-		!Array.isArray(roles) ||
 		!isInstant(authenticatedAt) ||
+		!isInstant(recentAuthenticationUntil) ||
+		typeof passkeysEnabled !== 'boolean' ||
 		typeof passkeyCount !== 'number' ||
 		!Number.isSafeInteger(passkeyCount) ||
 		passkeyCount < 0
 	)
 		return null;
-	return {
-		id,
-		username,
-		displayName,
-		roles: roles.filter((role): role is string => isText(role)),
-		authenticatedAt,
-		passkeyCount
-	};
+	return { authenticatedAt, recentAuthenticationUntil, passkeysEnabled, passkeyCount };
 }
 
 /** The envelope our JSON endpoints answer failures with: our code and our copy only. */
@@ -136,24 +140,34 @@ export type PasskeyFailureCode =
 	| 'passkey_unknown'
 	| 'different_account'
 	| 'reauthentication_required'
-	| 'passkey_limit_reached'
-	| 'passkey_already_registered'
+	| 'passkey_conflict'
+	| 'passkeys_disabled'
 	| 'invalid_credentials'
 	| 'rate_limited'
 	| 'not_found'
 	| 'validation_failed'
 	| 'unavailable';
 
+/**
+ * Where a failure happened, which picks the wording: passkey sign-in (and "Confirm it's you"),
+ * starting or finishing a passkey registration, or any other passkey change.
+ */
+export type PasskeyContext = 'sign-in' | 'register-options' | 'register' | 'manage';
+
 export const UNAVAILABLE_COPY = 'Passkeys are unavailable right now. Try again shortly.';
+export const DISABLED_COPY = 'Passkeys aren’t available here. Sign in with your password.';
 
 /**
- * Maps a commerce (or local) failure to our own code and copy. `context` picks the wording that
- * fits where it happened; commerce's own message text is never shown.
+ * Maps a commerce (or local) failure to our own code and copy; commerce's own message text is
+ * never shown. Commerce's codes: 404 `not_found` at sign-in is a passkey it doesn't know (the
+ * browser may drop it); every other sign-in failure is a uniform 401; registration conflicts are
+ * 409 `conflict` (the limit when starting, the limit or a duplicate when finishing); 503
+ * `passkeys_disabled` when passkeys are off in this deployment.
  */
 export function passkeyFailure(
 	status: number,
 	code: string | null,
-	context: 'sign-in' | 'manage' = 'manage',
+	context: PasskeyContext = 'manage',
 	retryAfter: number | null = null
 ): PasskeyFailure {
 	const failure = (c: PasskeyFailureCode, message: string): PasskeyFailure => ({
@@ -162,26 +176,29 @@ export function passkeyFailure(
 		message
 	});
 	if (status === 429) return failure('rate_limited', loginFailureMessage(429, retryAfter));
-	if (code === 'passkey_unknown')
-		return failure(
-			'passkey_unknown',
-			'That passkey isn’t set up for this account anymore. Sign in with your password.'
-		);
+	if (status === 503 && code === 'passkeys_disabled')
+		return failure('passkeys_disabled', DISABLED_COPY);
 	if (code === 'different_account')
 		return failure(
 			'different_account',
-			'That passkey belongs to a different account. Use a passkey for this account.'
+			'That passkey belongs to a different account, so you were signed out. Sign in again.'
 		);
+	if (status === 404)
+		return context === 'sign-in'
+			? failure(
+					'passkey_unknown',
+					'That passkey isn’t set up for this account anymore. Sign in with your password.'
+				)
+			: failure('not_found', 'That passkey was already removed.');
 	if (status === 403 && code === 'reauthentication_required')
 		return failure('reauthentication_required', 'Confirm it’s you to continue.');
-	if (status === 409 && code === 'passkey_limit_reached')
+	if (status === 409)
 		return failure(
-			'passkey_limit_reached',
-			`You can have up to ${PASSKEY_LIMIT} passkeys. Remove one to add another.`
+			'passkey_conflict',
+			context === 'register-options'
+				? `You can have up to ${PASSKEY_LIMIT} passkeys. Remove one to add another.`
+				: `That passkey is already on your account, or you’ve reached ${PASSKEY_LIMIT} passkeys.`
 		);
-	if (status === 409 && code === 'passkey_already_registered')
-		return failure('passkey_already_registered', 'That passkey is already on your account.');
-	if (status === 404) return failure('not_found', 'That passkey was already removed.');
 	if (status === 401)
 		return context === 'sign-in'
 			? failure('unauthenticated', 'That passkey didn’t work. Try again or use your password.')
@@ -191,7 +208,9 @@ export function passkeyFailure(
 			'validation_failed',
 			context === 'sign-in'
 				? 'That passkey didn’t work. Try again or use your password.'
-				: 'That passkey couldn’t be saved. Try again.'
+				: context === 'manage'
+					? `Use a name of up to ${PASSKEY_NAME_MAX} characters, without special characters.`
+					: 'That passkey couldn’t be saved. Try again.'
 		);
 	return failure('unavailable', UNAVAILABLE_COPY);
 }
@@ -223,10 +242,12 @@ export function passwordChangeFailureMessage(
 	retryAfter: number | null = null
 ): string {
 	if (status === 429) return loginFailureMessage(429, retryAfter);
-	if (status === 401 || code === 'invalid_credentials')
-		return 'Your current password isn’t right. Try again.';
+	// Commerce answers a wrong current password with 403 `current_password_incorrect`; a 401 means
+	// the session itself ended.
+	if (code === 'current_password_incorrect') return 'Your current password isn’t right. Try again.';
+	if (status === 401) return 'Your session has ended. Sign in again.';
 	if (status === 400 || status === 422)
-		return `Choose a new password of at least ${PASSWORD_MIN} characters that’s different from your current one.`;
+		return `Choose a new password of ${PASSWORD_MIN} to ${PASSWORD_MAX} characters that’s different from your current one.`;
 	return 'Your password couldn’t be changed right now. Try again shortly.';
 }
 

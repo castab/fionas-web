@@ -13,8 +13,9 @@ import type { RequestHandler } from './$types';
 
 /**
  * Finishes a passkey sign-in with this browser's ceremony. Signed out, it signs in. Signed in, it
- * is a re-authentication ("Confirm it's you"): the new session must belong to the same staff
- * member, or it is signed out again and the current session is kept.
+ * is a re-authentication ("Confirm it's you"): commerce revokes the session the request presents
+ * and issues a new one. That new session must belong to the same staff member; another account's
+ * is signed out again (409 `different_account`), so a re-authentication never switches people.
  */
 export const POST: RequestHandler = async ({ request, url, cookies, locals }) => {
 	const body = await readJsonBody(request);

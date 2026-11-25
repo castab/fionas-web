@@ -27,25 +27,34 @@ the browser can't use passkeys.
 
 ## Commerce contract (what the admin sends and reads)
 
-The plan fixed the routes; these are the bodies the admin and `e2e/stub-commerce.mjs`
-(`e2e/passkey-stub.mjs`) use. WebAuthn binary fields are base64url (no padding): the standard
-`PublicKeyCredential*OptionsJSON`, `RegistrationResponseJSON` and `AuthenticationResponseJSON`.
+The source of truth is fionas-commerce `http/StaffAccountRoutes.kt` (and its README, "Staff
+passkeys"); `e2e/passkey-stub.mjs` mirrors it. WebAuthn binary fields are base64url (no padding):
+the standard `PublicKeyCredential*OptionsJSON` and `toJSON()` credentials. Errors are the usual
+`{code, message}` envelope; the admin reads only `status` and `code`.
 
-| Route                                       | Access                       | Request → success                                                                                     |
-| ------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `POST /auth/passkey/options`                | public, rate-limited, Origin | `{}` → `{ceremonyId, publicKey}` (discoverable: `allowCredentials: []`, `userVerification: required`) |
-| `POST /auth/passkey`                        | public, rate-limited, Origin | `{ceremonyId, credential}` → 204 + session cookie                                                     |
-| `GET /staff/account`                        | staff USER                   | → `{id, username, displayName, roles, authenticatedAt, passkeyCount}`                                 |
-| `GET /staff/passkeys`                       | staff USER                   | → `{userHandle, passkeys: [Passkey]}` (never public keys)                                             |
-| `POST /staff/passkeys/registration/options` | staff USER + recent auth     | `{}` → `{ceremonyId, publicKey}`; 403 `reauthentication_required`; 409 `passkey_limit_reached`        |
-| `POST /staff/passkeys`                      | staff USER + ceremony        | `{ceremonyId, credential, name?}` → 201 `Passkey`; 409 `passkey_already_registered`                   |
-| `PATCH /staff/passkeys/{id}`                | staff USER                   | `{name: string(1–64) \| null}` → 200 `Passkey`; someone else's id → 404                               |
-| `DELETE /staff/passkeys/{id}`               | staff USER + recent auth     | → 204; 403 `reauthentication_required`; someone else's id → 404                                       |
-| `PUT /staff/credentials/password`           | staff USER                   | `{currentPassword, newPassword}` → 204 + fresh session cookie; 401 `invalid_credentials`; 422         |
+| Route                                       | Access                       | Request → success                                                               | Failures the admin maps                                                                                    |
+| ------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `POST /auth/passkey/options`                | public, rate-limited, Origin | → `{ceremonyId, publicKey}` (`allowCredentials: []`, UV required)               | 429, 503 `passkeys_disabled`                                                                               |
+| `POST /auth/passkey`                        | public, rate-limited, Origin | `{ceremonyId, credential}` → 204 + session cookie                               | 404 `not_found` (passkey not registered), 401 `unauthenticated` (anything else), 429, 503                  |
+| `GET /staff/account`                        | staff USER                   | → `{authenticatedAt, recentAuthenticationUntil, passkeysEnabled, passkeyCount}` | —                                                                                                          |
+| `GET /staff/passkeys`                       | staff USER                   | → `{rpId, userHandle?, passkeys: [Passkey]}` (never public keys)                | 503                                                                                                        |
+| `POST /staff/passkeys/registration/options` | staff USER + recent auth     | → `{ceremonyId, publicKey}`                                                     | 403 `reauthentication_required`, 409 `conflict` (20 passkeys), 503                                         |
+| `POST /staff/passkeys`                      | staff USER + ceremony        | `{ceremonyId, credential, name?}` → 201 `Passkey`                               | 409 `conflict` (limit or already registered), 422 (not verified, expired, not discoverable, bad name), 503 |
+| `PATCH /staff/passkeys/{id}`                | staff USER                   | `{name: string}` (required; blank clears it) → 200 `Passkey`                    | 404 (unknown or someone else's), 422 (too long, control characters), 503                                   |
+| `DELETE /staff/passkeys/{id}`               | staff USER + recent auth     | → 200 `{rpId, userHandle?, passkeys}` (the remaining ones)                      | 403 `reauthentication_required`, 404, 503                                                                  |
+| `PUT /staff/credentials/password`           | staff USER, rate-limited     | `{currentPassword, newPassword}` → 204 + fresh session cookie                   | 403 `current_password_incorrect`, 422 (under 12, over 256, or unchanged), 429; 401 = session ended         |
 
-`Passkey` is `{id, credentialId, name, aaguid, transports, backupEligible, backedUp, createdAt,
-lastUsedAt}`. Sign-in failures are a uniform 401 except `passkey_unknown` (the credential id isn't
-registered), so the browser can tell its password manager to drop a stale passkey.
+`Passkey` is `{id, name?, credentialId, aaguid, backupEligible, backedUp, transports, createdAt,
+lastUsedAt?}`: optional fields are omitted, and an unreported AAGUID is all zeros. `GET
+/staff/account` carries sign-in state only; who the person is comes from `/auth/me`
+(`locals.user`). Ceremonies are single-use, five minutes, and spent even when verification fails.
+Every sign-in (password or passkey) revokes the session cookie the request presented, whoever it
+belonged to. Passkey ceremonies have their own rate limit (burst 30, one refill every ten
+seconds), separate from password login.
+
+When a deployment has passkeys off, every `/auth/passkey*` and `/staff/passkeys*` route answers 503
+`passkeys_disabled` and `/staff/account` says `passkeysEnabled: false`; password sign-in, password
+change and the account read keep working.
 
 ## Ceremonies and cookies
 
@@ -56,7 +65,8 @@ registered), so the browser can tell its password manager to drop a stale passke
   `__Host-fionas_passkey_nudge`; commerce receives the staff session and nothing else of ours.
 - Credential JSON from the browser is copied field by field (`parseAuthenticationCredential`,
   `parseRegistrationCredential`) with base64url and size checks; unknown fields and client extension
-  results other than `credProps.rk` are dropped. Options from commerce are projected the same way,
+  results other than `credProps.rk` are dropped. (Commerce ignores the extra registration fields
+  the browser reports, such as `publicKey` and `publicKeyAlgorithm`; it parses the attestation.) Options from commerce are projected the same way,
   and registration always asks for `attestation: none`.
 - Options requests run one at a time in the browser, so the newest ceremony cookie always belongs
   to the newest request (autofill vs. the passkey button).
@@ -67,26 +77,30 @@ registered), so the browser can tell its password manager to drop a stale passke
 - The User field is `autocomplete="username webauthn"`. When `isConditionalMediationAvailable()`,
   the page starts a conditional request on mount, so passkeys appear in the autofill suggestions.
   Autofill is quiet: an options failure or a browser error shows nothing (the person didn't do
-  anything); only a failed finish (for example `passkey_unknown`) is shown.
+  anything); only a failed finish (for example an unknown passkey) is shown.
 - **Sign in with a passkey** (secondary button, JavaScript only) cancels the conditional request,
   starts a modal one, and restarts autofill when it ends.
 - Copy (`passkeyFailure`, `ceremonyErrorMessage` in `$lib/passkeys.ts`): a cancel
-  (`NotAllowedError`/`AbortError`) is silent; `passkey_unknown` says "That passkey isn't set up for
-  this account anymore" and calls `PublicKeyCredential.signalUnknownCredential` when available; 429
+  (`NotAllowedError`/`AbortError`) is silent; commerce's 404 at sign-in (our code `passkey_unknown`)
+  says "That passkey isn't set up for this account anymore" and calls
+  `PublicKeyCredential.signalUnknownCredential` when available; 429
   reuses the Retry-After copy from `$lib/login.ts`; anything else is our own generic copy, never
   commerce's text.
 - On success the server re-issues commerce's session cookie (`applySetCookies`) and the page
   `goto('/')`s.
+- Passkeys off (503 `passkeys_disabled` from the options call, autofill's or the button's): the
+  page hides the button and stops conditional mediation, without an error.
 
-Each visit to `/login` with WebAuthn support asks commerce for an authentication challenge. Because
-commerce puts `LoginRateLimit` on `/auth/passkey/options`, page views spend login attempts: keep the
-options endpoint's bucket generous (or separate) in commerce and the edge rule.
+Each visit to `/login` with WebAuthn support asks commerce for an authentication challenge. Commerce
+rate-limits passkey ceremonies separately from password login, so page views never spend password
+attempts.
 
 ## Passkey nudge after a password sign-in
 
 The password sign-in action sets `__Host-fionas_passkey_nudge` (HttpOnly, Secure, SameSite=Lax,
 two minutes). The next `(app)` layout load takes it, reads `GET /staff/account`, and asks the shell
-to show the nudge only when `passkeyCount === 0`. A passkey sign-in never sets it.
+to show the nudge only when `passkeysEnabled` and `passkeyCount === 0`. A passkey sign-in never
+sets it.
 
 1. When `getClientCapabilities().conditionalCreate` is supported, the shell first tries an
    **automatic passkey upgrade** (`create()` with `mediation: 'conditional'`): the password manager
@@ -105,20 +119,27 @@ Layout follows Notifications (`max-w-[760px]`, flat cards, `no-store`, its own `
 account menu's **Account settings** item (desktop sidebar and mobile menu) links here with
 `aria-current="page"`.
 
-- **Profile**: name, username and role, read-only.
+- **Profile**: name, username and role from `/auth/me` (the layout's `user`), read-only.
+- With passkeys off (`passkeysEnabled: false`, or 503 `passkeys_disabled` from the list), the
+  passkey section is left out entirely, without an error.
 - **Passkeys**: each row shows a provider icon and name from the AAGUID (`$lib/passkey-providers.ts`),
   the staff member's own name for it, "Created …", "Last used …" (or "Not used yet"), and a
-  **Synced** badge when backed up. **Rename** edits inline (1–64 characters; blank clears the name).
-  **Remove** opens a confirmation dialog that warns when it's the last passkey ("You'll sign in with
-  your password"); afterwards `signalAllAcceptedCredentials` (feature-detected) tells password
-  managers which passkeys still work. **Create a passkey** is disabled at the limit of 20. The empty
-  state says what a passkey is in two sentences. The word is always lowercase "passkey".
+  **Synced** badge when backed up. **Rename** edits inline (1–64 characters; blank sends `""`,
+  which clears the name). **Remove** opens a confirmation dialog that warns when it's the last
+  passkey ("You'll sign in with your password"); commerce answers the remaining passkeys, which
+  feed `signalAllAcceptedCredentials` (feature-detected, with the list's `rpId`) so password
+  managers hide the removed one. **Create a passkey** is disabled at the limit of 20; a 409 reads
+  as the limit when starting and as "already on your account, or you've reached 20 passkeys" when
+  finishing. The empty state says what a passkey is in two sentences. The word is always lowercase
+  "passkey".
 - **Password**: current / new / confirm (`autocomplete="current-password"` / `"new-password"`, plus
   a hidden `username` field for password managers) as a form action (`?/password`) that works
-  without JavaScript. The requirement (≥ 12 characters) is shown up front and checked locally
-  (`passwordChangeProblem`) before commerce applies its own policy. On success commerce signs out
-  every other session and issues a fresh one; the page says "Other devices were signed out."
-  Passwords are never echoed back into the form.
+  without JavaScript. The requirement (12–256 characters, different from the current one) is shown
+  up front and checked locally (`passwordChangeProblem`) before commerce applies its own policy.
+  403 `current_password_incorrect` says "Your current password isn't right" on that field; a 401
+  means the session ended. On success commerce signs out every other session and issues a fresh
+  one; the page says "Other devices were signed out." Passwords are never echoed back into the
+  form.
 
 ### "Confirm it's you" (sudo)
 
@@ -126,12 +147,13 @@ Creating or removing a passkey needs a sign-in within the last ten minutes. When
 403 `reauthentication_required`, the page opens a dialog offering **Use a passkey** (a modal
 assertion through `/login/passkey`, shown when the account has passkeys) or the password with the
 username prefilled (`POST /settings/account/reauthenticate`, which signs in as `locals.user` — never
-a username from the browser). Either way commerce revokes the old session and issues a new one, and
-the original action is retried automatically.
+a username from the browser). Both forward the current session cookie, so commerce revokes it as it
+issues the new one, and the original action is retried automatically.
 
 A passkey re-authentication must stay the same person: if `/auth/passkey` returns a session for a
-different account, the server signs that new session out again, keeps the current one, and answers
-409 `different_account`. Some browsers allow only one passkey prompt per click; if the retried
+different account, the server signs that new session out again and answers 409
+`different_account`. Commerce has already revoked the presented session by then, so the person is
+signed out and is told to sign in again; a re-authentication never switches accounts. Some browsers allow only one passkey prompt per click; if the retried
 create is refused after a passkey confirmation, the page asks the person to choose **Create a
 passkey** again.
 
@@ -166,8 +188,11 @@ files empty in January 2027), so update the map by hand when a common provider i
   (`playwright.config.ts`); the stub trusts that origin too. The stub verifies challenges, origin,
   rpIdHash, UP/UV flags, counters and ES256/Ed25519/RS256 signatures with the key captured at
   registration, and keeps accounts per `passkey-…` username so parallel tests never share passkeys.
-  Test hooks: `POST /__test/account` `{sudoExpired: true}` ages the session past ten minutes,
-  `{forgetPasskeys: true}` drops the account's passkeys (for `passkey_unknown`).
+  The older fixture users (`brayan`, `dashboard-*`, `request-*`) read an account with passkeys
+  off, so their specs never see the nudge. Test hooks: `POST /__test/account` `{sudoExpired: true}`
+  ages the session past ten minutes, `{forgetPasskeys: true}` drops the account's passkeys (for the
+  unknown-passkey 404), `{passkeysDisabled: true}` switches passkeys off for that account. The
+  sign-in page's disabled case intercepts `/login/passkey/options` with `page.route`.
 - The virtual authenticator answers a conditional (autofill) request immediately and leaves a
   conditional create pending, so specs turn autofill off unless they test it, and the automatic
   upgrade is covered only for its fallback (the prompt still appears).

@@ -116,7 +116,7 @@ export async function signalAcceptedCredentials(list: PasskeyList): Promise<void
 	if (typeof signal !== 'function' || !list.userHandle) return;
 	await signal
 		.call(PublicKeyCredential, {
-			rpId: location.hostname,
+			rpId: list.rpId ?? location.hostname,
 			userId: list.userHandle,
 			allAcceptedCredentialIds: list.passkeys.map((passkey) => passkey.credentialId)
 		})
@@ -141,7 +141,11 @@ export async function signInWithPasskey({ autofill = false }: { autofill?: boole
 	PasskeyOutcome<null>
 > {
 	const options = await queuedOptions(PASSKEY_ROUTES.signInOptions);
-	if (!options.ok) return autofill ? { ok: false, failure: null } : options;
+	// Passkeys switched off in this deployment always reach the page, which then hides them.
+	if (!options.ok)
+		return autofill && options.failure.code !== 'passkeys_disabled'
+			? { ok: false, failure: null }
+			: options;
 	const optionsJSON = (options.data as { publicKey?: PublicKeyCredentialRequestOptionsJSON })
 		?.publicKey;
 	if (!optionsJSON) return { ok: false, failure: autofill ? null : unavailable };
@@ -200,9 +204,12 @@ export async function renamePasskey(id: string, name: string | null) {
 		: ({ ok: false, failure: unavailable } as const);
 }
 
-export async function removePasskey(id: string): Promise<PasskeyOutcome<null>> {
+/** Removes a passkey; answers the remaining ones. */
+export async function removePasskey(id: string): Promise<PasskeyOutcome<PasskeyList>> {
 	const result = await call(passkeyRoute(id), 'DELETE');
-	return result.ok ? { ok: true, data: null } : result;
+	if (!result.ok) return result;
+	const list = readPasskeyList(result.data);
+	return list ? { ok: true, data: list } : { ok: false, failure: unavailable };
 }
 
 /** "Confirm it's you" with the signed-in staff member's password. */

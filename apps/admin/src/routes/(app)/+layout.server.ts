@@ -14,7 +14,7 @@ export const load: LayoutServerLoad = async ({ locals, cookies, request, url }) 
 			backendConfig(url.origin),
 			request.headers.get('cookie')
 		);
-		passkeyNudge = account.ok && account.data.passkeyCount === 0;
+		passkeyNudge = account.ok && account.data.passkeysEnabled && account.data.passkeyCount === 0;
 	}
 	return { user: locals.user, passkeyNudge };
 };

@@ -6,19 +6,23 @@ import { backendConfig } from '$lib/server/config.js';
 import { listPasskeys } from '$lib/server/passkeys.js';
 import type { Actions, PageServerLoad } from './$types';
 
-/** The staff member's profile and passkeys. Either read may fail on its own. */
+/**
+ * Whether passkeys are on in this deployment, and the staff member's passkeys. The profile is the
+ * layout's `user` (`/auth/me`); `/staff/account` carries only sign-in state. Either read may fail
+ * on its own; passkeys switched off (`passkeysEnabled: false`, or 503 `passkeys_disabled`) hide
+ * the passkey section without an error.
+ */
 export const load: PageServerLoad = async ({ request, url, setHeaders }) => {
 	setHeaders({ 'cache-control': 'no-store' });
 	const config = backendConfig(url.origin);
 	const cookie = request.headers.get('cookie');
-	const [account, passkeys] = await Promise.all([
-		readStaffAccount(config, cookie),
-		listPasskeys(config, cookie)
-	]);
-	return {
-		account: account.ok ? account.data : null,
-		passkeys: passkeys.ok ? passkeys.data : null
-	};
+	const account = await readStaffAccount(config, cookie);
+	if (account.ok && !account.data.passkeysEnabled)
+		return { passkeysEnabled: false, passkeys: null };
+	const passkeys = await listPasskeys(config, cookie);
+	if (!passkeys.ok && passkeys.code === 'passkeys_disabled')
+		return { passkeysEnabled: false, passkeys: null };
+	return { passkeysEnabled: true, passkeys: passkeys.ok ? passkeys.data : null };
 };
 
 export const actions: Actions = {
@@ -43,7 +47,7 @@ export const actions: Actions = {
 		});
 		if (!result.ok) {
 			const error = passwordChangeFailureMessage(result.status, result.code, result.retryAfter);
-			const field = result.status === 401 ? ('current' as const) : null;
+			const field = result.code === 'current_password_incorrect' ? ('current' as const) : null;
 			return fail(result.status >= 500 ? 503 : result.status, { password: { field, error } });
 		}
 		applySetCookies(cookies, result.setCookies);

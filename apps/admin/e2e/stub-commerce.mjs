@@ -314,8 +314,8 @@ createServer(async (req, res) => {
 		if (account) {
 			if (body.password !== account.password)
 				return send(res, 401, { code: 'unauthenticated', message: 'Invalid credentials' });
-			// Signing in again as the same person replaces the session it arrived with.
-			if (currentSession?.account === account.id) sessions.delete(sessionToken(req));
+			// Like commerce, signing in revokes whatever session the request presented.
+			if (currentSession) sessions.delete(sessionToken(req));
 			const token = createSession(account.username, account);
 			return send(res, 204, undefined, {
 				'set-cookie': `${cookieName}="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`

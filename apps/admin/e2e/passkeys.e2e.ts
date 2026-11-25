@@ -327,6 +327,7 @@ test('changing the password signs other devices out and keeps this one signed in
 	await form.getByLabel('Confirm new password').fill('a much longer passphrase');
 	await form.getByRole('button', { name: 'Change password' }).click();
 	await expect(form).toContainText('Your current password isn’t right. Try again.');
+	await expect(form.getByLabel('Current password')).toHaveAttribute('aria-invalid', 'true');
 
 	await form.getByLabel('Current password').fill(password);
 	await form.getByLabel('New password', { exact: true }).fill('a much longer passphrase');
@@ -402,3 +403,52 @@ test('when a silent passkey upgrade doesn’t answer, the prompt is offered anyw
 	await expect(nudge).toHaveCount(0);
 	expect(await storedCredentials(authenticator)).toHaveLength(1);
 });
+
+test('with passkeys switched off, Account settings and the sign-in nudge leave them out', async ({
+	page,
+	context,
+	isMobile
+}) => {
+	await instrument(page);
+	await addAuthenticator(page);
+	const username = newUsername();
+	await signInWithPassword(page, username);
+	await stub(context, { passkeysDisabled: true });
+
+	await page.goto('/settings/account');
+	await expect(page.getByTestId('profile')).toContainText(`@${username}`);
+	await expect(page.getByTestId('password')).toBeVisible();
+	await expect(page.getByRole('region', { name: 'Passkeys' })).toHaveCount(0);
+	await expect(page.getByRole('alert')).toHaveCount(0);
+
+	// A fresh password sign-in reads passkeysEnabled: false and never suggests one.
+	await signOut(page, isMobile);
+	await signInWithPassword(page, username);
+	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+	await expect(page.getByTestId('passkey-nudge')).toHaveCount(0);
+});
+
+for (const autofill of [true, false])
+	test(`with passkeys switched off, the sign-in page drops its passkey button (autofill ${autofill ? 'on' : 'off'})`, async ({
+		page
+	}) => {
+		await instrument(page, { autofill });
+		await addAuthenticator(page);
+		await page.route('**/login/passkey/options', (route) =>
+			route.fulfill({
+				status: 503,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					code: 'passkeys_disabled',
+					message: 'Passkeys aren’t available here. Sign in with your password.'
+				})
+			})
+		);
+		await page.goto('/login');
+		const button = page.getByRole('button', { name: 'Sign in with a passkey' });
+		// Autofill's own options call finds passkeys off; otherwise the button's first use does.
+		if (!autofill) await button.click();
+		await expect(button).toHaveCount(0);
+		await expect(page.getByRole('alert')).toHaveCount(0);
+		await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeEnabled();
+	});

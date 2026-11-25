@@ -1,5 +1,5 @@
-// Stand-in for fionas-commerce's passkey and account routes (the plan's route table; shapes in
-// docs/admin-passkeys.md). Like the real API it checks the trusted Origin on the public routes,
+// Stand-in for fionas-commerce's passkey and account routes (fionas-commerce
+// `http/StaffAccountRoutes.kt`; summarized in docs/admin-passkeys.md). Like the real API it checks the trusted Origin on the public routes,
 // binds each single-use, five-minute challenge to one ceremony kind (and, for registration, one
 // staff member), checks clientDataJSON's type/challenge/origin, the rpIdHash, the UP and UV flags
 // and the signature counter, and verifies assertion signatures with the public key captured at
@@ -33,22 +33,47 @@ export function accountFor(username, password) {
 	return accounts.get(username);
 }
 
+/**
+ * The other stub users (brayan, dashboard-*, request-*) predate passkeys: they read an account as
+ * if passkeys were switched off, so the specs written for them never see a passkey nudge.
+ */
+function fixtureAccount(mode) {
+	const account = accountFor(`fixture:${mode}`, null);
+	account.passkeysDisabled = true;
+	return account;
+}
+
 export const accountById = (id) => [...accounts.values()].find((account) => account.id === id);
 
-const PUBLIC_FIELDS = [
-	'id',
-	'credentialId',
-	'name',
-	'aaguid',
-	'transports',
-	'backupEligible',
-	'backedUp',
-	'createdAt',
-	'lastUsedAt'
-];
-/** What commerce answers about a passkey: never its public key or counter. */
-const publicPasskey = (passkey) =>
-	Object.fromEntries(PUBLIC_FIELDS.map((field) => [field, passkey[field]]));
+const ZERO_AAGUID = '00000000-0000-0000-0000-000000000000';
+/**
+ * What commerce answers about a passkey: never its public key or counter. Optional fields are
+ * omitted rather than null, and a missing AAGUID is all zeros.
+ */
+const publicPasskey = (passkey) => ({
+	id: passkey.id,
+	...(passkey.name !== null && { name: passkey.name }),
+	credentialId: passkey.credentialId,
+	aaguid: passkey.aaguid ?? ZERO_AAGUID,
+	backupEligible: passkey.backupEligible,
+	backedUp: passkey.backedUp,
+	transports: passkey.transports,
+	createdAt: passkey.createdAt,
+	...(passkey.lastUsedAt !== null && { lastUsedAt: passkey.lastUsedAt })
+});
+const passkeyList = (account, rpId) => ({
+	rpId,
+	...(account.userHandle && { userHandle: account.userHandle }),
+	passkeys: account.passkeys.map(publicPasskey)
+});
+
+/** Like commerce's PasskeyName: trimmed, blank means none; too long or control characters fail. */
+function passkeyName(text) {
+	const trimmed = (text ?? '').trim();
+	if (!trimmed) return { name: null };
+	if (trimmed.length > 64 || /\p{Cc}/u.test(trimmed)) return null;
+	return { name: trimmed };
+}
 
 function startCeremony(kind, userId, rpId) {
 	for (const [id, ceremony] of ceremonies)
@@ -65,7 +90,7 @@ function startCeremony(kind, userId, rpId) {
 	return { ceremonyId, challenge };
 }
 
-/** The ceremony, consumed; null when unknown, expired, already used or of another kind. */
+/** The ceremony, spent whatever happens next; null when unknown, expired or of another kind. */
 function takeCeremony(ceremonyId, kind) {
 	const ceremony = ceremonies.get(ceremonyId);
 	ceremonies.delete(ceremonyId);
@@ -107,76 +132,75 @@ function authenticatorData(base64url, rpId) {
 	return parsed;
 }
 
-const unauthenticated = { code: 'unauthenticated', message: 'Authentication failed' };
+const error = (code, message) => ({ code, message });
+const unauthenticated = error('unauthenticated', 'Passkey sign-in failed');
+const disabled = error('passkeys_disabled', 'Passkeys are disabled');
 
 /**
  * Handles the passkey and account routes. `ctx` carries the shared stub pieces: the current
- * session (or null), its token, `createSession(account)` → token, `deleteSessions(predicate)`,
- * the trusted origins and `send`/`readJson`.
+ * session (or null), `createSession(account)` → token, `deleteSessions(predicate)`, the trusted
+ * origins and `send`/`readJson`. A `passkey-…` user's session has its own account; any other
+ * stub user (brayan, …) reads a fixture account with passkeys switched off.
  */
 export async function passkeyRoute(req, res, pathname, ctx) {
 	const { send, readJson, session, trustedOrigins } = ctx;
 	const route = `${req.method} ${pathname}`;
 	const origin = req.headers.origin;
-	const account = session?.account ? accountById(session.account) : null;
+	const account = session?.account
+		? accountById(session.account)
+		: session
+			? fixtureAccount(session.mode)
+			: null;
 	const sessionCookie = (token) =>
 		`__Host-fionas_session="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`;
+	const reply = (status, body, headers) => {
+		send(res, status, body, headers);
+		return true;
+	};
 
 	if (pathname === '/__test/account') {
-		if (!account) {
-			send(res, 401);
-			return true;
-		}
-		if (req.method === 'GET') {
-			send(res, 200, { ...account, passkeys: account.passkeys.map(publicPasskey) });
-			return true;
-		}
+		if (!session) return reply(401);
+		if (req.method === 'GET')
+			return reply(200, { ...account, passkeys: account.passkeys.map(publicPasskey) });
 		const body = (await readJson(req)) ?? {};
 		if (body.sudoExpired) session.authenticatedAt = Date.now() - SUDO_MS - 60_000;
 		if (body.forgetPasskeys) account.passkeys = [];
-		send(res, 204);
-		return true;
+		// Like a deployment without the FIONAS_WEBAUTHN_* settings, for this account only.
+		if ('passkeysDisabled' in body) account.passkeysDisabled = Boolean(body.passkeysDisabled);
+		return reply(204);
 	}
 
 	if (route === 'POST /auth/passkey/options' || route === 'POST /auth/passkey') {
-		if (!trustedOrigins.has(origin)) {
-			send(res, 403, { code: 'forbidden', message: 'The browser origin is not trusted' });
-			return true;
-		}
+		if (!trustedOrigins.has(origin))
+			return reply(403, error('forbidden', 'The browser origin is not trusted'));
 		const rpId = new URL(origin).hostname;
 		if (route === 'POST /auth/passkey/options') {
 			const { ceremonyId, challenge } = startCeremony('authentication', null, rpId);
-			send(
-				res,
+			return reply(
 				200,
 				{
 					ceremonyId,
 					publicKey: {
 						challenge,
-						rpId,
 						timeout: CEREMONY_MS,
-						userVerification: 'required',
-						allowCredentials: []
+						rpId,
+						allowCredentials: [],
+						userVerification: 'required'
 					}
 				},
 				noStore
 			);
-			return true;
 		}
 		const body = await readJson(req);
 		const credential = body?.credential;
+		if (typeof credential?.id !== 'string' || credential.rawId !== credential.id)
+			return reply(400, error('malformed_request', 'Malformed request'));
 		const ceremony = takeCeremony(body?.ceremonyId, 'authentication');
-		if (!ceremony || typeof credential?.id !== 'string' || !credential.response) {
-			send(res, 401, unauthenticated);
-			return true;
-		}
+		if (!ceremony) return reply(401, unauthenticated);
 		const owner = [...accounts.values()].find((a) =>
 			a.passkeys.some((passkey) => passkey.credentialId === credential.id)
 		);
-		if (!owner) {
-			send(res, 401, { code: 'passkey_unknown', message: 'Unknown passkey' });
-			return true;
-		}
+		if (!owner) return reply(404, error('not_found', 'Passkey is not registered'));
 		const passkey = owner.passkeys.find((p) => p.credentialId === credential.id);
 		const data = clientData(credential, 'webauthn.get', ceremony, origin);
 		const auth = authenticatorData(credential.response.authenticatorData, ceremony.rpId);
@@ -201,18 +225,14 @@ export async function passkeyRoute(req, res, pathname, ctx) {
 		const handleMatches =
 			!credential.response.userHandle || credential.response.userHandle === owner.userHandle;
 		const counterOk = auth && (auth.signCount === 0 || auth.signCount > passkey.signCount);
-		if (!signed || !handleMatches || !counterOk) {
-			send(res, 401, unauthenticated);
-			return true;
-		}
+		if (!signed || !handleMatches || !counterOk) return reply(401, unauthenticated);
 		passkey.signCount = auth.signCount;
 		passkey.lastUsedAt = new Date().toISOString();
 		passkey.backedUp = auth.backedUp;
-		// Re-authenticating as the same person swaps sessions instead of leaving the old one.
-		if (session?.account === owner.id) ctx.deleteSessions((s) => s === session);
 		const token = ctx.createSession(owner);
-		send(res, 204, undefined, { 'set-cookie': sessionCookie(token) });
-		return true;
+		// Whatever session the request presented is revoked, whoever it belonged to.
+		if (session) ctx.deleteSessions((s) => s === session);
+		return reply(204, undefined, { 'set-cookie': sessionCookie(token) });
 	}
 
 	const staffRoute =
@@ -221,66 +241,58 @@ export async function passkeyRoute(req, res, pathname, ctx) {
 		pathname.startsWith('/staff/passkeys/') ||
 		pathname === '/staff/credentials/password';
 	if (!staffRoute) return false;
-	if (!session) {
-		send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
-		return true;
-	}
-	if (!account) {
-		send(res, 403, { code: 'forbidden', message: 'Only passkey-… stub users have accounts' });
-		return true;
-	}
-	if (req.method !== 'GET' && origin !== undefined && !trustedOrigins.has(origin)) {
-		send(res, 403, { code: 'forbidden', message: 'The browser origin is not trusted' });
-		return true;
-	}
-	const recent = Date.now() - session.authenticatedAt <= SUDO_MS;
-	const reauth = () =>
-		send(res, 403, {
-			code: 'reauthentication_required',
-			message: 'Sign in again to continue'
-		});
+	if (!session) return reply(401, error('unauthenticated', 'Authentication is required'));
+	if (req.method !== 'GET' && origin !== undefined && !trustedOrigins.has(origin))
+		return reply(403, error('forbidden', 'The browser origin is not trusted'));
+	const recentUntil = session.authenticatedAt + SUDO_MS;
+	const recent = Date.now() < recentUntil;
+	const reauth = () => reply(403, error('reauthentication_required', 'Sign in again to continue'));
 	const rpId = origin ? new URL(origin).hostname : 'localhost';
+	const passkeysOff = Boolean(account.passkeysDisabled);
 
-	if (route === 'GET /staff/account') {
-		send(
-			res,
+	if (route === 'GET /staff/account')
+		return reply(
 			200,
 			{
-				id: account.id,
-				username: account.username,
-				displayName: account.displayName,
-				roles: ['commerce.administrator'],
 				authenticatedAt: new Date(session.authenticatedAt).toISOString(),
-				passkeyCount: account.passkeys.length
+				recentAuthenticationUntil: new Date(recentUntil).toISOString(),
+				passkeysEnabled: !passkeysOff,
+				passkeyCount: passkeysOff ? 0 : account.passkeys.length
 			},
 			noStore
 		);
-		return true;
+
+	if (route === 'PUT /staff/credentials/password') {
+		const body = await readJson(req);
+		if (typeof body?.currentPassword !== 'string' || typeof body?.newPassword !== 'string')
+			return reply(400, error('malformed_request', 'Malformed request'));
+		if (body.currentPassword !== account.password)
+			return reply(403, error('current_password_incorrect', 'The current password is incorrect'));
+		if (
+			body.newPassword.length < 12 ||
+			body.newPassword.length > 256 ||
+			body.newPassword === body.currentPassword
+		)
+			return reply(422, error('validation_failed', 'Password must have at least 12 characters'));
+		account.password = body.newPassword;
+		// Every session of the caller ends; this browser gets a fresh one.
+		ctx.deleteSessions((s) => s.account === account.id);
+		const token = ctx.createSession(account);
+		return reply(204, undefined, { 'set-cookie': sessionCookie(token) });
 	}
 
-	if (route === 'GET /staff/passkeys') {
-		send(
-			res,
-			200,
-			{ userHandle: account.userHandle, passkeys: account.passkeys.map(publicPasskey) },
-			noStore
-		);
-		return true;
-	}
+	// Everything below is passkeys, which this deployment may have switched off.
+	if (passkeysOff) return reply(503, disabled);
+
+	if (route === 'GET /staff/passkeys') return reply(200, passkeyList(account, rpId), noStore);
 
 	if (route === 'POST /staff/passkeys/registration/options') {
-		if (!recent) {
-			reauth();
-			return true;
-		}
-		if (account.passkeys.length >= LIMIT) {
-			send(res, 409, { code: 'passkey_limit_reached', message: 'Too many passkeys' });
-			return true;
-		}
+		if (!recent) return reauth();
+		if (account.passkeys.length >= LIMIT)
+			return reply(409, error('conflict', 'A staff account can have at most 20 passkeys'));
 		account.userHandle ??= randomBytes(64).toString('base64url');
 		const { ceremonyId, challenge } = startCeremony('registration', account.id, rpId);
-		send(
-			res,
+		return reply(
 			200,
 			{
 				ceremonyId,
@@ -295,8 +307,8 @@ export async function passkeyRoute(req, res, pathname, ctx) {
 					pubKeyCredParams: [-8, -7, -257].map((alg) => ({ type: 'public-key', alg })),
 					timeout: CEREMONY_MS,
 					excludeCredentials: account.passkeys.map((p) => ({
-						id: p.credentialId,
 						type: 'public-key',
+						id: p.credentialId,
 						transports: p.transports
 					})),
 					authenticatorSelection: {
@@ -310,39 +322,38 @@ export async function passkeyRoute(req, res, pathname, ctx) {
 			},
 			noStore
 		);
-		return true;
 	}
 
 	if (route === 'POST /staff/passkeys') {
 		const body = await readJson(req);
 		const credential = body?.credential;
+		if (typeof credential?.id !== 'string' || credential.rawId !== credential.id)
+			return reply(400, error('malformed_request', 'Malformed request'));
+		const notVerified = () =>
+			reply(422, error('validation_failed', 'The passkey could not be verified'));
 		const ceremony = takeCeremony(body?.ceremonyId, 'registration');
-		if (!ceremony || ceremony.userId !== account.id || !credential?.response) {
-			send(res, 401, unauthenticated);
-			return true;
-		}
+		if (!ceremony || ceremony.userId !== account.id) return notVerified();
 		const data = clientData(credential, 'webauthn.create', ceremony, origin);
 		const auth = authenticatorData(credential.response.authenticatorData, ceremony.rpId);
-		const name = body.name ?? null;
+		const named = passkeyName(body.name);
+		if (!named) return reply(422, error('validation_failed', 'Passkey name is invalid'));
+		// The stub reads the SPKI key the browser reports; commerce parses the attestation object.
 		if (
 			!data ||
 			!auth ||
 			typeof credential.response.publicKey !== 'string' ||
-			(name !== null && (typeof name !== 'string' || !name.length || name.length > 64))
-		) {
-			send(res, 422, { code: 'validation_failed', message: 'The passkey was rejected' });
-			return true;
-		}
+			credential.clientExtensionResults?.credProps?.rk === false
+		)
+			return notVerified();
 		if (
+			account.passkeys.length >= LIMIT ||
 			[...accounts.values()].some((a) => a.passkeys.some((p) => p.credentialId === credential.id))
-		) {
-			send(res, 409, { code: 'passkey_already_registered', message: 'Already registered' });
-			return true;
-		}
+		)
+			return reply(409, error('conflict', 'This passkey is already registered'));
 		const passkey = {
 			id: randomUUID(),
 			credentialId: credential.id,
-			name,
+			name: named.name,
 			aaguid: auth.aaguid,
 			transports: credential.response.transports ?? [],
 			backupEligible: auth.backupEligible,
@@ -354,58 +365,27 @@ export async function passkeyRoute(req, res, pathname, ctx) {
 			signCount: auth.signCount
 		};
 		account.passkeys.push(passkey);
-		send(res, 201, publicPasskey(passkey), noStore);
-		return true;
+		return reply(201, publicPasskey(passkey), noStore);
 	}
 
 	const one = /^\/staff\/passkeys\/([^/]+)$/.exec(pathname);
 	if (one && (req.method === 'PATCH' || req.method === 'DELETE')) {
+		if (req.method === 'DELETE' && !recent) return reauth();
 		const passkey = account.passkeys.find((p) => p.id === one[1]);
-		if (!passkey) {
-			send(res, 404, { code: 'not_found', message: 'No such passkey' });
-			return true;
-		}
+		if (!passkey) return reply(404, error('not_found', 'Passkey was not found'));
 		if (req.method === 'DELETE') {
-			if (!recent) {
-				reauth();
-				return true;
-			}
 			account.passkeys = account.passkeys.filter((p) => p !== passkey);
-			send(res, 204);
-			return true;
+			return reply(200, passkeyList(account, rpId), noStore);
 		}
-		const name = (await readJson(req))?.name;
-		if (name !== null && (typeof name !== 'string' || !name.length || name.length > 64)) {
-			send(res, 422, { code: 'validation_failed', message: 'Invalid name' });
-			return true;
-		}
-		passkey.name = name;
-		send(res, 200, publicPasskey(passkey), noStore);
-		return true;
-	}
-
-	if (route === 'PUT /staff/credentials/password') {
 		const body = await readJson(req);
-		if (body?.currentPassword !== account.password) {
-			send(res, 401, { code: 'invalid_credentials', message: 'Wrong password' });
-			return true;
-		}
-		if (
-			typeof body.newPassword !== 'string' ||
-			body.newPassword.length < 12 ||
-			body.newPassword === body.currentPassword
-		) {
-			send(res, 422, { code: 'validation_failed', message: 'Password policy' });
-			return true;
-		}
-		account.password = body.newPassword;
-		// Every other device is signed out; this one gets a fresh session.
-		ctx.deleteSessions((s) => s.account === account.id);
-		const token = ctx.createSession(account);
-		send(res, 204, undefined, { 'set-cookie': sessionCookie(token) });
-		return true;
+		// The field is required: a blank name clears it.
+		if (typeof body?.name !== 'string')
+			return reply(400, error('malformed_request', 'Malformed request'));
+		const named = passkeyName(body.name);
+		if (!named) return reply(422, error('validation_failed', 'Passkey name is invalid'));
+		passkey.name = named.name;
+		return reply(200, publicPasskey(passkey), noStore);
 	}
 
-	send(res, 404, { code: 'not_found', message: 'Not found' });
-	return true;
+	return reply(404, error('not_found', 'Not found'));
 }

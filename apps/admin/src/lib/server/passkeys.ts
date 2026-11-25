@@ -9,6 +9,7 @@ import {
 	readPasskey,
 	readPasskeyList,
 	type Passkey,
+	type PasskeyContext,
 	type PasskeyFailure,
 	type PasskeyList
 } from '$lib/passkeys.js';
@@ -26,11 +27,11 @@ export type PasskeyResult<T> =
 export const passkeyError = (
 	status: number,
 	code: string | null,
-	context: 'sign-in' | 'manage' = 'manage',
+	context: PasskeyContext = 'manage',
 	retryAfter: number | null = null
 ) => ({ ok: false as const, ...passkeyFailure(status, code, context, retryAfter) });
 
-function fail<T>(result: ApiResult<unknown>, context: 'sign-in' | 'manage'): PasskeyResult<T> {
+function fail<T>(result: ApiResult<unknown>, context: PasskeyContext): PasskeyResult<T> {
 	if (result.ok) return passkeyError(503, 'unavailable', context);
 	return passkeyError(result.error.status, result.error.code, context, result.retryAfter);
 }
@@ -38,7 +39,7 @@ function fail<T>(result: ApiResult<unknown>, context: 'sign-in' | 'manage'): Pas
 function project<T>(
 	result: ApiResult<unknown>,
 	read: (data: unknown) => T | null,
-	context: 'sign-in' | 'manage' = 'manage'
+	context: PasskeyContext = 'manage'
 ): PasskeyResult<T> {
 	if (!result.ok) return fail(result, context);
 	const data = read(result.data);
@@ -392,7 +393,8 @@ export async function startPasskeyRegistration(
 			json: {},
 			cookie
 		}),
-		ceremony(readCreationOptions)
+		ceremony(readCreationOptions),
+		'register-options'
 	);
 }
 
@@ -409,7 +411,8 @@ export async function finishPasskeyRegistration(
 			json: { ceremonyId, credential, ...(name && { name }) },
 			cookie
 		}),
-		readPasskey
+		readPasskey,
+		'register'
 	);
 }
 
@@ -425,25 +428,28 @@ export async function renamePasskey(
 	return project(
 		await request(config, `/staff/passkeys/${passkeyId}`, {
 			method: 'PATCH',
-			json: { name: normalized },
+			// Commerce requires the field; a blank name clears it.
+			json: { name: normalized ?? '' },
 			cookie
 		}),
 		readPasskey
 	);
 }
 
-/** `DELETE /staff/passkeys/{id}`; 403 `reauthentication_required` outside sudo. */
+/**
+ * `DELETE /staff/passkeys/{id}`; 403 `reauthentication_required` outside sudo. Commerce answers
+ * the remaining passkeys, which feed `signalAllAcceptedCredentials` without another read.
+ */
 export async function removePasskey(
 	config: BackendConfig,
 	cookie: string | null,
 	passkeyId: string
-): Promise<PasskeyResult<null>> {
+): Promise<PasskeyResult<PasskeyList>> {
 	if (!UUID.test(passkeyId)) return passkeyError(404, 'not_found');
-	const result = await request(config, `/staff/passkeys/${passkeyId}`, {
-		method: 'DELETE',
-		cookie
-	});
-	return result.ok ? { ok: true, data: null, setCookies: [] } : fail(result, 'manage');
+	return project(
+		await request(config, `/staff/passkeys/${passkeyId}`, { method: 'DELETE', cookie }),
+		readPasskeyList
+	);
 }
 
 const NO_STORE = { 'cache-control': 'no-store' };

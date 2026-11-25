@@ -30,10 +30,15 @@ const passkey = {
 describe('passkey readers', () => {
 	it('reads a passkey and nothing else', () => {
 		expect(readPasskey({ ...passkey, publicKey: 'SECRET' })).toEqual(passkey);
-		expect(readPasskey({ ...passkey, name: undefined, aaguid: undefined })).toMatchObject({
-			name: null,
-			aaguid: null
-		});
+	});
+
+	it('reads omitted optional fields and an all-zero AAGUID as absent', () => {
+		const required: Record<string, unknown> = { ...passkey };
+		delete required.name;
+		delete required.lastUsedAt;
+		expect(
+			readPasskey({ ...required, aaguid: '00000000-0000-0000-0000-000000000000' })
+		).toMatchObject({ name: null, aaguid: null, lastUsedAt: null });
 	});
 
 	it.each([
@@ -47,27 +52,33 @@ describe('passkey readers', () => {
 	});
 
 	it('reads a list only when every passkey reads', () => {
-		expect(readPasskeyList({ userHandle: 'aGFuZGxl', passkeys: [passkey] })).toEqual({
-			userHandle: 'aGFuZGxl',
-			passkeys: [passkey]
+		expect(
+			readPasskeyList({ rpId: 'admin.test', userHandle: 'aGFuZGxl', passkeys: [passkey] })
+		).toEqual({ rpId: 'admin.test', userHandle: 'aGFuZGxl', passkeys: [passkey] });
+		// The user handle is omitted before the first passkey.
+		expect(readPasskeyList({ rpId: 'admin.test', passkeys: [] })).toEqual({
+			rpId: 'admin.test',
+			userHandle: null,
+			passkeys: []
 		});
-		expect(readPasskeyList({ passkeys: [] })).toEqual({ userHandle: null, passkeys: [] });
 		expect(readPasskeyList({ passkeys: [passkey, { id: 'bad' }] })).toBeNull();
 		expect(readPasskeyList([passkey])).toBeNull();
 	});
 
-	it('reads the account summary', () => {
+	it('reads the account sign-in state', () => {
 		const account = {
-			id: 'u1',
-			username: 'brayan',
-			displayName: 'Brayan',
-			roles: ['commerce.administrator'],
 			authenticatedAt: '2026-11-25T18:00:00Z',
+			recentAuthenticationUntil: '2026-11-25T18:10:00Z',
+			passkeysEnabled: true,
 			passkeyCount: 2
 		};
 		expect(readAccount({ ...account, extra: true })).toEqual(account);
+		expect(readAccount({ ...account, passkeysEnabled: false })).toMatchObject({
+			passkeysEnabled: false
+		});
 		expect(readAccount({ ...account, passkeyCount: -1 })).toBeNull();
-		expect(readAccount({ ...account, authenticatedAt: null })).toBeNull();
+		expect(readAccount({ ...account, passkeysEnabled: undefined })).toBeNull();
+		expect(readAccount({ ...account, recentAuthenticationUntil: null })).toBeNull();
 	});
 });
 
@@ -87,12 +98,18 @@ describe('normalizePasskeyName', () => {
 });
 
 describe('passkeyFailure copy', () => {
-	it('names an unknown passkey so the password manager can drop it', () => {
-		expect(passkeyFailure(401, 'passkey_unknown', 'sign-in')).toEqual({
-			status: 401,
+	it('names an unknown passkey (404 at sign-in) so the password manager can drop it', () => {
+		expect(passkeyFailure(404, 'not_found', 'sign-in')).toEqual({
+			status: 404,
 			code: 'passkey_unknown',
 			message: 'That passkey isn’t set up for this account anymore. Sign in with your password.'
 		});
+	});
+
+	it('names passkeys switched off in this deployment', () => {
+		for (const context of ['sign-in', 'register-options', 'manage'] as const)
+			expect(passkeyFailure(503, 'passkeys_disabled', context).code).toBe('passkeys_disabled');
+		expect(passkeyFailure(503, 'unavailable').code).toBe('unavailable');
 	});
 
 	it('keeps every other sign-in failure uniform', () => {
@@ -111,10 +128,16 @@ describe('passkeyFailure copy', () => {
 	it('maps management failures', () => {
 		expect(passkeyFailure(403, 'reauthentication_required').code).toBe('reauthentication_required');
 		expect(passkeyFailure(403, 'forbidden').code).toBe('unavailable');
-		expect(passkeyFailure(409, 'passkey_limit_reached').message).toContain('up to 20 passkeys');
-		expect(passkeyFailure(409, 'passkey_already_registered').code).toBe(
-			'passkey_already_registered'
+		expect(passkeyFailure(409, 'conflict', 'register-options').message).toBe(
+			'You can have up to 20 passkeys. Remove one to add another.'
 		);
+		expect(passkeyFailure(409, 'conflict', 'register').message).toBe(
+			'That passkey is already on your account, or you’ve reached 20 passkeys.'
+		);
+		expect(passkeyFailure(422, 'validation_failed', 'register').message).toBe(
+			'That passkey couldn’t be saved. Try again.'
+		);
+		expect(passkeyFailure(422, 'validation_failed').message).toContain('up to 64 characters');
 		expect(passkeyFailure(404, 'not_found').code).toBe('not_found');
 		expect(passkeyFailure(401, 'unauthenticated').message).toBe(
 			'Your session has ended. Sign in again.'
@@ -171,6 +194,7 @@ describe('password change', () => {
 	it.each([
 		[{ currentPassword: '' }, 'current'],
 		[{ newPassword: 'short', confirmPassword: 'short' }, 'new'],
+		[{ newPassword: 'x'.repeat(257), confirmPassword: 'x'.repeat(257) }, 'new'],
 		[{ newPassword: 'old password', confirmPassword: 'old password' }, 'new'],
 		[{ confirmPassword: 'something else' }, 'confirm']
 	] as const)('flags %o on the %s field', (change, field) => {
@@ -178,10 +202,14 @@ describe('password change', () => {
 	});
 
 	it('maps commerce failures to our copy', () => {
-		expect(passwordChangeFailureMessage(401, 'invalid_credentials')).toBe(
+		expect(passwordChangeFailureMessage(403, 'current_password_incorrect')).toBe(
 			'Your current password isn’t right. Try again.'
 		);
-		expect(passwordChangeFailureMessage(422, 'validation_failed')).toContain('at least 12');
+		// A 401 is the session ending, never a wrong current password.
+		expect(passwordChangeFailureMessage(401, 'unauthenticated')).toBe(
+			'Your session has ended. Sign in again.'
+		);
+		expect(passwordChangeFailureMessage(422, 'validation_failed')).toContain('12 to 256');
 		expect(passwordChangeFailureMessage(429, 'rate_limited', 60)).toBe(
 			'Too many attempts — try again in 1 minute.'
 		);
