@@ -4,6 +4,10 @@ const port = process.env.ADMIN_PLAYWRIGHT_PORT ?? '4174';
 const stubPort = process.env.ADMIN_STUB_PORT ?? '4176';
 const origin = `http://127.0.0.1:${port}`;
 const stubUrl = `http://127.0.0.1:${stubPort}`;
+// WebAuthn never accepts an IP address as its RP ID, so the passkey specs use a second server on
+// localhost, started from the same build (see e2e/passkeys.e2e.ts).
+const passkeyPort = process.env.ADMIN_PASSKEY_PORT ?? '4175';
+const passkeyOrigin = `http://localhost:${passkeyPort}`;
 
 export default defineConfig({
 	testDir: './e2e',
@@ -27,7 +31,8 @@ export default defineConfig({
 			reuseExistingServer: !process.env.CI,
 			env: {
 				COMMERCE_STUB_PORT: stubPort,
-				COMMERCE_STUB_TRUSTED_ORIGIN: origin
+				COMMERCE_STUB_TRUSTED_ORIGIN: origin,
+				COMMERCE_STUB_PASSKEY_ORIGIN: passkeyOrigin
 			}
 		},
 		{
@@ -41,6 +46,19 @@ export default defineConfig({
 				ORIGIN: origin,
 				COMMERCE_API_URL: stubUrl,
 				ADMIN_ORIGIN: origin
+			}
+		},
+		{
+			// Starts after the build above (web servers start in order).
+			command: 'node build/index.js',
+			url: `http://127.0.0.1:${passkeyPort}`,
+			reuseExistingServer: !process.env.CI,
+			env: {
+				PORT: passkeyPort,
+				HOST: '127.0.0.1',
+				ORIGIN: passkeyOrigin,
+				COMMERCE_API_URL: stubUrl,
+				ADMIN_ORIGIN: passkeyOrigin
 			}
 		}
 	]

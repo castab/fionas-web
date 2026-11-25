@@ -52,6 +52,7 @@ Why it has to be this way:
 | Request review + Quote, revision and amendment actions | `apps/admin/src/routes/(app)/requests/[inquiryId]/`, `$lib/server/editor-actions.ts` |
 | Request workspace behavior                             | `docs/admin-request-workspace.md`                                                    |
 | Sign out                                               | `apps/admin/src/routes/logout/+server.ts`                                            |
+| Passkeys, Account settings, "Confirm it's you"         | `docs/admin-passkeys.md`, `src/lib/server/passkeys.ts`, `src/lib/server/account.ts`  |
 | Staff push (devices, test, service worker)             | `docs/admin-push-notifications.md`, `src/lib/server/notifications.ts`                |
 | Temporary sign-in toast (to be removed)                | `src/lib/toast.svelte.ts`, `src/lib/components/login-toast.svelte`                   |
 
@@ -160,17 +161,20 @@ E2E never uses the real backend: `apps/admin/e2e/stub-commerce.mjs` implements `
 Quote + deposit + proposal issuance, the Quote revision and Invoice amendment preview and publication routes
 (`quote-revision-preview`, `proposals/quote-revisions`, `invoice-revision-preview`, `invoice-revisions`),
 `GET /financial-documents/{documentId}/history` and `.../deposit-requirement/history`, `POST /financial-documents/{documentId}/payments`, and
-`POST /inquiries/{inquiryId}/served` and `/close`, the six staff push routes under `/staff/notifications/` (`e2e/push-stub.mjs`) (Origin check, `Secure; HttpOnly` cookie, plus the usernames
+`POST /inquiries/{inquiryId}/served` and `/close`, the six staff push routes under `/staff/notifications/` (`e2e/push-stub.mjs`), the passkey and
+account routes (`/auth/passkey*`, `/staff/account`, `/staff/passkeys*`, `/staff/credentials/password`; `e2e/passkey-stub.mjs`, which verifies
+real WebAuthn signatures and keeps an account per `passkey-…` username) (Origin check, `Secure; HttpOnly` cookie, plus the usernames
 `ratelimited` and `outage` to simulate login 429 and 500). Dashboard scenarios and read counters are
 session-scoped so parallel tests can verify empty, overlapping, forbidden, and unavailable projections.
 Request projections and atomic proposal mutations also have session-isolated state, including stale and
 post-commit failure scenarios.
-Playwright starts it beside the built Node adapter. The real login is
+Playwright starts it beside the built Node adapter, plus a second server from the same build on
+`http://localhost:4175` for the passkey specs (WebAuthn never accepts an IP address as its RP ID). The real login is
 rate limited per IP, so don't point automated tests at it.
 
 ## Conversation boundary
 
-See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. A validated `idempotencyKey` is accepted only with a named, path-bound `capability`: `conversationReply` (`…/conversation/replies`) and `financialEmailSend` (`…/financial-emails`), both POST with a 100-second timeout and no retry; `financialEmailPreview` (`…/financial-emails/preview`, no key) waits 30 seconds for the provider thread lookup; `staffTestNotification` (`/staff/notifications/test`) carries the browser's per-click key with the usual eight seconds ([admin-push-notifications.md](admin-push-notifications.md)). All other calls keep eight seconds. No arbitrary browser headers pass through, and admin-local cookies (`fionas_reply_intent`, `fionas_fe*`) are stripped from the forwarded `Cookie`, so commerce receives only the staff session. Neither admin tier accesses Resend directly. Quote/Invoice emails: [admin-financial-emails.md](admin-financial-emails.md).
+See [admin-conversation.md](admin-conversation.md) for the optional timeline, server actions and recovery design. The common transport now also returns the HTTP success `status`. A validated `idempotencyKey` is accepted only with a named, path-bound `capability`: `conversationReply` (`…/conversation/replies`) and `financialEmailSend` (`…/financial-emails`), both POST with a 100-second timeout and no retry; `financialEmailPreview` (`…/financial-emails/preview`, no key) waits 30 seconds for the provider thread lookup; `staffTestNotification` (`/staff/notifications/test`) carries the browser's per-click key with the usual eight seconds ([admin-push-notifications.md](admin-push-notifications.md)). All other calls keep eight seconds. No arbitrary browser headers pass through, and admin-local cookies (`fionas_reply_intent`, `fionas_fe*`, `__Host-fionas_webauthn`, `__Host-fionas_passkey_nudge`) are stripped from the forwarded `Cookie`, so commerce receives only the staff session. Neither admin tier accesses Resend directly. Quote/Invoice emails: [admin-financial-emails.md](admin-financial-emails.md).
 
 ## Request-scoped SSE exception
 
@@ -185,13 +189,17 @@ an authoritative conversation read. No page-level invalidation or browser commer
 See [Live timeline updates](admin-conversation.md#live-timeline-updates) for classification, lifecycle,
 composer safety, backend enablement and the deployment proxy verification checklist.
 
-## Staff push JSON exception
+## Same-origin JSON exception
 
-The five same-origin staff push endpoints under `/settings/notifications/` (config, subscriptions,
-`subscriptions/[subscriptionId]`, test, `test/[notificationId]`) still resolve `/auth/me`, but a
-signed-out caller gets `401 {"code":"unauthenticated"}` with `no-store` instead of `303 /login`, so
-the page, the shell and the service worker never receive HTML from a `fetch`. The match is an exact
-`event.route.id` list; every other route, including the Notifications page, keeps the redirect.
+The `fetch`-only endpoints in the hook's exact `event.route.id` list `JSON_ROUTES` still resolve
+`/auth/me`, but a signed-out caller gets `401 {"code":"unauthenticated"}` with `no-store` instead of
+`303 /login`, so a page, the shell or the service worker never receives HTML from a `fetch`. They are
+the five staff push endpoints under `/settings/notifications/` (config, subscriptions,
+`subscriptions/[subscriptionId]`, test, `test/[notificationId]`) and the four Account settings
+endpoints under `/settings/account/` (`passkeys`, `passkeys/options`, `passkeys/[passkeyId]`,
+`reauthenticate`). Every other route, including the Notifications and Account settings pages, keeps
+the redirect. Separately, `PUBLIC_ROUTES` lets signed-out visitors reach the passkey sign-in
+endpoints `/login/passkey` and `/login/passkey/options` (see [admin-passkeys.md](admin-passkeys.md)).
 `/service-worker.js`, `/manifest.webmanifest` and `/icons/*` are static and served before hooks.
 See [admin-push-notifications.md](admin-push-notifications.md#hooks-exception-json-401-instead-of-a-login-redirect).
 

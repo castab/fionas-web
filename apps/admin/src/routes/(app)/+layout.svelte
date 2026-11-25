@@ -5,6 +5,7 @@
 	import { Wordmark, focusRing } from '@fionas/ui';
 	import { initials, roleLabel, staffHandle } from '$lib/staff.js';
 	import { releaseThisDevice, syncThisDevice, within } from '$lib/push-client.js';
+	import PasskeyNudge from '$lib/components/passkey-nudge.svelte';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
@@ -19,6 +20,13 @@
 	const inRequests = $derived(onRequestsIndex || page.url.pathname.startsWith('/requests/'));
 
 	const onNotifications = $derived(page.url.pathname === '/settings/notifications');
+	const onAccount = $derived(page.url.pathname === '/settings/account');
+
+	// Set by the layout load once, right after a password sign-in; later loads never unset it.
+	let passkeyNudge = $state(false);
+	$effect(() => {
+		if (data.passkeyNudge) passkeyNudge = true;
+	});
 
 	// Re-enroll this browser's push subscription once per page load, without blocking rendering.
 	onMount(() => void syncThisDevice());
@@ -99,11 +107,12 @@
 		</svg>
 		Notifications
 	</a>
-	<button
-		disabled
-		title="Account settings · Coming next"
-		type="button"
-		class={`${menuItem} cursor-default text-(--text-muted) opacity-65`}
+	<a
+		href={resolve('/(app)/settings/account')}
+		aria-current={onAccount ? 'page' : undefined}
+		data-testid="account-settings-link"
+		onclick={(event) => event.currentTarget.closest('details')?.removeAttribute('open')}
+		class={`${menuItem} text-olive-800 no-underline hover:bg-cream-300/60 hover:text-olive-800`}
 	>
 		<svg
 			width="16"
@@ -120,7 +129,7 @@
 			<path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path>
 		</svg>
 		Account settings
-	</button>
+	</a>
 	<form method="POST" action={resolve('/logout')} onsubmit={signOut}>
 		<button type="submit" class={`${menuItem} text-rust-600 hover:bg-rust-600/10`}>
 			<svg
@@ -311,6 +320,7 @@
 		</header>
 
 		<main class="w-full flex-1 px-5 pt-6 min-[900px]:overflow-y-auto min-[1150px]:px-16">
+			{#if passkeyNudge}<PasskeyNudge />{/if}
 			{@render children()}
 		</main>
 		<footer class="bg-olive-700 px-4 py-2.5 text-center font-sans text-[11px] text-cream-200">

@@ -16,12 +16,21 @@ export type LoginResult =
 	| { ok: true; setCookies: string[] }
 	| { ok: false; status: number; code: string; retryAfter: number | null };
 
-/** `POST /auth/login`. On success the backend answers 204 with the session `Set-Cookie`. */
+/**
+ * `POST /auth/login`. On success the backend answers 204 with the session `Set-Cookie`. A
+ * re-authentication ("Confirm it's you") passes the current `cookie`, so commerce revokes that
+ * session when it belongs to the same staff member instead of leaving it behind.
+ */
 export async function login(
 	config: BackendConfig,
-	credentials: { username: string; password: string }
+	credentials: { username: string; password: string },
+	cookie: string | null = null
 ): Promise<LoginResult> {
-	const result = await request(config, '/auth/login', { method: 'POST', json: credentials });
+	const result = await request(config, '/auth/login', {
+		method: 'POST',
+		json: credentials,
+		cookie
+	});
 	if (result.ok) return { ok: true, setCookies: result.setCookies };
 	return {
 		ok: false,
