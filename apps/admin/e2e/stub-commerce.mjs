@@ -6,6 +6,7 @@ import { conversationRoute } from './conversation-stub.mjs';
 import { paymentAccessRoute } from './payment-access-stub.mjs';
 import { financialEmailRoute } from './financial-email-stub.mjs';
 import { pushRoute } from './push-stub.mjs';
+import { accountById, accountFor, isPasskeyUsername, passkeyRoute } from './passkey-stub.mjs';
 import { randomUUID } from 'node:crypto';
 import { dashboardFixture } from './dashboard-fixture.mjs';
 import {
@@ -28,6 +29,11 @@ import {
 
 const port = Number(process.env.COMMERCE_STUB_PORT ?? 4176);
 const trustedOrigin = process.env.COMMERCE_STUB_TRUSTED_ORIGIN ?? 'http://127.0.0.1:4174';
+// The passkey specs run against a second admin server on localhost (an IP is never a valid
+// WebAuthn RP ID); its origin is trusted too, like FIONAS_TRUSTED_ORIGINS listing every admin host.
+const trustedOrigins = new Set(
+	[trustedOrigin, process.env.COMMERCE_STUB_PASSKEY_ORIGIN].filter((origin) => origin)
+);
 // The real API's cookie name and format: http4k quotes the value (`__Host-fionas_session="token"`).
 const cookieName = '__Host-fionas_session';
 
@@ -51,6 +57,48 @@ const user = {
 };
 const password = 'e2e-password';
 const sessions = new Map();
+
+/** One stub session per sign-in. `account` is set for `passkey-…` users (passkey-stub.mjs). */
+function createSession(mode, account) {
+	const token = randomUUID();
+	sessions.set(token, {
+		mode,
+		account: account?.id ?? null,
+		authenticatedAt: Date.now(),
+		dashboardReads: 0,
+		authReads: 0,
+		readPaths: [],
+		requestReads: 0,
+		proposalAttempts: [],
+		previewAttempts: [],
+		revisionAttempts: [],
+		quoteEpoch: 0,
+		paymentAttempts: [],
+		fulfillmentAttempts: [],
+		declineAttempts: [],
+		requestListReads: 0,
+		requestListQueries: [],
+		listMode: null,
+		listPageSize: null,
+		requests: requestFixtures(),
+		permissions:
+			mode === 'request-read-only'
+				? user.permissions.filter(
+						(permission) => permission !== 'commerce.financial-document.create'
+					)
+				: mode === 'request-no-payment'
+					? user.permissions.filter((permission) => permission !== 'commerce.payment.record')
+					: [...user.permissions]
+	});
+	return token;
+}
+
+const accountIdentity = (accountId) => {
+	const account = accountById(accountId);
+	return account
+		? { id: account.id, username: account.username, displayName: account.displayName }
+		: {};
+};
 
 function send(res, status, body, headers = {}) {
 	const json = body !== undefined;
@@ -234,7 +282,7 @@ createServer(async (req, res) => {
 	if (route === 'GET /ready') return send(res, 200, { ok: true });
 
 	if (route === 'POST /auth/login' || route === 'POST /auth/logout') {
-		if (req.headers.origin !== trustedOrigin) {
+		if (!trustedOrigins.has(req.headers.origin)) {
 			return send(res, 403, {
 				code: 'forbidden',
 				message: 'The browser origin is not trusted'
@@ -262,6 +310,17 @@ createServer(async (req, res) => {
 				message: 'The request could not be completed'
 			});
 		}
+		const account = isPasskeyUsername(body.username) ? accountFor(body.username, password) : null;
+		if (account) {
+			if (body.password !== account.password)
+				return send(res, 401, { code: 'unauthenticated', message: 'Invalid credentials' });
+			// Like commerce, signing in revokes whatever session the request presented.
+			if (currentSession) sessions.delete(sessionToken(req));
+			const token = createSession(account.username, account);
+			return send(res, 204, undefined, {
+				'set-cookie': `${cookieName}="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
+			});
+		}
 		if (
 			![
 				user.username,
@@ -276,34 +335,7 @@ createServer(async (req, res) => {
 		) {
 			return send(res, 401, { code: 'unauthenticated', message: 'Invalid credentials' });
 		}
-		const token = randomUUID();
-		sessions.set(token, {
-			mode: body.username,
-			dashboardReads: 0,
-			authReads: 0,
-			readPaths: [],
-			requestReads: 0,
-			proposalAttempts: [],
-			previewAttempts: [],
-			revisionAttempts: [],
-			quoteEpoch: 0,
-			paymentAttempts: [],
-			fulfillmentAttempts: [],
-			declineAttempts: [],
-			requestListReads: 0,
-			requestListQueries: [],
-			listMode: null,
-			listPageSize: null,
-			requests: requestFixtures(),
-			permissions:
-				body.username === 'request-read-only'
-					? user.permissions.filter(
-							(permission) => permission !== 'commerce.financial-document.create'
-						)
-					: body.username === 'request-no-payment'
-						? user.permissions.filter((permission) => permission !== 'commerce.payment.record')
-						: [...user.permissions]
-		});
+		const token = createSession(body.username, null);
 		return send(res, 204, undefined, {
 			'set-cookie': `${cookieName}="${token}"; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
 		});
@@ -318,10 +350,11 @@ createServer(async (req, res) => {
 		if (!token || !sessions.has(token)) {
 			return send(res, 401, { code: 'unauthenticated', message: 'Authentication is required' });
 		}
-		sessions.get(token).authReads++;
-		return send(res, 200, { ...user, permissions: sessions.get(token).permissions });
+		const session = sessions.get(token);
+		session.authReads++;
+		const identity = session.account ? accountIdentity(session.account) : {};
+		return send(res, 200, { ...user, ...identity, permissions: session.permissions });
 	}
-
 	if (route === 'GET /staff/dashboard' || pathname === '/__test/dashboard') {
 		const session = sessions.get(sessionToken(req));
 		if (!session)
@@ -864,6 +897,20 @@ createServer(async (req, res) => {
 		if (currentSession.mode === 'payment-ambiguous') return refusal(500);
 		return send(res, 201, response, { 'cache-control': 'no-store' });
 	}
+
+	if (
+		await passkeyRoute(req, res, pathname, {
+			session: currentSession,
+			trustedOrigins,
+			send,
+			readJson,
+			createSession: (account) => createSession(account.username, account),
+			deleteSessions: (predicate) => {
+				for (const [token, session] of sessions) if (predicate(session)) sessions.delete(token);
+			}
+		})
+	)
+		return;
 
 	if (route === 'POST /auth/logout') {
 		const token = sessionToken(req);

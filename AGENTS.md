@@ -23,6 +23,7 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
 | Local NATS + JetStream, stream setup           | `compose.yaml`, `infra/nats/nats-server.conf`, `scripts/nats-*.mjs`, `scripts/lib/nats-*.mjs`                                                      |
 | Admin architecture, backend access rule        | `docs/admin-architecture.md`                                                                                                                       |
 | Admin sign-in, session, guard                  | `apps/admin/src/routes/(auth)/login/`, `src/hooks.server.ts`, `$lib/server/auth.ts`                                                                |
+| Admin passkeys, Account settings, sudo         | `docs/admin-passkeys.md`, `$lib/server/passkeys.ts`, `$lib/server/account.ts`, `$lib/passkey*.ts`, `routes/(app)/settings/account/`                |
 | Admin dashboard, shell, data gaps              | `apps/admin/src/routes/(app)/`, `$lib/dashboard.ts`, `docs/admin-dashboard-report.md`                                                              |
 | Requests index (filters, search, cursor)       | `docs/admin-requests-index.md`, `$lib/request-list.ts`, `$lib/server/request-list.ts`                                                              |
 | Staff request workspace, Quote/deposit         | `docs/admin-request-workspace.md`, `$lib/request-workspace.ts`, `$lib/server/staff-request.ts`                                                     |
@@ -121,4 +122,11 @@ Tailwind v4, shadcn-svelte conventions, Vitest + Playwright.
   has no `fetch` handler and caches nothing (admin pages are private), and a notification click opens only a
   same-origin relative path (`safeNotificationPath`), never an absolute URL from a payload. Sign-out cleanup is best
   effort and bounded; the logout form stays a plain POST.
+- Admin passkeys (`docs/admin-passkeys.md`): sign-in, Account settings and "Confirm it's you" call only the same-origin
+  `/login/passkey*` and `/settings/account/*` endpoints (`@simplewebauthn/browser` in the browser for WebAuthn only). The
+  ceremony id lives only in the HttpOnly `__Host-fionas_webauthn` cookie, never the browser's JS; credential JSON is
+  whitelisted field by field; options always ask for `attestation: none`. Commerce verifies everything and owns the
+  ten-minute sudo window (403 `reauthentication_required` → re-authenticate, then retry). A password re-auth signs in as
+  `locals.user` only; a passkey re-auth that returns another account's session is signed out again. Passwords stay the
+  fallback; the lowercase word is "passkey". Passkey e2e runs on `localhost:4175` (an IP is never a valid RP ID).
 - Admin live timeline updates use `$lib/server/timeline-updates.ts` and the exact GET `/requests/[inquiryId]/updates` hook exception; commerce's SSE handshake owns authorization. Native EventSource only invalidates the authoritative conversation read. Preserve retryable placeholders versus terminal 204, initial revision-zero synchronization, serialized pending refreshes, local composer/recovery state and disclosure keys. Never refresh on open or automatically invalidate the whole workspace; changed financial history re-reads only the staff request (`/requests/[inquiryId]/staff-request`) to update Right now in place, never while a review panel or form result holds a reviewed snapshot (then it says Reload to review). Deploy commerce `FIONAS_TIMELINE_UPDATES_ENABLED=true` with V7/V8; see `docs/admin-conversation.md` for proxy checks and limitations.

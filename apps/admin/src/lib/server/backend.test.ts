@@ -222,4 +222,13 @@ describe('request', () => {
 		expect(forwardedCookie('fionas_fe0=x')).toBeNull();
 		expect(forwardedCookie(null)).toBeNull();
 	});
+
+	it('never forwards the passkey ceremony id or the nudge flag', () => {
+		expect(
+			forwardedCookie(
+				'__Host-fionas_webauthn=ceremony; __Host-fionas_session="token"; __Host-fionas_passkey_nudge=1'
+			)
+		).toBe('__Host-fionas_session="token"');
+		expect(forwardedCookie('__Host-fionas_webauthn=ceremony')).toBeNull();
+	});
 });

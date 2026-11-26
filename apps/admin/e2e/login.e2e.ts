@@ -7,7 +7,7 @@ const password = 'e2e-password';
 async function submit(page: Page, user: string, pass: string) {
 	await page.getByLabel('User').fill(user);
 	await page.getByLabel('Password').fill(pass);
-	await page.getByRole('button', { name: 'Sign in' }).click();
+	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 }
 
 test.describe('signed out', () => {
@@ -19,7 +19,10 @@ test.describe('signed out', () => {
 		await expect(page.getByText('Booking requests, quotes & the calendar.')).toBeVisible();
 		await expect(page.getByLabel('User')).toBeVisible();
 		await expect(page.getByLabel('Password')).toHaveAttribute('type', 'password');
-		await expect(page.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+		await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeEnabled();
+		// Passkeys are offered in the User field's autofill and with their own button.
+		await expect(page.getByLabel('User')).toHaveAttribute('autocomplete', 'username webauthn');
+		await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
 		await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
 			'content',
 			'noindex, nofollow'
@@ -70,7 +73,9 @@ test.describe('signed out', () => {
 		// Both the inline message and the toast carry the copy.
 		await expect(page.getByRole('alert').filter({ hasText: message })).toHaveCount(2);
 		await expect(page.getByLabel('User')).toHaveValue(username);
-		expect(await context.cookies()).toEqual([]);
+		expect(
+			(await context.cookies()).find((c) => c.name === '__Host-fionas_session')
+		).toBeUndefined();
 	});
 
 	test('editing a field clears the inline error', async ({ page }) => {
@@ -85,7 +90,7 @@ test.describe('signed out', () => {
 
 	test('missing fields explain what is needed', async ({ page }) => {
 		await page.goto('/login');
-		await page.getByRole('button', { name: 'Sign in' }).click();
+		await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 		await expect(page.locator('form').getByRole('alert')).toHaveText(
 			'Enter your user and password to sign in.'
 		);

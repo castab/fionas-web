@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { loginFailureMessage } from '$lib/login.js';
+import { flagPasskeyNudge } from '$lib/server/account.js';
 import { applySetCookies, login } from '$lib/server/auth.js';
 import { backendConfig } from '$lib/server/config.js';
 import type { Actions } from './$types';
@@ -24,6 +25,8 @@ export const actions: Actions = {
 
 		// The API's session cookie is host-only for the API, so re-issue it on this site.
 		applySetCookies(cookies, result.setCookies);
+		// A password was just used: the next page may suggest a passkey (docs/admin-passkeys.md).
+		flagPasskeyNudge(cookies);
 		redirect(303, '/');
 	}
 };

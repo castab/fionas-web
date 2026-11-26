@@ -67,10 +67,12 @@ const CAPABILITIES: Record<Capability, { path: RegExp; timeout: number; key: boo
 	}
 };
 /**
- * Admin-local cookies (recovery pointers and sealed financial-email records) belong to this host
- * only. They are never forwarded: commerce receives the staff session and nothing else of ours.
+ * Admin-local cookies (recovery pointers, sealed financial-email records, the passkey ceremony id
+ * and the post-sign-in passkey nudge flag) belong to this host only. They are never forwarded:
+ * commerce receives the staff session and nothing else of ours.
  */
-const LOCAL_COOKIE = /^(?:fionas_reply_intent|fionas_fe\d)$/;
+const LOCAL_COOKIE =
+	/^(?:fionas_reply_intent|fionas_fe\d|__Host-fionas_webauthn|__Host-fionas_passkey_nudge)$/;
 export function forwardedCookie(cookie: string | null | undefined): string | null {
 	if (!cookie) return null;
 	const kept = cookie

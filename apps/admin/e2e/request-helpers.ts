@@ -45,7 +45,7 @@ export async function signIn(page: Page, username = 'brayan') {
 	await page.goto('/login');
 	await page.getByLabel('User').fill(username);
 	await page.getByLabel('Password').fill('e2e-password');
-	await page.getByRole('button', { name: 'Sign in' }).click();
+	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 	await expect(page).toHaveURL(/\/$/);
 }
 

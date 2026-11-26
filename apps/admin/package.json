@@ -16,7 +16,8 @@
 	"dependencies": {
 		"@fionas/design-tokens": "*",
 		"@fionas/shared": "*",
-		"@fionas/ui": "*"
+		"@fionas/ui": "*",
+		"@simplewebauthn/browser": "^14.0.0"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",

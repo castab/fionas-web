@@ -24,6 +24,18 @@ describe('login', () => {
 		const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
 		expect(url).toBe('http://api.test/auth/login');
 		expect(JSON.parse(String(init.body))).toEqual({ username: 'brayan', password: 'pw' });
+		expect((init.headers as Record<string, string>).cookie).toBeUndefined();
+	});
+
+	it('forwards the current session when re-authenticating', async () => {
+		const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+		await login(
+			config(fetch),
+			{ username: 'brayan', password: 'pw' },
+			'__Host-fionas_session="old"; __Host-fionas_webauthn=c'
+		);
+		const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect((init.headers as Record<string, string>).cookie).toBe('__Host-fionas_session="old"');
 	});
 
 	it.each([

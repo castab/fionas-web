@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
 	await page.goto('/login');
 	await page.getByLabel('User').fill('brayan');
 	await page.getByLabel('Password').fill('e2e-password');
-	await page.getByRole('button', { name: 'Sign in' }).click();
+	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 	await expect(page).toHaveURL(/\/$/);
 });
 
@@ -127,6 +127,16 @@ test('the shell links Requests, keeps unfinished sections disabled, and has an a
 		await expect(page.getByTestId('sidebar')).toContainText('@brayan · Administrator');
 	}
 	await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+	const accountSettings = page.getByRole('link', { name: 'Account settings' });
+	await expect(accountSettings).toHaveAttribute('href', '/settings/account');
+	await expect(accountSettings).not.toHaveAttribute('aria-current');
+	await accountSettings.click();
+	await expect(page).toHaveURL(/\/settings\/account$/);
+	if (isMobile) await page.getByLabel('Your account').click();
+	await expect(page.getByRole('link', { name: 'Account settings' })).toHaveAttribute(
+		'aria-current',
+		'page'
+	);
 });
 
 test('overlapping queue membership counts each inquiry once and preserves both cards', async ({
